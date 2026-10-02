@@ -1,0 +1,237 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:granttrace:schema:config:2.3.1",
+  "title": "GrantTrace Configuration Schema",
+  "description": "JSON Schema specification for GrantTrace v2.3.1-final authorization and mass-assignment auditing configuration.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URI pointing to this configuration schema"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional human-readable description of this configuration environment"
+    },
+    "identities": {
+      "description": "Test identity credentials and roles (Owner, Visitor, and Anonymous)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "visitor", "anonymous"],
+      "properties": {
+        "owner": {
+          "$ref": "#/definitions/authenticated_identity"
+        },
+        "visitor": {
+          "$ref": "#/definitions/authenticated_identity"
+        },
+        "anonymous": {
+          "$ref": "#/definitions/anonymous_identity"
+        }
+      }
+    },
+    "parameter_values": {
+      "description": "Pre-configured valid path and query parameter values indexed by 'METHOD /path'",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "write_allowlist": {
+      "description": "List of PATCH operations permitted for active mass-assignment testing",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^PATCH /"
+      }
+    },
+    "readbacks": {
+      "description": "Independent GET readback mappings required for allowlisted PATCH operations",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/readback_entry"
+      }
+    },
+    "bola": {
+      "description": "Per-operation BOLA exploration policies and resource ID path mappings",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/bola_entry"
+      }
+    }
+  },
+  "definitions": {
+    "authenticated_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": ["string", "integer", "null"],
+          "description": "Resource identifier associated with this identity"
+        },
+        "token": {
+          "type": ["string", "null"],
+          "description": "Bearer token or Authorization header value"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Arbitrary authentication or session headers",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Identity-bound path or query parameters (e.g. user_id)"
+        },
+        "auth_header_names": {
+          "type": "array",
+          "description": "Names of custom headers carrying authentication credentials",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "anonymous_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "null"
+        },
+        "token": {
+          "type": "null"
+        },
+        "headers": {
+          "type": "object",
+          "maxProperties": 0
+        },
+        "auth_header_names": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "parameters": {
+          "type": "object"
+        }
+      }
+    },
+    "readback_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path", "field_map"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET"],
+          "default": "GET",
+          "description": "HTTP method for readback, must be GET"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Path template for the readback operation"
+        },
+        "consistency": {
+          "type": "string",
+          "enum": ["strong", "weak", "eventual"],
+          "default": "strong",
+          "description": "Readback consistency guarantee ('strong' required for unmutated SECURE conclusion)"
+        },
+        "field_map": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Mapping from PATCH payload field path to readback response field path",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "array",
+          "description": "Readback path/query Parameter Objects consumed directly by the URL builder",
+          "items": {
+            "type": "object",
+            "required": ["name", "in", "schema"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\s\\u0000-\\u001f]+$"
+              },
+              "in": {
+                "type": "string",
+                "enum": ["path", "query"]
+              },
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "parameter_values": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\s\\u0000-\\u001f]+$"
+          },
+          "description": "Explicit parameter values for the readback request"
+        },
+        "snapshot_path": {
+          "type": "string",
+          "description": "Root path inside readback response containing the resource state"
+        },
+        "snapshot_field_map": {
+          "type": "object",
+          "description": "Mapping for nested container fields",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "ignore_readback_paths": {
+          "type": "array",
+          "description": "Known volatile fields (e.g. updatedAt) to ignore during rollback verification",
+          "items": {
+            "type": "string"
+          }
+        },
+        "readback_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3,
+          "description": "Polling attempts for readback verification"
+        },
+        "readback_delay": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 5.0,
+          "default": 0.1,
+          "description": "Delay in seconds between readback polling attempts"
+        },
+        "baseline_payload": {
+          "type": "object",
+          "description": "Additional static payload fields merged into write requests"
+        }
+      }
+    },
+    "bola_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expected_public": {
+          "type": "boolean",
+          "description": "Whether this operation is intended to be publicly accessible"
+        },
+        "resource_id_paths": {
+          "type": "array",
+          "description": "JSON field paths containing trustworthy resource ownership identifiers",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

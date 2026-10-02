@@ -1,0 +1,555 @@
+{
+  "tool_version": "2.3.1-final",
+  "report_schema_version": 1,
+  "generated_at": "2026-10-02T05:02:39Z",
+  "elapsed_seconds": 0.256,
+  "target": "http://127.0.0.1:50981",
+  "stats": {
+    "total_endpoints": 5,
+    "total_checks": 5,
+    "audited_count": 5,
+    "conclusive_count": 5,
+    "confirmed": 2,
+    "bola_confirmed": 1,
+    "mass_assignment_confirmed": 1,
+    "public_endpoints": 1,
+    "secure_endpoints": 2,
+    "suspicious_count": 0,
+    "inconclusive_count": 0,
+    "skipped_count": 0,
+    "error_count": 0,
+    "raw_filtered_count": 1,
+    "coverage_pct": 100.0,
+    "conclusive_coverage_pct": 100.0
+  },
+  "results": [
+    {
+      "endpoint": "GET /api/public/articles/{article_id}",
+      "operation_id": "getPublicArticle",
+      "check": "BOLA",
+      "verdict": "PUBLIC",
+      "reason": "端点显式配置为公开，所有者、访客与匿名响应的完整 JSON 数据完全一致。",
+      "evidence": {
+        "target_url": "http://127.0.0.1:50981/api/public/articles/101",
+        "visitor_self_url": null,
+        "owner": {
+          "status": 200,
+          "body": "{\"author\": \"Security Team\", \"id\": 101, \"public\": true, \"title\": \"[REDACTED]\"}",
+          "sha256": "c4bd14501a490beafb21b04c96e74eabce3f2526220bda155306100bd9875a0c",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_cross": {
+          "status": 200,
+          "body": "{\"author\": \"Security Team\", \"id\": 101, \"public\": true, \"title\": \"[REDACTED]\"}",
+          "sha256": "c4bd14501a490beafb21b04c96e74eabce3f2526220bda155306100bd9875a0c",
+          "truncated": false,
+          "error": null
+        },
+        "anonymous": {
+          "status": 200,
+          "body": "{\"author\": \"Security Team\", \"id\": 101, \"public\": true, \"title\": \"[REDACTED]\"}",
+          "sha256": "c4bd14501a490beafb21b04c96e74eabce3f2526220bda155306100bd9875a0c",
+          "truncated": false,
+          "error": null
+        },
+        "metrics": {
+          "confidence": 1.0,
+          "similarity": 1.0
+        },
+        "decision_evidence": {
+          "responses": {
+            "owner": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "visitor_cross": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "anonymous": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "visitor_self": null
+          },
+          "anonymous_denied": false,
+          "anonymous_exact_match": true,
+          "anonymous_value_similarity": 1.0,
+          "structure_similarity": 1.0,
+          "value_similarity": 1.0,
+          "exact_value_match": true,
+          "owner_meaningful_value_count": 3,
+          "visitor_meaningful_value_count": 3,
+          "shared_value_count": 3,
+          "owner_specific_shared_value_count": 3,
+          "owner_specific_shared_value_paths": [
+            "author",
+            "public",
+            "title"
+          ],
+          "shared_resource_identifier_count": 0,
+          "shared_resource_identifier_paths": [],
+          "owner_only_shared_resource_identifier_count": 0,
+          "owner_only_shared_resource_identifier_paths": [],
+          "visitor_self_provided": false,
+          "visitor_self_exact_match": false,
+          "visitor_self_value_similarity": 0.0,
+          "visitor_self_shared_resource_identifier_count": 0,
+          "confirmation_signals": [],
+          "expected_public": true,
+          "requires_auth": false,
+          "trusted_resource_id_paths": [],
+          "denial_body_conflict": false,
+          "owner_shared_nonpublic_value_paths": []
+        }
+      }
+    },
+    {
+      "endpoint": "GET /api/users/{user_id}/profile",
+      "operation_id": "getUserProfile",
+      "check": "BOLA",
+      "verdict": "CONFIRMED",
+      "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+      "evidence": {
+        "target_url": "http://127.0.0.1:50981/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:50981/api/users/1002/profile",
+        "owner": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "bef2104fbbc72d3fa3cae9524eb0dd5d3a7d29460d7f5709f2d7c14fe2a10ea9",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_cross": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "bef2104fbbc72d3fa3cae9524eb0dd5d3a7d29460d7f5709f2d7c14fe2a10ea9",
+          "truncated": false,
+          "error": null
+        },
+        "anonymous": {
+          "status": 401,
+          "body": "{\"code\": 401, \"error\": \"Authentication required\"}",
+          "sha256": "47a5198d709698ac15790fa7ac68c8ab6e4ce1eaeab7a421c22b69e5d07949cd",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_self": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "01200488fa4628c0bfa9830d04748bdca682787072cbf1a44d73600872847e2e",
+          "truncated": false,
+          "error": null
+        },
+        "metrics": {
+          "confidence": 0.99,
+          "similarity": 1.0
+        },
+        "decision_evidence": {
+          "responses": {
+            "owner": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "visitor_cross": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "anonymous": {
+              "kind": "AUTH_DENIED",
+              "status_code": 401,
+              "is_auth_denial": true,
+              "reason": "HTTP 鉴权拒绝状态码 401"
+            },
+            "visitor_self": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            }
+          },
+          "anonymous_denied": true,
+          "anonymous_exact_match": false,
+          "anonymous_value_similarity": 0.0,
+          "structure_similarity": 1.0,
+          "value_similarity": 1.0,
+          "exact_value_match": true,
+          "owner_meaningful_value_count": 4,
+          "visitor_meaningful_value_count": 4,
+          "shared_value_count": 4,
+          "owner_specific_shared_value_count": 3,
+          "owner_specific_shared_value_paths": [
+            "department",
+            "name",
+            "salary"
+          ],
+          "shared_resource_identifier_count": 0,
+          "shared_resource_identifier_paths": [],
+          "owner_only_shared_resource_identifier_count": 0,
+          "owner_only_shared_resource_identifier_paths": [],
+          "visitor_self_provided": true,
+          "visitor_self_exact_match": false,
+          "visitor_self_value_similarity": 0.142857,
+          "visitor_self_shared_resource_identifier_count": 0,
+          "confirmation_signals": [
+            "exact_business_value_match",
+            "high_business_value_overlap"
+          ],
+          "expected_public": false,
+          "requires_auth": true,
+          "trusted_resource_id_paths": [],
+          "denial_body_conflict": false,
+          "owner_shared_nonpublic_value_paths": [
+            "department",
+            "name",
+            "role",
+            "salary"
+          ]
+        }
+      }
+    },
+    {
+      "endpoint": "GET /api/documents/{doc_uuid}",
+      "operation_id": "getConfidentialDocument",
+      "check": "BOLA",
+      "verdict": "SECURE",
+      "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+      "evidence": {
+        "target_url": "http://127.0.0.1:50981/api/documents/550e8400-e29b-41d4-a716-446655440000",
+        "visitor_self_url": "http://127.0.0.1:50981/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2",
+        "owner": {
+          "status": 200,
+          "body": "{\"content\": \"[REDACTED]\", \"id\": \"550e8400-e29b-41d4-a716-446655440000\", \"owner_id\": \"1001\", \"title\": \"[REDACTED]\"}",
+          "sha256": "b93942ad955470a72b38f87a4b9e353caadac44614e4ab79ad6fcf3cfd0d8b52",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_cross": {
+          "status": 403,
+          "body": "{\"code\": 403, \"error\": \"Forbidden\"}",
+          "sha256": "8b0a6238de200b26459309970c3539c86a387fe04c6cd953bb31fc13474e6670",
+          "truncated": false,
+          "error": null
+        },
+        "anonymous": {
+          "status": 401,
+          "body": "{\"code\": 401, \"error\": \"Unauthorized\"}",
+          "sha256": "2f67a496c42e029b18142f8153e3cb599c5402f3df237fdd05b95f937e6ede3a",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_self": {
+          "status": 200,
+          "body": "{\"content\": \"[REDACTED]\", \"id\": \"7d444840-9dc0-11d1-b245-5ffdce74fad2\", \"owner_id\": \"1002\", \"title\": \"[REDACTED]\"}",
+          "sha256": "5adef504266413baea03b6097afeabdee0195487b06e79343216476c12d1df69",
+          "truncated": false,
+          "error": null
+        },
+        "metrics": {
+          "confidence": 1.0,
+          "similarity": 0.0
+        },
+        "decision_evidence": {
+          "responses": {
+            "owner": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "visitor_cross": {
+              "kind": "AUTH_DENIED",
+              "status_code": 403,
+              "is_auth_denial": true,
+              "reason": "HTTP 鉴权拒绝状态码 403"
+            },
+            "anonymous": {
+              "kind": "AUTH_DENIED",
+              "status_code": 401,
+              "is_auth_denial": true,
+              "reason": "HTTP 鉴权拒绝状态码 401"
+            },
+            "visitor_self": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            }
+          },
+          "anonymous_denied": true,
+          "anonymous_exact_match": false,
+          "anonymous_value_similarity": 0.0,
+          "structure_similarity": 0.0,
+          "value_similarity": 0.0,
+          "exact_value_match": false,
+          "owner_meaningful_value_count": 2,
+          "visitor_meaningful_value_count": 0,
+          "shared_value_count": 0,
+          "owner_specific_shared_value_count": 0,
+          "owner_specific_shared_value_paths": [],
+          "shared_resource_identifier_count": 0,
+          "shared_resource_identifier_paths": [],
+          "owner_only_shared_resource_identifier_count": 0,
+          "owner_only_shared_resource_identifier_paths": [],
+          "visitor_self_provided": true,
+          "visitor_self_exact_match": false,
+          "visitor_self_value_similarity": 0.0,
+          "visitor_self_shared_resource_identifier_count": 0,
+          "confirmation_signals": [],
+          "expected_public": false,
+          "requires_auth": true,
+          "trusted_resource_id_paths": [],
+          "denial_body_conflict": false,
+          "owner_shared_nonpublic_value_paths": []
+        }
+      }
+    },
+    {
+      "endpoint": "PATCH /api/users/{user_id}/settings",
+      "operation_id": "updateUserSettings",
+      "check": "MASS_ASSIGNMENT",
+      "verdict": "CONFIRMED",
+      "reason": "Privilege field 'role' persisted after mutation",
+      "evidence": {
+        "field": "role",
+        "readback_field": "role",
+        "snapshot_fields": [
+          "role"
+        ],
+        "verification_scope": "Full readback document except explicitly ignored volatile paths",
+        "ignored_readback_paths": [],
+        "mutation": {
+          "status": 200,
+          "body": "{\"data\": {\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"admin\", \"salary\": \"[REDACTED]\"}, \"status\": \"success\"}",
+          "sha256": "5c51f4b94305bb140842fbcb4b4b12ab45fc5dd84c42031a1bdbd7f594a9b1e4",
+          "truncated": false,
+          "error": null
+        },
+        "after": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"admin\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "22218090e97259835a63a6c065f10c7b5d0f33b7d6aeba5009a3904a13939b0a",
+          "truncated": false,
+          "error": null
+        },
+        "rollback": {
+          "status": 200,
+          "body": "{\"data\": {\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}, \"status\": \"success\"}",
+          "sha256": "adcfe2b7e9dbdd1d13898a4fa175439852f3d475303833711abcab6d75ef4d61",
+          "truncated": false,
+          "error": null
+        },
+        "restored": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "01200488fa4628c0bfa9830d04748bdca682787072cbf1a44d73600872847e2e",
+          "truncated": false,
+          "error": null
+        },
+        "rollback_verified": true,
+        "recovery_sent": true,
+        "tested_fields": [
+          "role"
+        ],
+        "untested_fields": [],
+        "readback_consistency": "strong"
+      }
+    },
+    {
+      "endpoint": "PATCH /api/users/{user_id}/nickname",
+      "operation_id": "updateUserNickname",
+      "check": "MASS_ASSIGNMENT",
+      "verdict": "SECURE",
+      "reason": "Strongly consistent readback showed no persistence for all configured fields",
+      "evidence": {
+        "tested_fields": [
+          "role"
+        ],
+        "safe_fields": [
+          "role"
+        ],
+        "unverified": [],
+        "configured_fields": [
+          "role"
+        ]
+      }
+    }
+  ],
+  "findings": [
+    {
+      "type": "BOLA (Broken Object Level Authorization)",
+      "cwe": "CWE-639",
+      "severity": "High",
+      "endpoint": "GET /api/users/{user_id}/profile",
+      "target_url": "http://127.0.0.1:50981/api/users/1001/profile",
+      "details": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+      "evidence": {
+        "target_url": "http://127.0.0.1:50981/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:50981/api/users/1002/profile",
+        "owner": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "bef2104fbbc72d3fa3cae9524eb0dd5d3a7d29460d7f5709f2d7c14fe2a10ea9",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_cross": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "bef2104fbbc72d3fa3cae9524eb0dd5d3a7d29460d7f5709f2d7c14fe2a10ea9",
+          "truncated": false,
+          "error": null
+        },
+        "anonymous": {
+          "status": 401,
+          "body": "{\"code\": 401, \"error\": \"Authentication required\"}",
+          "sha256": "47a5198d709698ac15790fa7ac68c8ab6e4ce1eaeab7a421c22b69e5d07949cd",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_self": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "01200488fa4628c0bfa9830d04748bdca682787072cbf1a44d73600872847e2e",
+          "truncated": false,
+          "error": null
+        },
+        "metrics": {
+          "confidence": 0.99,
+          "similarity": 1.0
+        },
+        "decision_evidence": {
+          "responses": {
+            "owner": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "visitor_cross": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            },
+            "anonymous": {
+              "kind": "AUTH_DENIED",
+              "status_code": 401,
+              "is_auth_denial": true,
+              "reason": "HTTP 鉴权拒绝状态码 401"
+            },
+            "visitor_self": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "有效 JSON 业务响应"
+            }
+          },
+          "anonymous_denied": true,
+          "anonymous_exact_match": false,
+          "anonymous_value_similarity": 0.0,
+          "structure_similarity": 1.0,
+          "value_similarity": 1.0,
+          "exact_value_match": true,
+          "owner_meaningful_value_count": 4,
+          "visitor_meaningful_value_count": 4,
+          "shared_value_count": 4,
+          "owner_specific_shared_value_count": 3,
+          "owner_specific_shared_value_paths": [
+            "department",
+            "name",
+            "salary"
+          ],
+          "shared_resource_identifier_count": 0,
+          "shared_resource_identifier_paths": [],
+          "owner_only_shared_resource_identifier_count": 0,
+          "owner_only_shared_resource_identifier_paths": [],
+          "visitor_self_provided": true,
+          "visitor_self_exact_match": false,
+          "visitor_self_value_similarity": 0.142857,
+          "visitor_self_shared_resource_identifier_count": 0,
+          "confirmation_signals": [
+            "exact_business_value_match",
+            "high_business_value_overlap"
+          ],
+          "expected_public": false,
+          "requires_auth": true,
+          "trusted_resource_id_paths": [],
+          "denial_body_conflict": false,
+          "owner_shared_nonpublic_value_paths": [
+            "department",
+            "name",
+            "role",
+            "salary"
+          ]
+        }
+      }
+    },
+    {
+      "type": "Mass Assignment (independent readback confirmed)",
+      "cwe": "CWE-915",
+      "severity": "Critical",
+      "endpoint": "PATCH /api/users/{user_id}/settings",
+      "target_url": "http://127.0.0.1:50981/api/users/1002/settings",
+      "details": "Privilege field 'role' persisted after mutation",
+      "injected_payload": {
+        "role": "admin"
+      },
+      "evidence": {
+        "field": "role",
+        "readback_field": "role",
+        "snapshot_fields": [
+          "role"
+        ],
+        "verification_scope": "Full readback document except explicitly ignored volatile paths",
+        "ignored_readback_paths": [],
+        "mutation": {
+          "status": 200,
+          "body": "{\"data\": {\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"admin\", \"salary\": \"[REDACTED]\"}, \"status\": \"success\"}",
+          "sha256": "5c51f4b94305bb140842fbcb4b4b12ab45fc5dd84c42031a1bdbd7f594a9b1e4",
+          "truncated": false,
+          "error": null
+        },
+        "after": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"admin\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "22218090e97259835a63a6c065f10c7b5d0f33b7d6aeba5009a3904a13939b0a",
+          "truncated": false,
+          "error": null
+        },
+        "rollback": {
+          "status": 200,
+          "body": "{\"data\": {\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}, \"status\": \"success\"}",
+          "sha256": "adcfe2b7e9dbdd1d13898a4fa175439852f3d475303833711abcab6d75ef4d61",
+          "truncated": false,
+          "error": null
+        },
+        "restored": {
+          "status": 200,
+          "body": "{\"department\": \"[REDACTED]\", \"id\": \"1002\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
+          "sha256": "01200488fa4628c0bfa9830d04748bdca682787072cbf1a44d73600872847e2e",
+          "truncated": false,
+          "error": null
+        },
+        "rollback_verified": true,
+        "recovery_sent": true,
+        "tested_fields": [
+          "role"
+        ],
+        "untested_fields": [],
+        "readback_consistency": "strong"
+      }
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Enterprise Cloud Core Platform API",
+    "description": "工业级生产环境微服务 API 架构契约规范，包含多级嵌套与 $ref 结构引用",
+    "version": "2.4.0"
+  },
+  "servers": [
+    {"url": "http://127.0.0.1:8080", "description": "Local Testing Service"}
+  ],
+  "paths": {
+    "/api/public/articles/{article_id}": {
+      "get": {
+        "summary": "获取公开新闻与公告 (公开接口，测试防误报)",
+        "operationId": "getPublicArticle",
+        "security": [],
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "integer", "example": 101}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArticleDTO"}}}
+          }
+        }
+      }
+    },
+    "/api/documents/{doc_uuid}": {
+      "get": {
+        "summary": "获取加密高密文档 (安全授权接口，UUID 路径参数)",
+        "operationId": "getConfidentialDocument",
+        "parameters": [
+          {
+            "name": "doc_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string", "format": "uuid", "example": "550e8400-e29b-41d4-a716-446655440000"}
+          }
+        ],
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DocumentDTO"}}}
+          }
+        }
+      }
+    },
+    "/api/users/{user_id}/profile": {
+      "get": {
+        "summary": "获取用户敏感私密档案 (存在 BOLA 漏洞)",
+        "operationId": "getUserProfile",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "integer", "example": 1001}
+          }
+        ],
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserProfileDTO"}}}
+          }
+        }
+      }
+    },
+    "/api/users/{user_id}/settings": {
+      "patch": {
+        "summary": "更新用户系统参数 (存在 Mass Assignment 漏洞)",
+        "operationId": "updateUserSettings",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "integer", "example": 1002}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UserSettingsDTO"}
+            }
+          }
+        },
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"description": "Updated"}
+        }
+      }
+    },
+    "/api/users/{user_id}/nickname": {
+      "patch": {
+        "summary": "更新用户昵称 (防御健全接口，后端静默丢弃多余字段)",
+        "operationId": "updateUserNickname",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "integer", "example": 1002}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UserNicknameDTO"}
+            }
+          }
+        },
+        "security": [{"bearerAuth": []}],
+        "responses": {
+          "200": {"description": "Updated"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ArticleDTO": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer"},
+          "title": {"type": "string"},
+          "author": {"type": "string"},
+          "public": {"type": "boolean"}
+        }
+      },
+      "DocumentDTO": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "owner_id": {"type": "string"},
+          "title": {"type": "string"},
+          "content": {"type": "string"}
+        }
+      },
+      "UserProfileDTO": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "role": {"type": "string"},
+          "salary": {"type": "string"},
+          "department": {"type": "string"}
+        }
+      },
+      "UserSettingsDTO": {
+        "type": "object",
+        "properties": {
+          "department": {"type": "string", "example": "Security R&D"},
+          "role": {"type": "string", "description": "危险特权字段，应由管理员配置", "example": "admin"}
+        }
+      },
+      "UserNicknameDTO": {
+        "type": "object",
+        "properties": {
+          "nickname": {"type": "string", "example": "cyber_ninja"}
+        }
+      }
+    }
+  }
+}
