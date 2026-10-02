@@ -1,5 +1,10 @@
 # GrantTrace
 
+![CI](https://github.com/ysc070528/granttrace/actions/workflows/test.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
+
+An evidence-driven API security auditing tool for detecting authorization issues such as BOLA, IDOR and Mass Assignment vulnerabilities.
 GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
 
 - BOLA / IDOR：其他登录身份能否读取资源所有者的数据。
