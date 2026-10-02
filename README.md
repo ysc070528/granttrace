@@ -6,6 +6,17 @@
 
 An evidence-driven, safety-first API authorization auditing tool for OpenAPI specifications. GrantTrace focuses on BOLA / IDOR and Mass Assignment testing, with read-only defaults, explicit write controls, rollback verification, and evidence-oriented reporting.
 
+**Highlights**
+
+- Evidence-based BOLA / IDOR detection with multi-identity comparison.
+- Safety-first Mass Assignment testing with explicit write controls and rollback verification.
+- OpenAPI 3.x / Swagger 2.0 support with HTML and JSON audit reports.
+
+[快速开始](#安装) · [演示效果](#演示效果) · [配置说明](#配置结构) · [常用参数](#常用参数) · [测试](#测试) · [安全边界](#当前边界)
+## 演示效果
+
+![GrantTrace audit report preview](docs/assets/demo.png)
+
 GrantTrace 是一个安全优先、证据驱动的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
 
 - BOLA / IDOR：其他登录身份能否读取资源所有者的数据。
@@ -185,10 +196,6 @@ granttrace \
 | `--dry-run` | 只展示本地计划，不向目标发送请求；可用 `--export-json` 导出 |
 | `--include-sensitive-evidence` | 在报告中保留敏感字段；默认关闭 |
 
-## 演示效果
-
-![GrantTrace 审计报告示例](docs/assets/demo.png)
-
 ## 结果解释
 
 - `CONFIRMED`：证据满足确认条件。
@@ -299,7 +306,6 @@ GrantTrace/
 ├── api_sentinel.py              # 命令行统一入口脚本
 ├── CHANGELOG.md                 # 变更日志 (更新至 2.3.1-final)
 ├── config.example.json          # 完整配置示例（带 JSON Schema 关联）
-├── config.json                  # 标准本地配置模板
 ├── config.schema.json           # JSON Schema 规范文件 (自 v2.3.0 起提供，v2.3.1-final 更新)
 ├── LICENSE                      # 开源许可协议 (Apache-2.0)
 ├── openapi.json                 # 靶场演示 OpenAPI 3.0.3 规范
