@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive regression test suite for API-Sentinel v2.3.0 hardening.
+"""Comprehensive regression test suite for GrantTrace v2.3.0 hardening.
 
 Verifies:
 1. Normal CLI entry point main() executes full ConfigValidator semantic validation

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Local, stateful target used by API-Sentinel's integration tests.
+"""Local, stateful target used by GrantTrace's integration tests.
 
 The server intentionally exposes one BOLA endpoint and one mass-assignment
 endpoint. It binds only to loopback and can reset its in-memory state between
@@ -177,7 +177,7 @@ class TargetMockHandler(BaseHTTPRequestHandler):
 def run_server(port: int = 8080) -> None:
     TargetMockHandler.reset_database()
     server = ThreadingHTTPServer(("127.0.0.1", port), TargetMockHandler)
-    print(f"[*] API-Sentinel test server listening on 127.0.0.1:{port}")
+    print(f"[*] GrantTrace test server listening on 127.0.0.1:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

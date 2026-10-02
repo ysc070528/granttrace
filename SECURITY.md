@@ -1,6 +1,6 @@
 # Security and safe operation
 
-API-Sentinel sends requests to the target named on the command line. Use it
+GrantTrace sends requests to the target named on the command line. Use it
 only against systems for which you have explicit authorization.
 
 The default mode does not execute mutation checks. `--allow-write-tests`
@@ -13,7 +13,7 @@ change is observed, the scanner attempts to restore the original value and
 verifies the restoration. A rollback failure is reported as an error and must
 be investigated immediately.
 
-Since version 2.2, API-Sentinel snapshots complete written containers and arrays, using observed
+Since version 2.2, GrantTrace snapshots complete written containers and arrays, using observed
 business values instead of generated examples. Every possibly committed mutation
 passes through finally-protected recovery, including decode/readback exceptions.
 Recovery errors or HTTP 202 halt subsequent writes. Verification compares the
@@ -50,6 +50,6 @@ boundaries. This is not a universal PII detector: arbitrary private free text,
 path identifiers and unrecognized business fields may remain. Treat minimized
 reports as sensitive too.
 
-To report a vulnerability in API-Sentinel itself, contact the project owner
+To report a vulnerability in GrantTrace itself, contact the project owner
 privately before publishing details.
 

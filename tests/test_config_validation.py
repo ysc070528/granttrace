@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive regression test suite for API-Sentinel configuration validation."""
+"""Comprehensive regression test suite for GrantTrace configuration validation."""
 
 from __future__ import annotations
 

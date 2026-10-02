@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Command-line entry point for API-Sentinel."""
+"""Command-line entry point for GrantTrace."""
 
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ from core.reporter import SecurityReportGenerator
 
 
 BANNER = r"""
-    ___     ____  ____      _____            __  _            __
-   /   |   / __ \/  _/     / ___/___  ____  / /_(_)___  ___  / /
-  / /| |  / /_/ // /       \__ \/ _ \/ __ \/ __/ / __ \/ _ \/ /
- / ___ | / ____// /       ___/ /  __/ / / / /_/ / / / /  __/ /
-/_/  |_|/_/   /___/      /____/\___/_/ /_/\__/_/_/ /_/\___/_/
+ ###  ## #   ###  #  #  ##### ##### ## #   ###   ###  ####
+ #    #  #  #  #  ## #    #     #   #  #  #  #  #     #
+ # ## ##    ####  # ##    #     #   ##    ####  #     ###
+ #  # # #   #  #  #  #    #     #   # #   #  #  #     #
+ ###  #  #  #  #  #  #    #     #   #  #  #  #   ###  ####
              safety-first API authorization auditing  v2.3.1-final
 """
 
@@ -112,7 +112,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--version",
         "-v",
         action="version",
-        version="API-Sentinel 2.3.1-final",
+        version="GrantTrace 2.3.1-final",
         help="Show program version and exit",
     )
     return parser
