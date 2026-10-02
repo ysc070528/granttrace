@@ -1,6 +1,6 @@
-# API-Sentinel
+# GrantTrace
 
-API-Sentinel 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
+GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
 
 - BOLA / IDOR：其他登录身份能否读取资源所有者的数据。
 - Mass Assignment：客户端能否修改角色等受保护字段。
