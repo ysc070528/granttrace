@@ -267,7 +267,7 @@ class APISentinelAuditor:
         try:
             headers = {
                 "accept": "application/json",
-                "user-agent": "API-Sentinel/2.3.1-final",
+                "user-agent": "GrantTrace/2.3.1-final",
                 **self._identity_headers(identity_name),
             }
             encoded_data = None
@@ -978,7 +978,7 @@ class APISentinelAuditor:
         endpoints = self.parser.get_endpoints()
         self.stats["total_endpoints"] = len(endpoints)
         print("=" * 68)
-        print("API-Sentinel 2.3.1-final safety-first audit")
+        print("GrantTrace 2.3.1-final safety-first audit")
         print(f"Specification: {self.parser.version} | endpoints: {len(endpoints)}")
         print(
             "Write tests: "

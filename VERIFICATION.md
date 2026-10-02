@@ -1,4 +1,4 @@
-# API-Sentinel 验收记录
+# GrantTrace 验收记录
 
 ## v2.3.1-final 修复版验收记录
 
@@ -25,7 +25,7 @@
 
 ### 交付范围
 
-ZIP 为 `API-Sentinel-Hardened-v2.3.1-final.zip`，根目录为 `API-Sentinel-Hardened/`，正式文件 44 个。归档排除构建目录、egg-info、Python 缓存、虚拟环境和临时扫描输出；保留重新生成的两个参考报告。原始 v2.3.0-final ZIP 与审查副本保持不变。
+历史版本归档记录：原 v2.3.1 迁移前 ZIP 为 `API-Sentinel-Hardened-v2.3.1-final.zip`，历史根目录为 `API-Sentinel-Hardened/`，正式文件 44 个。归档排除构建目录、egg-info、Python 缓存、虚拟环境和临时扫描输出；保留重新生成的两个参考报告。原始 v2.3.0-final ZIP 与审查副本保持不变。
 
 未访问真实业务 API，未执行线上部署，未运行 GitHub Actions；本地靶场的 100% 覆盖率只属于这 5 个示例端点。应用层恢复不能通用撤销并发业务修改、异步任务或读回未暴露的外部副作用。
 
@@ -67,8 +67,8 @@ ZIP 为 `API-Sentinel-Hardened-v2.3.1-final.zip`，根目录为 `API-Sentinel-Ha
 - 构建环境清理：构建完成后已清理 `build/`、`temp_dist/`、`*.egg-info` 等中间产物，未混入交付包。
 
 ### 5. 交付 ZIP 清洁检查验收
-- 交付归档名称：`API-Sentinel-Hardened-v2.3.0-final.zip`。
-- 归档文件构成：**严格 40 个正式文件**，顶层目录统一定义为 `API-Sentinel-Hardened/`。
+- 历史交付归档名称：`API-Sentinel-Hardened-v2.3.0-final.zip`。
+- 归档文件构成：**严格 40 个正式文件**，历史归档顶层目录为 `API-Sentinel-Hardened/`。
 - 清洁度核验结果：
   - 确认**零** `__pycache__`、**零** `*.pyc`、**零** `.pytest_cache`、**零** `.git` 目录；
   - 确认**零**临时扫描输出物（无 `result.json`、`report.html`、`scan.log`、`API_Security_Report.html`）；
