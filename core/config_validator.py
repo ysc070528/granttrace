@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Authoritative configuration validation engine for GrantTrace (v2.3.1-final).
+"""Authoritative configuration validation engine for API-Sentinel (v2.3.1-final).
 
-Provides offline, comprehensive semantic validation for GrantTrace configuration
+Provides offline, comprehensive semantic validation for API-Sentinel configuration
 files. Reuses the exact security rules and constraints enforced by the auditor
 and transaction managers without requiring external dependencies like jsonschema.
 """
@@ -70,7 +70,7 @@ class ConfigValidationResult:
 
 
 class ConfigValidator:
-    """Authoritative semantic validator for GrantTrace configuration objects."""
+    """Authoritative semantic validator for API-Sentinel configuration objects."""
 
     MAX_RECURSION_DEPTH = 15
 

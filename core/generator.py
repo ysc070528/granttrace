@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Constraint-aware request data generation for GrantTrace."""
+"""Constraint-aware request data generation for API Sentinel."""
 
 from __future__ import annotations
 
