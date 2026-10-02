@@ -272,7 +272,6 @@ GrantTrace/
 ├── openapi.json                 # 靶场演示 OpenAPI 3.0.3 规范
 ├── pyproject.toml               # Python 项目打包元数据 (2.3.1)
 ├── README.md                    # 官方技术文档与用户指南
-├── README_FINAL.md              # 最终交付验收说明
 ├── SECURITY.md                  # 安全策略与漏洞通报指南
 ├── test_suite.py                # 简易测试运行脚本 (基于标准库 unittest)
 └── VERIFICATION.md              # 验收历史档案与 v2.3.1-final 记录
