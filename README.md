@@ -33,12 +33,13 @@ GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发
 ```bash
 git clone https://github.com/ysc070528/granttrace.git
 cd granttrace
-
+```
 
 ### 安装依赖
 
 ```bash
 python -m pip install -e .
+```
 ## 在内置靶场中验证
 
 先启动仅监听本机的模拟服务：
@@ -244,7 +245,7 @@ python -m unittest discover -s tests
 ```text
 GrantTrace/
 ├── .github/
-│   └── workflows/ci.yml         # CI 自动化流水线配置
+│   └── workflows/test.yml         # CI 自动化流水线配置
 ├── core/                        # 核心引擎模块
 │   ├── __init__.py              # 包元信息与版本声明 (2.3.1-final)
 │   ├── auditor.py               # 审计协调器与测试调度
