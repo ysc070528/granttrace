@@ -12,11 +12,53 @@ An evidence-driven, safety-first API authorization auditing tool for OpenAPI spe
 - Safety-first Mass Assignment testing with explicit write controls and rollback verification.
 - OpenAPI 3.x / Swagger 2.0 support with HTML and JSON audit reports.
 
-[快速开始](#安装) · [演示效果](#演示效果) · [配置说明](#配置结构) · [常用参数](#常用参数) · [测试](#测试) · [安全边界](#当前边界)
+[快速开始](#快速开始) · [演示效果](#演示效果) · [配置说明](#配置结构) · [常用参数](#常用参数) · [测试](#测试) · [安全边界](#当前边界)
 ## 演示效果
 
 ![GrantTrace audit report preview](docs/assets/demo.png)
 
+## 快速开始
+
+要求 Python 3.9 或更高版本。
+
+1. 克隆并进入项目：
+
+```bash
+git clone https://github.com/ysc070528/granttrace.git
+cd granttrace
+```
+
+2. 安装 GrantTrace：
+
+```bash
+python -m pip install -e .
+```
+
+3. 创建本地配置：
+
+```bash
+cp config.example.json config.json
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+4. 启动本地演示靶场：
+
+```bash
+python mock_server/server.py
+```
+
+5. 另开一个终端执行首次只读扫描：
+
+```bash
+granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.json --export-json result.json
+```
+
+默认模式不会执行写测试；需要主动修改状态的检查必须显式开启。
 GrantTrace 是一个安全优先、证据驱动的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
 
 - BOLA / IDOR：其他登录身份能否读取资源所有者的数据。
