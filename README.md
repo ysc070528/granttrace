@@ -156,6 +156,10 @@ python api_sentinel.py \
 | `--dry-run` | 只展示本地计划，不向目标发送请求；可用 `--export-json` 导出 |
 | `--include-sensitive-evidence` | 在报告中保留敏感字段；默认关闭 |
 
+## 演示效果
+
+![GrantTrace 审计报告示例](docs/assets/demo.png)
+
 ## 结果解释
 
 - `CONFIRMED`：证据满足确认条件。
