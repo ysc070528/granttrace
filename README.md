@@ -28,10 +28,17 @@ GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发
 
 要求 Python 3.9 或更高版本。
 
+### 获取项目
+
+```bash
+git clone https://github.com/ysc070528/granttrace.git
+cd granttrace
+
+
+### 安装依赖
+
 ```bash
 python -m pip install -e .
-```
-
 ## 在内置靶场中验证
 
 先启动仅监听本机的模拟服务：
