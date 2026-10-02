@@ -126,7 +126,7 @@ class SecurityReportGenerator:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GrantTrace 审计报告</title>
+  <title>API-Sentinel 审计报告</title>
   <style>
     :root {{ color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; }}
     body {{ margin:0; background:#f8fafc; color:#0f172a; }}
@@ -155,7 +155,7 @@ class SecurityReportGenerator:
 </head>
 <body><main>
   <header>
-    <div><h1>GrantTrace 审计报告</h1>
+    <div><h1>API-Sentinel 审计报告</h1>
       <div class="meta">目标：<strong>{cls._escape(target_url)}</strong></div>
       <div class="meta">生成时间：{cls._escape(generated_at)}</div>
     </div>

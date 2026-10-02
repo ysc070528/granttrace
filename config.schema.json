@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:granttrace:schema:config:2.3.1",
-  "title": "GrantTrace Configuration Schema",
-  "description": "JSON Schema specification for GrantTrace v2.3.1-final authorization and mass-assignment auditing configuration.",
+  "$id": "https://raw.githubusercontent.com/api-sentinel/api-sentinel/v2.3.1-final/config.schema.json",
+  "title": "API-Sentinel Configuration Schema",
+  "description": "JSON Schema specification for API-Sentinel v2.3.1-final authorization and mass-assignment auditing configuration.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

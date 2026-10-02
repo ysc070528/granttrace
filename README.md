@@ -1,11 +1,6 @@
-# GrantTrace
+# API-Sentinel
 
-![CI](https://github.com/ysc070528/granttrace/actions/workflows/test.yml/badge.svg)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-![License](https://img.shields.io/badge/license-Apache--2.0-green)
-
-An evidence-driven API security auditing tool for detecting authorization issues such as BOLA, IDOR and Mass Assignment vulnerabilities.
-GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
+API-Sentinel 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发布版本为 **v2.3.1-final**。它重点检查：
 
 - BOLA / IDOR：其他登录身份能否读取资源所有者的数据。
 - Mass Assignment：客户端能否修改角色等受保护字段。
@@ -28,17 +23,10 @@ GrantTrace 是一个安全优先的 OpenAPI 逻辑权限审计工具，当前发
 
 要求 Python 3.9 或更高版本。
 
-### 获取项目
-
-```bash
-git clone https://github.com/ysc070528/granttrace.git
-cd granttrace
-
-
-### 安装依赖
-
 ```bash
 python -m pip install -e .
+```
+
 ## 在内置靶场中验证
 
 先启动仅监听本机的模拟服务：
@@ -238,7 +226,7 @@ python -m unittest discover -s tests
 ## 目录
 
 ```text
-GrantTrace/
+API-Sentinel-Hardened/
 ├── .github/
 │   └── workflows/ci.yml         # CI 自动化流水线配置
 ├── core/                        # 核心引擎模块
@@ -284,6 +272,7 @@ GrantTrace/
 ├── openapi.json                 # 靶场演示 OpenAPI 3.0.3 规范
 ├── pyproject.toml               # Python 项目打包元数据 (2.3.1)
 ├── README.md                    # 官方技术文档与用户指南
+├── README_FINAL.md              # 最终交付验收说明
 ├── SECURITY.md                  # 安全策略与漏洞通报指南
 ├── test_suite.py                # 简易测试运行脚本 (基于标准库 unittest)
 └── VERIFICATION.md              # 验收历史档案与 v2.3.1-final 记录

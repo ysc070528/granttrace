@@ -1,6 +1,6 @@
 {
   "$schema": "./config.schema.json",
-  "description": "Exemplary GrantTrace test configuration. Dedicated test identities and resources only.",
+  "description": "Exemplary API-Sentinel test configuration. Dedicated test identities and resources only.",
   "identities": {
     "owner": {
       "id": "1001",
