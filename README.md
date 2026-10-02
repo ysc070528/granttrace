@@ -66,7 +66,7 @@ python mock_server/server.py
 另开终端执行默认只读扫描：
 
 ```bash
-python api_sentinel.py \
+granttrace \
   --spec openapi.json \
   --target http://127.0.0.1:8080 \
   --config config.json \
@@ -78,7 +78,7 @@ python api_sentinel.py \
 在这个一次性本地靶场中启用状态变更测试：
 
 ```bash
-python api_sentinel.py \
+granttrace \
   --spec openapi.json \
   --target http://127.0.0.1:8080 \
   --config config.json \
@@ -156,10 +156,10 @@ python api_sentinel.py \
    基本用法：
    ```bash
    # 校验项目默认配置（返回码 0 为合法）
-   python api_sentinel.py --spec openapi.json --config config.json --validate-config
+   granttrace --spec openapi.json --config config.json --validate-config
 
    # 校验示例配置
-   python api_sentinel.py --spec openapi.json --config config.example.json --validate-config
+   granttrace --spec openapi.json --config config.example.json --validate-config
    ```
 
    - **退出码 0**：配置语义完全合法，无任何违规；
@@ -205,7 +205,7 @@ python api_sentinel.py \
 先用只读模式或本地计划核对范围：
 
 ```bash
-python api_sentinel.py --spec openapi.json --config config.json --dry-run --export-json plan.json
+granttrace --spec openapi.json --config config.json --dry-run --export-json plan.json
 ```
 
 - 显式 CLI `--write-endpoint` **替换**配置允许清单，不会扩大它；操作路径区分大小写。干跑退出码 0 只代表本地计划生成成功，不是扫描通过。
