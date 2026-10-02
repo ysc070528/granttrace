@@ -30,3 +30,5 @@ build/
 # Local secrets
 .env
 *.local.json
+
+config.json

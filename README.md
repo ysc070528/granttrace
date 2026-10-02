@@ -40,6 +40,21 @@ cd granttrace
 ```bash
 python -m pip install -e .
 ```
+### 创建本地配置
+
+复制示例配置生成本地配置文件：
+
+```bash
+cp config.example.json config.json
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+`config.json` 仅用于本地配置，已加入 `.gitignore`，请勿提交真实令牌或凭证。
 ## 在内置靶场中验证
 
 先启动仅监听本机的模拟服务：
