@@ -47,6 +47,10 @@ def main():
         "--wheelhouse", type=Path,
         help="Install dependencies offline from this pre-populated wheel directory",
     )
+    parser.add_argument(
+        "--wheel", type=Path,
+        help="Validate this already-built release wheel instead of rebuilding it",
+    )
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "install-verification.json")
     args = parser.parse_args()
     manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -65,11 +69,14 @@ def main():
     # Select only the wheel from this build. Older files in dist cannot affect validation.
     with tempfile.TemporaryDirectory(prefix="granttrace-build-") as build_directory:
         built_dir = Path(build_directory)
-        run(
-            [sys.executable, "-m", "pip", "wheel", "--no-cache-dir", "--no-build-isolation",
-             "--no-deps", ROOT, "--wheel-dir", built_dir],
-            ROOT, env,
-        )
+        if args.wheel:
+            shutil.copyfile(args.wheel.resolve(), built_dir / args.wheel.name)
+        else:
+            run(
+                [sys.executable, "-m", "pip", "wheel", "--no-cache-dir", "--no-build-isolation",
+                 "--no-deps", ROOT, "--wheel-dir", built_dir],
+                ROOT, env,
+            )
         wheels = list(built_dir.glob("granttrace-*.whl"))
         if len(wheels) != 1:
             raise RuntimeError("Expected exactly one GrantTrace wheel from the current build")
@@ -120,12 +127,25 @@ def main():
         # Exercise the installed scanner and its default output outside the checkout.
         TargetMockHandler.reset_database()
         before = copy.deepcopy(TargetMockHandler.DATABASE)
-        server = ThreadingHTTPServer(("127.0.0.1", 0), TargetMockHandler)
+        class RecordingHandler(TargetMockHandler):
+            user_agents = []
+            patch_requests = 0
+
+            def do_GET(self):
+                self.user_agents.append(self.headers.get("User-Agent"))
+                super().do_GET()
+
+            def do_PATCH(self):
+                RecordingHandler.patch_requests += 1
+                self.user_agents.append(self.headers.get("User-Agent"))
+                super().do_PATCH()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), RecordingHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             scan_file = outside / "installed-result.json"
-            run(
+            scan_output = run(
                 [cli, "--spec", spec, "--config", config,
                  "--target", f"http://127.0.0.1:{server.server_port}",
                  "--delay", "0", "--export-json", scan_file],
@@ -135,11 +155,37 @@ def main():
             if not report_file.is_file() or f">v{__version__}</span>" not in report_file.read_text(encoding="utf-8"):
                 raise RuntimeError("Installed scan did not generate a default HTML report with the release version")
             scan = json.loads(scan_file.read_text(encoding="utf-8"))
+            readonly_patch_requests = RecordingHandler.patch_requests
             if (scan["tool_version"] != __version__ or scan["stats"]["confirmed"] != 1
                     or scan["stats"]["skipped_count"] != 2
                     or scan["stats"]["conclusive_coverage_pct"] != 60.0
+                    or readonly_patch_requests != 0
+                    or f"GrantTrace {__version__} safety-first audit" not in scan_output
                     or before != TargetMockHandler.DATABASE):
                 raise RuntimeError("Installed default scan did not match the read-only example")
+            active_file = outside / "installed-active-result.json"
+            run(
+                [cli, "--spec", spec, "--config", config,
+                 "--target", f"http://127.0.0.1:{server.server_port}",
+                 "--delay", "0", "--allow-write-tests", "--export-json", active_file],
+                outside, env,
+            )
+            active = json.loads(active_file.read_text(encoding="utf-8"))
+            restored = before == TargetMockHandler.DATABASE
+            rollback = next(
+                finding for finding in active["findings"] if finding["cwe"] == "CWE-915"
+            )["evidence"]["rollback_verified"]
+            if (active["tool_version"] != __version__ or active["stats"]["confirmed"] != 2
+                    or active["stats"]["error_count"] != 0
+                    or active["stats"]["conclusive_coverage_pct"] != 100.0
+                    or RecordingHandler.patch_requests == 0
+                    or not restored or not rollback
+                    or f">v{__version__}</span>" not in report_file.read_text(encoding="utf-8")):
+                raise RuntimeError("Installed active scan or complete mock restoration failed")
+            if not RecordingHandler.user_agents or set(RecordingHandler.user_agents) != {
+                f"GrantTrace/{__version__}"
+            }:
+                raise RuntimeError("Installed HTTP User-Agent disagrees with the release version")
         finally:
             server.shutdown()
             server.server_close()
@@ -192,11 +238,18 @@ def main():
             "installed_metadata_version": installed["metadata_version"],
             "installed_runtime_version": installed["runtime_version"],
             "version_consistency": True,
-            "fresh_build_directory": True,
+            "fresh_build_directory": not bool(args.wheel),
+            "supplied_release_wheel": bool(args.wheel),
             "installed_import_checked": True,
             "installed_default_report": report_file.name,
             "installed_cli_and_reporter_defaults_checked": True,
             "installed_readonly_scan": "passed",
+            "installed_readonly_patch_requests": readonly_patch_requests,
+            "installed_active_scan": "passed",
+            "installed_active_patch_requests": RecordingHandler.patch_requests,
+            "installed_user_agent_checked": True,
+            "installed_active_rollback_verified": rollback,
+            "installed_full_database_restored": restored,
             "installed_html_json_versions_checked": True,
             "declared_pyyaml_dependency_installed": True,
             "config_validation": "passed",

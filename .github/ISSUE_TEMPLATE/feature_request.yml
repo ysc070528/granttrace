@@ -1,0 +1,61 @@
+name: Feature request / 功能建议
+description: Describe a concrete use case and the current limitation.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请使用公开或合成案例，勿上传 Token、Cookie、API Key、生产数据或敏感身份信息。
+        Use public or synthetic examples; do not upload credentials, production data or sensitive identity information.
+        GrantTrace 自身的安全漏洞请按照 [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md) 私下报告。
+  - type: textarea
+    id: use-case
+    attributes:
+      label: 使用场景 / Use case
+      description: What authorized auditing task are you trying to complete?
+    validations:
+      required: true
+  - type: textarea
+    id: current-limitation
+    attributes:
+      label: 当前限制 / Current limitation
+    validations:
+      required: true
+  - type: textarea
+    id: desired-behavior
+    attributes:
+      label: 希望的行为 / Desired behavior
+    validations:
+      required: true
+  - type: textarea
+    id: existing-features
+    attributes:
+      label: 为什么现有功能不够 / Why are existing features insufficient?
+      description: Mention any existing options or workarounds you tried.
+    validations:
+      required: true
+  - type: dropdown
+    id: write-requests
+    attributes:
+      label: 是否涉及写请求 / Does this involve write requests?
+      options:
+        - "否 / No"
+        - "是 / Yes"
+        - "不确定 / Unsure"
+    validations:
+      required: true
+  - type: dropdown
+    id: public-example-available
+    attributes:
+      label: 是否可以提供公开最小案例 / Can you provide a public minimal example?
+      options:
+        - "是 / Yes"
+        - "否 / No"
+        - "暂时不能 / Not yet"
+    validations:
+      required: true
+  - type: textarea
+    id: public-example
+    attributes:
+      label: 公开最小案例 / Public minimal example
+      description: Link to or describe a synthetic spec and local mock example, if available.

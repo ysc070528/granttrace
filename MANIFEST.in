@@ -1,0 +1,8 @@
+include CHANGELOG.md CONTRIBUTING.md SECURITY.md VERIFICATION.md
+include config.example.json config.schema.json openapi.json test_suite.py
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include docs *.md
+include docs/assets/report-preview.png
+include examples/README.md examples/sample_report.html examples/sample_result.json
+global-exclude __pycache__ *.py[cod] *.local.json

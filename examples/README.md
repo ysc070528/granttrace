@@ -2,9 +2,8 @@
 
 Regenerated with `python scripts/verify_examples.py --update-examples` on
 2026-10-03 with Python 3.14.5 and PyYAML 6.0.3. Runtime and package metadata both
-declare the unreleased development version **2.4.0.dev0**. The latest published
-Release remains **v2.3.1**, whose historical assets do not contain the current
-unreleased changes. The complete mock
+declare **2.4.0**. Historical Release assets, including **v2.3.1**, are unchanged.
+The complete mock
 database was compared before/after and was unchanged. With vulnerability gates
 enabled the CLI exits 1, as expected for this deliberately vulnerable fixture.
 See ../VERIFICATION.md for full test scope and historical runtime boundaries.

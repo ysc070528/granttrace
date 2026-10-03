@@ -1,33 +1,54 @@
 # Changelog
 
-## Unreleased (2.4.0.dev0) - Onboarding, actionable reports and parameter contracts
+## 2.4.0 - 2026-10-03
 
-- Add mandatory Ruff checks, real unittest branch coverage with text/XML/JSON
-  evidence, runtime dependency auditing and an independent Python CodeQL workflow.
-  Keep mypy advisory while recording existing type debt without new suppressions.
-- Clarify stable/development versions in the README, enrich package metadata,
-  and document maintainer-controlled branch protection and merged-branch cleanup.
-- Identify the current development build as 2.4.0.dev0 across runtime, package
-  metadata and reports. The latest published release remains v2.3.1; its
-  historical assets do not include the unreleased changes below.
-- Use granttrace_report.html when no output path is supplied.
-- Add a visible README report preview, private vulnerability reporting link,
-  local-output ignore rules and a reproducible release checklist.
-- Keep one five-minute README walkthrough and link detailed configuration,
-  migration, complete sample reports and independently recorded verification.
-- Explain identity/resource access, changed fields, restoration and next steps
-  before raw evidence; add offline search/status filters and compact severity labels.
+### Added
+
 - Generate offline OpenAPI configuration drafts and missing-input checklists;
   reject unresolved drafts and refuse to overwrite existing files.
-- Share strict OpenAPI style/explode and Swagger collectionFormat encoding across
-  scans/readbacks; preserve arrays and lowercase booleans, and decline unsupported
-  or ambiguous parameter formats before sending requests.
+- Add offline HTML report search/status filters and compact severity labels.
+- Support strict OpenAPI style/explode and Swagger collectionFormat parameter
+  serialization in scans/readbacks, including arrays and lowercase booleans;
+  decline unsupported or ambiguous formats before sending requests.
 - Add explicit per-pair expected_visitor_access for legitimate sharing/admin
-  reads, recorded as AUTHORIZED. JSON report schema becomes version 2.
-- Add six local authorization truth fixtures with false-positive/false-negative
-  accounting; retain denial, anonymous-leak and invalid-baseline boundaries.
+  reads, recorded as AUTHORIZED, and six local authorization truth fixtures with
+  false-positive/false-negative accounting.
+- Add mandatory Ruff checks, real unittest branch coverage with text/XML/JSON
+  evidence, runtime dependency auditing with pip-audit, and a Python CodeQL
+  workflow. Keep mypy advisory while recording existing type debt.
+- Add simple issue templates and contribution guidance with private vulnerability
+  reporting and reminders to exclude credentials and sensitive target data.
+
+### Changed
+
+- Promote the previously identified 2.4.0.dev0 development build to 2.4.0 across
+  runtime, package metadata and reports; retain api_sentinel.py and
+  APISentinelAuditor compatibility.
+- Use granttrace_report.html when no output path is supplied and align package
+  description, version status and GrantTrace branding.
+- Keep a concise five-minute README walkthrough, add identity/readback/restoration
+  highlights, and preserve the visible report preview and detailed guide links.
+- Explain identity/resource access, changed fields, restoration and next steps
+  before raw evidence. JSON report schema is version 2.
 - Remove tests' dependence on untracked config.json; automate JSON/YAML mock
   restoration and clean wheel installation outside the checkout in CI.
+- Maintain reproducible release verification and local-output ignore rules;
+  remove an unused demo image while preserving the report preview.
+- Include example configuration, guides and verification scripts in the source
+  distribution so its documented local checks can be reproduced.
+
+### Security / Safety
+
+- Preserve default read-only auditing and explicit allowlisted JSON PATCH checks;
+  active POST/PUT checks and automated authentication are not added.
+- Preserve independent GET readback, original-state snapshots, finally-protected
+  restoration and rollback verification. Failed recovery halts subsequent writes.
+- Preserve TLS verification by default, explicit non-loopback HTTP opt-in and
+  minimized/redacted evidence by default.
+- Retain denial, anonymous-leak and invalid-baseline boundaries without changing
+  the BOLA / IDOR or Mass Assignment detection criteria during release preparation.
+
+Historical release tags and assets, including v2.3.1, remain unchanged.
 
 ## 2.3.1 - Verified authorization, snapshot and credential fixes
 
