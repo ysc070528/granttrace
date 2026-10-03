@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased - Onboarding, actionable reports and parameter contracts
+## Unreleased (2.4.0.dev0) - Onboarding, actionable reports and parameter contracts
 
+- Identify the current development build as 2.4.0.dev0 across runtime, package
+  metadata and reports. The latest published release remains v2.3.1; its
+  historical assets do not include the unreleased changes below.
+- Use granttrace_report.html when no output path is supplied.
+- Add a visible README report preview, private vulnerability reporting link,
+  local-output ignore rules and a reproducible release checklist.
 - Keep one five-minute README walkthrough and link detailed configuration,
   migration, complete sample reports and independently recorded verification.
 - Explain identity/resource access, changed fields, restoration and next steps
@@ -18,7 +24,7 @@
 - Remove tests' dependence on untracked config.json; automate JSON/YAML mock
   restoration and clean wheel installation outside the checkout in CI.
 
-## 2.3.1 (v2.3.1-final) - Verified authorization, snapshot and credential fixes
+## 2.3.1 - Verified authorization, snapshot and credential fixes
 
 - Require trustworthy, clean anonymous rejection before a visitor-denial branch
   can produce endpoint-level SECURE; leaked business data remains suspicious.

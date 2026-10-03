@@ -50,6 +50,10 @@ boundaries. This is not a universal PII detector: arbitrary private free text,
 path identifiers and unrecognized business fields may remain. Treat minimized
 reports as sensitive too.
 
-To report a vulnerability in GrantTrace itself, contact the project owner
-privately before publishing details.
+To report a vulnerability in GrantTrace itself, use GitHub's
+[private vulnerability report form](https://github.com/ysc070528/granttrace/security/advisories/new).
+Describe the affected version, reproduction steps, impact, and a minimal
+redacted example. Do not include real credentials or target data. If the form is
+unavailable to your account, ask the owner for a private contact channel without
+disclosing vulnerability details in a public issue.
 

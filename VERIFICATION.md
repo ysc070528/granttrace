@@ -1,8 +1,43 @@
 # GrantTrace 验收记录
 
-## 2026-10-03 开发分支：首次体验、报告与参数编码
+## 2026-10-03 当前 PR：2.4.0.dev0 开发版本身份
 
-本记录对应本次拉取请求代码；包元数据仍为 GrantTrace 2.3.1，尚未发布新的版本。历史发布验收在下方独立保留。
+当前 PR #10 的开发版本身份统一为 **2.4.0.dev0**，适用于运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据。最新正式 Release 仍为 **v2.3.1**，其标签与历史资产保持原样，尚未包含当前 `Unreleased` 变更。本次仅修正开发版本身份，不合并 PR、不发布 Release、不删除分支。
+
+本次版本身份修正后，在 Windows Python **3.14.5**、PyYAML **6.0.3** 下重新执行：
+
+- `python -m unittest discover -s tests`：**268/268 通过，0 失败、0 错误、0 跳过**。现有真实 HTTP 版本回归同时核对 Banner、User-Agent、HTML 和 JSON 均读取 `core.__version__`。
+- `python scripts/verify_business_scenarios.py`：六个业务真值场景全部通过，样本误报、漏报、不确定各为 0。
+- `python scripts/verify_examples.py --update-examples`：重新生成示例 HTML/JSON；只读与主动 JSON/YAML 的状态计数、60%/100% 覆盖率和完整数据库恢复均符合原有预期。
+- `python scripts/verify_install.py`：本轮构建 **`granttrace-2.4.0.dev0-py3-none-any.whl`**，在全新虚拟环境由 pip 解析并安装声明依赖，从源码目录外验证已安装 CLI、实际默认 HTML/JSON、JSON/YAML 预检和计划导出、未完成草稿阻断，全部通过。首次运行因沙箱禁止访问 PyPI 失败，允许网络访问后原命令重跑通过。
+- 版本一致性：`pyproject.toml`、`core.__version__`、`granttrace --version`、User-Agent（`GrantTrace/2.4.0.dev0`）、HTML（`v2.4.0.dev0`）、JSON `tool_version`、wheel 及已安装 metadata 全部对应 **2.4.0.dev0**。
+- 用现有截图脚本从重新生成的示例报告导出两张 PNG，Edge 页面版本为 `v2.4.0.dev0`。仓库内剩余 `2.3.1` 仅用于历史事实、正式 Release 链接和既有配置 schema 标识；schema 语义未改变，沿用原 `$id`。
+
+下方 268 项、265 项测试与 2.3.1 wheel 等结果均是此前修订的真实历史记录，与本段当前开发构建的重新验收分别记录。
+
+---
+
+## 2026-10-03 发布自检修订（版本身份修正前的历史记录）
+
+本段记录此前发布自检修订，当时开发代码仍标为 **2.3.1**；运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据使用该版本。这一历史标识已在当前修订改为 **2.4.0.dev0**。以下保留当时实际验收结果，没有修改历史 `v2.3.1` 标签或重新发布其 ZIP，历史 Release 资产不包含这些开发变更。
+
+- **完整回归：268/268 通过，0 失败、0 错误、0 跳过**，分别在 Windows Python 3.12.11 和 3.14.5、真实 PyYAML 6.0.3 下执行。新增三项回归验证项目版本、实际 CLI 默认报告以及直接 Reporter 默认输出。
+- 实际不传 `-o` 的扫描生成 **`granttrace_report.html`**。只读结果为 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，确定性覆盖率 60%；JSON/YAML 主动结果均为 2 CONFIRMED、1 PUBLIC、2 SECURE，确定性覆盖率 100%。三个模式的完整数据库均与运行前一致，主动 Mass Assignment 的恢复核验成功。
+- `scripts/verify_business_scenarios.py` 六个场景全部符合独立真值，样本误报、漏报、不确定各为 0；范围限本地模型。
+- `scripts/verify_install.py` 在本次独立临时目录构建 wheel，新环境安装后核对文件名及 metadata、运行时和 CLI 版本；从源码目录外运行真实只读扫描，不传 `-o` 生成默认报告并核对 HTML/JSON 版本。JSON/YAML 预检、只读计划和草稿阻断均通过。离线依赖来自当前平台的 PyYAML wheelhouse。另放入无效旧版本 wheel 后复验通过，证明旧 `dist/` 产物不会被误选。
+- Git 跟踪列表无 `config.json`。实际验证 11 个本地配置/报告/计划产物被忽略，6 个示例/schema/源码配置路径不被忽略。源码配置规则仅作用于仓库根，专用 `*.local.json` 与草稿清单规则仍适用于各目录。
+- GitHub 仓库实时设置核验：Topics 保留原列表并添加 `mass-assignment`；private vulnerability reporting 为 `enabled: true`；`delete_branch_on_merge: true`。SECURITY 已提供私密表单链接，提交报告需要登录 GitHub。
+- README 首屏补英文一句话和无需展开的报告图；示例 HTML/JSON、完整截图和紧凑预览均重新生成。Edge 实际页面版本显示 `v2.3.1`，搜索/状态筛选正常，本地文档链接与图片路径检查通过。
+
+尚未完成的清单项是“远程分支仅保留 main”。七个旧功能分支已验证为 `main` 的祖先，但自动审批拒绝删除远程分支，理由是截图请求没有明确授权这项删除。旧分支继续保留；本轮新 PR 分支在审查期间也需保留，合并后由已启用的自动删除设置清理。需要维护者明确批准旧分支删除后再核验并勾选此项。
+
+本轮没有访问生产 API、发布新的 Release 或合并本轮 PR。CI 的实际运行结果以本轮 PR 检查为准。
+
+---
+
+## 2026-10-03 开发分支：首次体验、报告与参数编码（此前修订的历史记录）
+
+本段对应此前首次体验、报告与参数编码修订；当时包元数据为 GrantTrace **2.3.1**，未发布新的版本。以下 265 项测试和 `granttrace-2.3.1-py3-none-any.whl` 等结果保留原始执行事实，当前开发版本为 **2.4.0.dev0**。更早的发布验收在下方独立保留。
 
 - **完整回归：265/265 通过，0 失败、0 错误、0 跳过**。Windows 下分别运行 Python 3.12.11 与 3.14.5，真实 PyYAML 6.0.3 已安装。新增 42 项覆盖配置草稿、参数序列化、报告交互及业务授权；测试无需未追踪的 `config.json`。
 - 产品、验收脚本和测试共 34 个 Python 文件通过 Python 3.9 语法模式解析；本机未实际运行 Python 3.9。CI 配置覆盖 3.9、3.12、3.14，远程执行结果以本次 PR 检查为准。

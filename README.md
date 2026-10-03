@@ -4,9 +4,13 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
+An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
+
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
-[五分钟体验](#五分钟体验) · [完整示例报告](examples/sample_report.html) · [配置指南](docs/configuration.md) · [命令行与迁移](docs/advanced.md) · [验收记录](VERIFICATION.md)
+[五分钟体验](#五分钟体验) · [完整示例报告](examples/sample_report.html) · [配置指南](docs/configuration.md) · [命令行与迁移](docs/advanced.md) · [验收记录](VERIFICATION.md) · [发布自检](docs/release-checklist.md)
+
+<img src="docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
 
 ## 五分钟体验
 
@@ -22,27 +26,20 @@ python mock_server/server.py
 另开终端，进入同一目录执行首次只读扫描：
 
 ```bash
-granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --output report.html --export-json result.json
+granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --export-json result.local.json
 ```
 
-用浏览器打开 **`report.html`**：先查看发现与修复建议，再按状态筛选端点、展开证据。预期结果为 **1 个 CONFIRMED、1 个 PUBLIC、1 个 SECURE、2 个 SKIPPED**，确定性覆盖率 **60%**。两个 PATCH 因默认只读而跳过。
+用浏览器打开默认生成的 **`granttrace_report.html`**：先查看发现与修复建议，再按状态筛选端点、展开证据。预期结果为 **1 个 CONFIRMED、1 个 PUBLIC、1 个 SECURE、2 个 SKIPPED**，确定性覆盖率 **60%**。两个 PATCH 因默认只读而跳过。JSON 结果写入 `result.local.json`；两个本地产物均由 `.gitignore` 忽略。
 
 在这个可丢弃的本地靶场体验写测试和恢复核验：
 
 ```bash
-granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --allow-write-tests --output report.html --export-json result.json
+granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --allow-write-tests --export-json result.local.json
 ```
 
-预期 **2 个 CONFIRMED、1 个 PUBLIC、2 个 SECURE**，确定性覆盖率 **100%**，批量赋值发现的 `rollback_verified` 为 `true`。这些结果只属于内置五个演示端点。
+再次打开 **`granttrace_report.html`**。预期 **2 个 CONFIRMED、1 个 PUBLIC、2 个 SECURE**，确定性覆盖率 **100%**，批量赋值发现的 `rollback_verified` 为 `true`。本次扫描更新同名 HTML / JSON 文件；这些结果只属于内置五个演示端点。
 
 完整离线示例：[HTML 报告](examples/sample_report.html)（下载后用浏览器打开）与 [JSON 结果](examples/sample_result.json)。
-
-<details>
-<summary>报告预览</summary>
-
-<img src="docs/assets/demo.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
-
-</details>
 
 ## 接入自己的 API
 
@@ -56,7 +53,7 @@ granttrace --spec your-openapi.yaml --init-config config.local.json
 
 ```bash
 granttrace --spec your-openapi.yaml --config config.local.json --validate-config
-granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.json
+granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json
 ```
 
 账户、API Key / Cookie、合法共享和管理员访问配置见 [配置指南](docs/configuration.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。

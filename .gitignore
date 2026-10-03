@@ -31,5 +31,26 @@ build/
 # Local secrets
 .env
 *.local.json
+/config.json
+/config.*.json
+!/config.example.json
+!/config.schema.json
 
-config.json
+# Generated configuration drafts and missing-input checklists
+*.checklist.json
+
+# Local reports and exported plans (curated examples remain tracked)
+granttrace_report.html
+granttrace_report.json
+API_Security_Report.html
+API_Security_Report.json
+report.html
+report.json
+report.*.json
+result.json
+result.*.json
+plan.json
+plan.*.json
+*-plan.json
+!/examples/sample_report.html
+!/examples/sample_result.json

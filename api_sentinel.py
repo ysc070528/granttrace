@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
+from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_scaffold import config_needs_input, write_config_scaffold
 from core.config_validator import ConfigValidator
@@ -20,13 +21,13 @@ from core.parser import OpenAPIParser
 from core.reporter import SecurityReportGenerator
 
 
-BANNER = r"""
+BANNER = rf"""
  ###  ## #   ###  #  #  ##### ##### ## #   ###   ###  ####
  #    #  #  #  #  ## #    #     #   #  #  #  #  #     #
  # ## ##    ####  # ##    #     #   ##    ####  #     ###
  #  # # #   #  #  #  #    #     #   # #   #  #  #     #
  ###  #  #  #  #  #  #    #     #   #  #  #  #   ###  ####
-             safety-first API authorization auditing  v2.3.1-final
+             safety-first API authorization auditing  v{__version__}
 """
 
 
@@ -60,7 +61,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Maximum response bytes retained per request",
     )
     parser.add_argument(
-        "--output", "-o", default="API_Security_Report.html", help="HTML report path"
+        "--output", "-o", default="granttrace_report.html", help="HTML report path (default: granttrace_report.html)"
     )
     parser.add_argument("--export-json", default=None, help="Optional machine-readable JSON report")
     parser.add_argument(
@@ -117,7 +118,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--version",
         "-v",
         action="version",
-        version="GrantTrace 2.3.1-final",
+        version=f"GrantTrace {__version__}",
         help="Show program version and exit",
     )
     return parser
@@ -360,7 +361,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             with open(args.export_json, "w", encoding="utf-8") as handle:
                 json.dump(
                     {
-                        "tool_version": "2.3.1-final",
+                        "tool_version": __version__,
                         "report_schema_version": 2,
                         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "elapsed_seconds": round(elapsed, 3),
