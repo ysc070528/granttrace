@@ -192,7 +192,9 @@ class SmartDataGenerator:
         )):
             return False
 
-        check = lambda candidate, child: cls._validate_schema_value(candidate, child, request=request)
+        def check(candidate, child):
+            return cls._validate_schema_value(candidate, child, request=request)
+
         for keyword in ("allOf", "anyOf", "oneOf"):
             if keyword not in schema:
                 continue

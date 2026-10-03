@@ -11,7 +11,6 @@ from urllib.parse import parse_qs, urlsplit
 
 from core.auditor import APISentinelAuditor
 from core.generator import SmartDataGenerator
-from core.models import HTTPResult
 from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
 from core.parser import OpenAPIParser
 

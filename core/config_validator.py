@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import difflib
 import math
-import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from core.evidence import _is_sensitive_key, safe_diagnostic_value, sanitize_log_text, sanitize_text
-from core.models import STANDARD_HTTP_METHODS, parse_operation_key
+from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text
+from core.models import parse_operation_key
 from core.transactions import path_parts, paths_collide
 
 

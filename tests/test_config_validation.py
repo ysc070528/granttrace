@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import io
 import json
-import socket
 import tempfile
 import unittest
-import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch

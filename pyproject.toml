@@ -15,11 +15,19 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Security"
 ]
 
+[project.urls]
+Repository = "https://github.com/ysc070528/granttrace"
+Issues = "https://github.com/ysc070528/granttrace/issues"
+Changelog = "https://github.com/ysc070528/granttrace/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8", "ruff>=0.6,<1", "mypy>=1.11,<3", "coverage[toml]>=7.6,<8", "types-PyYAML>=6,<7"]
 
 [project.scripts]
 granttrace = "api_sentinel:main"
@@ -37,4 +45,28 @@ addopts = "-q"
 [tool.ruff]
 line-length = 110
 target-version = "py39"
+
+[tool.ruff.lint]
+# Explicit baseline avoids future defaults forcing a broad modernization.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.coverage.run]
+branch = true
+source = ["core", "api_sentinel"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+
+[tool.coverage.xml]
+output = "dist/coverage.xml"
+
+[tool.coverage.json]
+output = "dist/coverage.json"
+
+[tool.mypy]
+# Advisory snapshot of product code on the quality job's interpreter.
+python_version = "3.12"
+files = ["api_sentinel.py", "core"]
+check_untyped_defs = true
 

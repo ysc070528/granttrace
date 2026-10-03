@@ -47,7 +47,7 @@ class OpenAPIParser:
                         import yaml  # type: ignore
                     except ImportError as exc:
                         raise RuntimeError(
-                            "YAML OpenAPI files require the optional PyYAML package; "
+                            "YAML OpenAPI files require the PyYAML package; "
                             "install it with 'pip install PyYAML'."
                         ) from exc
                     data = yaml.safe_load(handle)

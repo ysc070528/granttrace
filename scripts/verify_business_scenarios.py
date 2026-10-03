@@ -16,9 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.auditor import APISentinelAuditor
-
-
 # Truth is declared before any scan; neither the report nor tool verdict sets it.
 SCENARIOS = (
     {
@@ -67,6 +64,8 @@ SCENARIOS = (
 
 
 def run_scenarios():
+    from core.auditor import APISentinelAuditor
+
     outcomes = []
     for scenario in SCENARIOS:
         owner = {

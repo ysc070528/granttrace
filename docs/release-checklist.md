@@ -13,7 +13,7 @@
 - [x] Git 跟踪列表不含 `config.json`；`.gitignore` 覆盖本地配置、草稿 checklist、HTML / JSON 报告和计划，保留示例与 schema。
 - [x] GitHub Topics 包含 `mass-assignment`。
 - [x] README 首屏有英文一句话和无需展开即可看到的报告图，完整示例报告链接可访问。
-- [ ] 远程 Branches 仅保留 `main`。现有七个旧分支均已合入 `main`，尚未删除，删除需维护者明确授权；本轮 PR 的临时分支也在审查期间保留，合并后由已启用的自动删除设置清理。全部清理后再复核此项。
+- [ ] 由维护者在 GitHub 网页启用或复核 `main` Branch Protection，并按需删除已合并的旧远程分支。此前自检记录七个旧分支已合入 `main`、自动删除设置已启用；分支数量与设置须以当前网页状态为准。本轮保留 PR 审查分支，不修改仓库设置、不删除远程分支。
 
 ## 本地复验
 
@@ -51,6 +51,7 @@ gh release view v2.3.1 --repo ysc070528/granttrace
 gh api repos/ysc070528/granttrace/private-vulnerability-reporting
 gh api repos/ysc070528/granttrace/topics
 gh api repos/ysc070528/granttrace/branches --paginate --jq '.[].name'
+gh api repos/ysc070528/granttrace/branches/main --jq '{name, protected}'
 ```
 
-私密报告开关应为 `enabled: true`，Topics 应包含 `mass-assignment`。七个已合并旧分支仍需维护者明确授权删除；本轮临时分支在 PR 合并后自动删除。全部清理后再确认仅有 `main`。打开 README 检查可见报告图片与完整示例链接，并打开 [私密漏洞报告表单](https://github.com/ysc070528/granttrace/security/advisories/new) 确认入口可用。GitHub CLI 权限不足时，在仓库网页查看对应设置并记录实际结果。
+私密报告开关应为 `enabled: true`，Topics 应包含 `mass-assignment`。若 `main` 的 `protected` 为 `false`，由维护者在 GitHub 网页手动配置 Branch Protection，并选择本轮新增的必要 CI 检查。旧分支先确认已合并，再由维护者按需手动删除；本轮 PR 分支在审查期间保留。此前记录的自动删除设置也应以网页现状复核。打开 README 检查可见报告图片与完整示例链接，并打开 [私密漏洞报告表单](https://github.com/ysc070528/granttrace/security/advisories/new) 确认入口可用。GitHub CLI 权限不足时，在仓库网页查看对应设置并记录实际结果。本轮不执行仓库设置修改或远程分支删除。
