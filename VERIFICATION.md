@@ -1,5 +1,61 @@
 # GrantTrace 验收记录
 
+## 2026-10-03 工程化收尾：2.4.0.dev0
+
+本轮从最新 `main`（`9732a68`）创建 `codex/repository-hardening`，开发版本仍为 **2.4.0.dev0**。GitHub 只读查询确认最新正式 Release 为 **v2.3.1**，`main` 的 `protected` 为 `false`。未修改检测标准、身份规则、写允许清单、独立读回或恢复限制；未访问生产 API、使用真实凭据、修改仓库设置、删除远程分支、合并、建 tag 或发布 Release。
+
+### 本地实际结果
+
+环境：Windows，Python **3.14.5**，PyYAML **6.0.3**，Node 可用；工具版本为 Ruff **0.16.10**、coverage.py **7.16.2**、mypy **2.4.0**、pip-audit **2.10.1**、actionlint **1.7.12**。
+
+| 检查 | 实际结果 |
+|---|---|
+| `python -m unittest discover -s tests` | 修改前后均 **268/268 通过**；0 失败、0 错误、0 跳过 |
+| `python -m coverage run -m unittest discover -s tests` | 同一正式测试入口，**268/268 通过**，0 跳过 |
+| `python -m coverage report` / `xml` / `json` | 总覆盖率 **79.66%**；语句 **3071/3715 = 82.66%**，分支 **1467/1982 = 74.02%**，无排除行 |
+| `python scripts/verify_business_scenarios.py` | 六个业务模型全部符合预先声明的真值，样本误报/漏报/不确定均为 0 |
+| `python scripts/verify_examples.py` | 只读 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED；主动 JSON/YAML 均 2 CONFIRMED、1 PUBLIC、2 SECURE；三次整份数据库恢复成功 |
+| `python scripts/verify_install.py` | fresh build 的 **granttrace-2.4.0.dev0-py3-none-any.whl** 在新虚拟环境由 pip 解析安装依赖；源码目录外 CLI、真实只读 HTML/JSON、预检、JSON/YAML 等价计划、草稿阻断均通过 |
+| `python -m ruff check .` | 全部通过；显式检查 `E4/E7/E9/F`，无新增 `noqa` 或 `type: ignore` |
+| `python -m mypy` | **20 个问题 / 6 个文件**，共检查 13 个源码文件；非阻断，保留全部诊断 |
+| `python -m pip_audit --strict --progress-spinner off --format json --output dist/pip-audit.json .` | 本次解析运行依赖 **PyYAML 6.0.3**，无已知漏洞；未审计开发 extra 或所有历史可选版本 |
+| `python -m pip check` | 无依赖冲突 |
+| actionlint 检查两个 workflow | 通过；工具下载后核对官方 SHA256，未启用本机未安装的 ShellCheck/Pyflakes |
+| Python 3.9 语法模式解析 | 38 个 Python 文件通过；此项不代表 Python 3.9 运行时已在本机验证 |
+| 文档链接和展示 | 10 个 Markdown 文件中的 22 条本地文档/图片链接有效；现有截图和示例品牌/版本保持正确 |
+
+coverage 只测量单元测试父进程中的产品代码 `api_sentinel.py` 与 `core/`，包含未执行代码；不包含 tests、mock、验收脚本或另行启动的 Python 子进程。子进程版本回归仍真实执行。这里的代码覆盖率与报告中的端点确定性覆盖率（只读 60%、主动 100%）是不同指标；本轮没有新增凑覆盖率的测试，也没有设置任意百分比门槛。
+
+### CI 状态与保留问题
+
+- 保留 Python **3.9 / 3.12 / 3.14** 矩阵、unittest、业务/示例/独立安装验收。固定 Node 环境防止报告交互测试因缺 Node 跳过；`coverage[toml]` 支持 Python 3.9 读取本仓库配置。每个解释器生成 text/XML/JSON，显示 missing lines 和分支，并上传 14 天证据与 Actions 摘要。
+- Ruff 为正式门禁；修复限未使用导入/变量、等价局部函数和验收脚本导入位置。mypy 现有问题涉及动态 JSON/Optional 推断、集合类型和返回类型；本轮不批量改变核心实现或加忽略，CI 明确显示 advisory outcome 与诊断。后续可分模块处理再升级门禁。
+- pip-audit 独立用 Python 3.12，避免其 Python >=3.10 要求影响产品的 Python 3.9 支持；直接读取项目运行依赖，`--strict`，不忽略漏洞、不自动修复、服务失败也不会被当作通过。只访问包索引和公开漏洞服务。[工具范围与限制](https://github.com/pypa/pip-audit/blob/main/README.md)
+- CodeQL 独立 workflow 使用 Python 静态分析、`build-mode: none`、默认查询集和最小权限；触发为 PR/main push/每周/手动，不运行扫描器或访问目标 API。[官方配置说明](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configuring-advanced-setup-for-code-scanning) CodeQL 及跨解释器的实际远端结果以本轮 PR checks 为准，本地 actionlint 通过不能替代它们。
+- 版本静态链及真实回归/独立安装均一致：项目与 wheel metadata、`core.__version__`、CLI、User-Agent、HTML、JSON `tool_version` 全为 **2.4.0.dev0**；历史 Release 未变。
+- A 类展示已使用 GrantTrace，本轮修正 README 版本状态及 PyYAML 已是声明依赖的提示措辞。B 类保留兼容模块 `api_sentinel.py`、`APISentinelAuditor`、entry point/import 引用与旧报告 ignore 规则；直接重命名存在外部调用兼容风险。旧 CLI/包/ZIP 名在历史记录中按原事实保留。
+- 本文件已有多个版本与轮次的验收，适合未来拆至 `docs/verification/`、根文件保留索引；本轮新增独立记录，保留所有既有历史原文。
+- 合并前由维护者手动启用/复核 **main Branch Protection**，选择必要测试、Ruff、运行依赖审计和 CodeQL 检查；mypy 暂不作为必需检查。已合并旧远程分支可在确认合并状态后按需手动删除。本轮不执行这两项。若已启用 CodeQL Default setup，需维护者在网页确认 Advanced setup 与本工作流的配置一致。
+
+复现新增检查（正式测试与验收命令见上表）：
+
+```bash
+python -m pip install ".[dev]" setuptools wheel
+python -m ruff check .
+python -m coverage run -m unittest discover -s tests
+python -m coverage report
+python -m coverage xml
+python -m coverage json
+python -m mypy
+# 以下依赖审计在 Python 3.12+ 的独立环境执行。
+python -m pip install "pip-audit>=2.10,<3"
+python -m pip_audit --strict --progress-spinner off --format json --output dist/pip-audit.json .
+```
+
+生成的证据、wheel、缓存均在 ignore 范围，不作为源码提交。工作区的 CRLF 历史文件以 `git -c core.whitespace=cr-at-eol diff --check` 检查；没有修改仓库 Git 配置。
+
+---
+
 ## 2026-10-03 当前 PR：2.4.0.dev0 开发版本身份
 
 当前 PR #10 的开发版本身份统一为 **2.4.0.dev0**，适用于运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据。最新正式 Release 仍为 **v2.3.1**，其标签与历史资产保持原样，尚未包含当前 `Unreleased` 变更。本次仅修正开发版本身份，不合并 PR、不发布 Release、不删除分支。

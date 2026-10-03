@@ -2,6 +2,11 @@
 
 ## Unreleased (2.4.0.dev0) - Onboarding, actionable reports and parameter contracts
 
+- Add mandatory Ruff checks, real unittest branch coverage with text/XML/JSON
+  evidence, runtime dependency auditing and an independent Python CodeQL workflow.
+  Keep mypy advisory while recording existing type debt without new suppressions.
+- Clarify stable/development versions in the README, enrich package metadata,
+  and document maintainer-controlled branch protection and merged-branch cleanup.
 - Identify the current development build as 2.4.0.dev0 across runtime, package
   metadata and reports. The latest published release remains v2.3.1; its
   historical assets do not include the unreleased changes below.

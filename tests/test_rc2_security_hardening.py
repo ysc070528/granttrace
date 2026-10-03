@@ -16,19 +16,15 @@ from __future__ import annotations
 
 import io
 import json
-import math
-import socket
 import tempfile
 import unittest
-import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 
 from api_sentinel import main
 from core.auditor import APISentinelAuditor
 from core.config_validator import ConfigValidator
-from core.evidence import safe_diagnostic_value, sanitize_log_text
+from core.evidence import safe_diagnostic_value
 from core.models import parse_operation_key
 from core.transactions import path_parts
 
@@ -251,7 +247,6 @@ class OperationAndPathConsistencyTests(unittest.TestCase):
         self.assertEqual(canonical, "PATCH /api/users/{id}")
 
         # Auditor accepts it
-        auditor_allowlist = set()
         auditor = APISentinelAuditor(
             spec_path=str(ROOT / "openapi.json"),
             target_base_url="http://127.0.0.1:8080",

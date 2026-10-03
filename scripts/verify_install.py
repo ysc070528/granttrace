@@ -22,10 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core import __version__
-from mock_server.server import TargetMockHandler
-
-
 def run(command, cwd, env):
     result = subprocess.run(
         [str(value) for value in command],
@@ -43,6 +39,9 @@ def run(command, cwd, env):
 
 
 def main():
+    from core import __version__
+    from mock_server.server import TargetMockHandler
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--wheelhouse", type=Path,

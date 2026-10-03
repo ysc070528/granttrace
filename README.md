@@ -4,6 +4,8 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
+**Stable:** [v2.3.1](https://github.com/ysc070528/granttrace/releases/tag/v2.3.1) · **Development:** v2.4.0.dev0
+
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
