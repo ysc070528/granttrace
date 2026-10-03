@@ -977,7 +977,10 @@ class ConfigValidator:
                             expected="JSON object",
                             actual=safe_diagnostic_value(parameter.get("schema")),
                         ))
-                    if valid_name and location in ("path", "query"):
+                    if (
+                        valid_name and isinstance(name, str) and isinstance(location, str)
+                        and location in ("path", "query")
+                    ):
                         identity = (name, location)
                         if identity in identities:
                             issues.append(ConfigIssue(

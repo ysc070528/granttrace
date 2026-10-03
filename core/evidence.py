@@ -104,7 +104,7 @@ def _secret_variants(secret_values: Iterable[str]) -> tuple[str, ...]:
                     component = cookie["credential"].value
                 if component:
                     values.add(component)
-    variants = set()
+    variants: set[str] = set()
     for value in values:
         variants.update((value, quote(value, safe=""), quote_plus(value, safe=""),
                          json.dumps(value, ensure_ascii=True)[1:-1],
@@ -223,34 +223,34 @@ class _Sanitizer:
             return "[NODE_LIMIT]"
         self.nodes_remaining -= 1
         if isinstance(value, dict):
-            result = {}
+            dict_result: dict[str, object] = {}
             for index, (key, item) in enumerate(value.items()):
                 if index >= MAX_CONTAINER_ITEMS or self.nodes_remaining <= 0:
-                    result["_truncated_entries"] = len(value) - index
+                    dict_result["_truncated_entries"] = len(value) - index
                     break
                 normalized = _normalized_key(str(key))
                 safe_key = self.text(str(key), depth)
                 if not self.include_sensitive and (_is_sensitive_key(str(key)) or
                         (business_payload and normalized in BUSINESS_CONTENT_KEYS)):
                     self.nodes_remaining -= 1
-                    result[safe_key] = REDACTED
+                    dict_result[safe_key] = REDACTED
                 elif normalized in BODY_KEYS | PAYLOAD_KEYS and isinstance(item, str):
                     self.nodes_remaining -= 1
-                    result[safe_key] = self.body(item, depth=depth + 1)
+                    dict_result[safe_key] = self.body(item, depth=depth + 1)
                 elif normalized in URL_KEYS and isinstance(item, str):
                     self.nodes_remaining -= 1
-                    result[safe_key] = self._limit_text(self.url(item))
+                    dict_result[safe_key] = self._limit_text(self.url(item))
                 else:
-                    result[safe_key] = self.payload(item, depth + 1, business_payload or normalized in PAYLOAD_KEYS)
-            return result
+                    dict_result[safe_key] = self.payload(item, depth + 1, business_payload or normalized in PAYLOAD_KEYS)
+            return dict_result
         if isinstance(value, (list, tuple)):
-            result = []
+            list_result: list[object] = []
             for index, item in enumerate(value):
                 if index >= MAX_CONTAINER_ITEMS or self.nodes_remaining <= 0:
-                    result.append("[ITEM_LIMIT]")
+                    list_result.append("[ITEM_LIMIT]")
                     break
-                result.append(self.payload(item, depth + 1, business_payload))
-            return result
+                list_result.append(self.payload(item, depth + 1, business_payload))
+            return list_result
         if isinstance(value, str):
             return self.text(value, depth, business_payload)
         if isinstance(value, (int, float)) and not isinstance(value, bool):

@@ -13,7 +13,7 @@ authentication headers are handled by the auditor's authentication context.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, NoReturn, Tuple
 from urllib.parse import quote
 
 
@@ -21,7 +21,7 @@ class ParameterSerializationError(ValueError):
     """A parameter cannot be represented safely using its declared contract."""
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     # Diagnostics intentionally omit parameter values, which may be credentials.
     raise ParameterSerializationError(message + "; no request was sent")
 

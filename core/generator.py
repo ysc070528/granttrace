@@ -437,7 +437,7 @@ class SmartDataGenerator:
 
     @classmethod
     def _numeric_bounds(cls, schema: Dict[str, Any]) -> Tuple[Any, bool, Any, bool]:
-        bounds = []
+        bounds: List[Tuple[Any, bool]] = []
         for ordinary, exclusive, lower in (
             ("minimum", "exclusiveMinimum", True), ("maximum", "exclusiveMaximum", False)
         ):
@@ -447,8 +447,8 @@ class SmartDataGenerator:
             if isinstance(extra, (int, float)) and not isinstance(extra, bool):
                 if bound is None or (extra >= bound if lower else extra <= bound):
                     bound, strict = extra, True
-            bounds.extend((bound, strict))
-        return tuple(bounds)
+            bounds.append((bound, strict))
+        return bounds[0] + bounds[1]
 
     @classmethod
     def _numeric_sample(cls, schema: Dict[str, Any], integer: bool) -> Union[int, float]:
