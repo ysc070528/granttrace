@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
 **Stable:** [v2.4.0](https://github.com/ysc070528/granttrace/releases/tag/v2.4.0)
-**Development:** 2.4.1.dev0 (unreleased)
+**Release prep:** v2.4.1 (not yet released)
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -23,17 +23,17 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## 五分钟体验
 
-需要 Python 3.9+。`demo` 已加入 **2.4.1.dev0 开发分支，尚未发布到 PyPI**；当前稳定版 v2.4.0 暂不支持。含 demo 的版本发布后，首次体验只需：
+需要 Python 3.9+。**v2.4.1 正在准备发布，尚未发布到 PyPI**；当前稳定版 v2.4.0 暂不支持 `demo`。v2.4.1 正式发布到 PyPI 后，首次体验只需：
 
 ```bash
 pip install granttrace
 granttrace demo
 ```
 
-审查当前开发分支时，先安装本轮构建的 wheel，再运行同一条 demo 命令：
+审查当前发布准备分支时，先安装本轮构建的 wheel，再运行同一条 demo 命令：
 
 ```bash
-python -m pip install dist/granttrace-2.4.1.dev0-py3-none-any.whl
+python -m pip install dist/granttrace-2.4.1-py3-none-any.whl
 granttrace demo
 ```
 

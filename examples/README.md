@@ -1,8 +1,10 @@
 # Verified loopback example
 
-Regenerated with `python scripts/verify_examples.py --update-examples` on
-2026-10-03 with Python 3.14.5 and PyYAML 6.0.3. Runtime and package metadata both
-declare **2.4.0**. Historical Release assets, including **v2.3.1**, are unchanged.
+Regenerated with `python scripts/verify_examples.py --update-examples` using
+Python 3.14.5 and PyYAML 6.0.3; the JSON records the UTC generation time.
+Runtime and package metadata both
+declare **2.4.1** for release preparation; this does not indicate a PyPI publication.
+Historical Release assets, including **v2.4.0** and **v2.3.1**, are unchanged.
 The complete mock
 database was compared before/after and was unchanged. With vulnerability gates
 enabled the CLI exits 1, as expected for this deliberately vulnerable fixture.

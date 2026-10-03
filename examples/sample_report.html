@@ -44,10 +44,10 @@
 <body><main>
   <header>
     <div><h1>GrantTrace 审计报告</h1>
-      <div class="meta">目标：<strong>http://127.0.0.1:54499</strong></div>
-      <div class="meta">生成时间：2026-10-03 17:07:44 +0800</div>
+      <div class="meta">目标：<strong>http://127.0.0.1:54446</strong></div>
+      <div class="meta">生成时间：2026-10-04 00:02:21 +0800</div>
     </div>
-    <span class="pill" style="background:#334155">v2.4.0</span>
+    <span class="pill" style="background:#334155">v2.4.1</span>
   </header>
   <section class="grid">
             <div class="card">
@@ -94,8 +94,8 @@
   <h2>端点结果</h2>
   <div style="overflow:auto" role="region" aria-label="端点结果，可横向滚动" tabindex="0"><table>
     <thead><tr><th>结论</th><th>检查</th><th>端点</th><th>访问与变化说明</th></tr></thead>
-    <tbody><tr data-audit-item='result' data-verdict='PUBLIC' data-endpoint='GET /api/public/articles/{article_id}'><td><span class='pill' style='background:#0284c7' title='允许公开访问'>PUBLIC</span></td><td>BOLA</td><td><code>GET /api/public/articles/{article_id}</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54499/api/public/articles/101。</p><p class='result-summary'>本次结果为按配置允许公开访问，请核对该资源的公开范围。</p><p class='meta'>依据：端点显式配置为公开，所有者、访客与匿名响应的完整 JSON 数据完全一致。</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/public/articles/101&quot;,
+    <tbody><tr data-audit-item='result' data-verdict='PUBLIC' data-endpoint='GET /api/public/articles/{article_id}'><td><span class='pill' style='background:#0284c7' title='允许公开访问'>PUBLIC</span></td><td>BOLA</td><td><code>GET /api/public/articles/{article_id}</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54446/api/public/articles/101。</p><p class='result-summary'>本次结果为按配置允许公开访问，请核对该资源的公开范围。</p><p class='meta'>依据：端点显式配置为公开，所有者、访客与匿名响应的完整 JSON 数据完全一致。</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/public/articles/101&quot;,
   &quot;visitor_self_url&quot;: null,
   &quot;owner&quot;: {
     &quot;status&quot;: 200,
@@ -176,9 +176,101 @@
     &quot;expected_visitor_access&quot;: &quot;deny&quot;,
     &quot;policy_scope&quot;: &quot;Configured Owner/Visitor identities and selected resource pair only&quot;
   }
-}</pre></details></td></tr><tr data-audit-item='result' data-verdict='CONFIRMED' data-endpoint='GET /api/users/{user_id}/profile'><td><span class='pill' style='background:#dc2626' title='确认漏洞'>CONFIRMED</span></td><td>BOLA</td><td><code>GET /api/users/{user_id}/profile</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54499/api/users/1001/profile。</p><p class='result-summary'>已确认对象级越权：双方响应的业务值一致；双方响应存在较高的非公开业务值重合。</p><p class='meta'>依据：匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/users/1001/profile&quot;,
-  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/profile&quot;,
+}</pre></details></td></tr><tr data-audit-item='result' data-verdict='SECURE' data-endpoint='GET /api/documents/{doc_uuid}'><td><span class='pill' style='background:#059669' title='所测检查通过'>SECURE</span></td><td>BOLA</td><td><code>GET /api/documents/{doc_uuid}</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54446/api/documents/550e8400-e29b-41d4-a716-446655440000。</p><p class='result-summary'>本次对照显示未授权身份的访问被拒绝；结论仅限所测身份和资源。</p><p class='meta'>依据：访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/documents/550e8400-e29b-41d4-a716-446655440000&quot;,
+  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54446/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2&quot;,
+  &quot;owner&quot;: {
+    &quot;status&quot;: 200,
+    &quot;body&quot;: &quot;{\&quot;content\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;550e8400-e29b-41d4-a716-446655440000\&quot;, \&quot;owner_id\&quot;: \&quot;1001\&quot;, \&quot;title\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
+    &quot;sha256&quot;: &quot;b93942ad955470a72b38f87a4b9e353caadac44614e4ab79ad6fcf3cfd0d8b52&quot;,
+    &quot;truncated&quot;: false,
+    &quot;error&quot;: null
+  },
+  &quot;visitor_cross&quot;: {
+    &quot;status&quot;: 403,
+    &quot;body&quot;: &quot;{\&quot;code\&quot;: 403, \&quot;error\&quot;: \&quot;Forbidden\&quot;}&quot;,
+    &quot;sha256&quot;: &quot;8b0a6238de200b26459309970c3539c86a387fe04c6cd953bb31fc13474e6670&quot;,
+    &quot;truncated&quot;: false,
+    &quot;error&quot;: null
+  },
+  &quot;anonymous&quot;: {
+    &quot;status&quot;: 401,
+    &quot;body&quot;: &quot;{\&quot;code\&quot;: 401, \&quot;error\&quot;: \&quot;Unauthorized\&quot;}&quot;,
+    &quot;sha256&quot;: &quot;2f67a496c42e029b18142f8153e3cb599c5402f3df237fdd05b95f937e6ede3a&quot;,
+    &quot;truncated&quot;: false,
+    &quot;error&quot;: null
+  },
+  &quot;visitor_self&quot;: {
+    &quot;status&quot;: 200,
+    &quot;body&quot;: &quot;{\&quot;content\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;7d444840-9dc0-11d1-b245-5ffdce74fad2\&quot;, \&quot;owner_id\&quot;: \&quot;1002\&quot;, \&quot;title\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
+    &quot;sha256&quot;: &quot;5adef504266413baea03b6097afeabdee0195487b06e79343216476c12d1df69&quot;,
+    &quot;truncated&quot;: false,
+    &quot;error&quot;: null
+  },
+  &quot;metrics&quot;: {
+    &quot;confidence&quot;: 1.0,
+    &quot;similarity&quot;: 0.0
+  },
+  &quot;decision_evidence&quot;: {
+    &quot;responses&quot;: {
+      &quot;owner&quot;: {
+        &quot;kind&quot;: &quot;VALID&quot;,
+        &quot;status_code&quot;: 200,
+        &quot;is_auth_denial&quot;: false,
+        &quot;reason&quot;: &quot;有效 JSON 业务响应&quot;
+      },
+      &quot;visitor_cross&quot;: {
+        &quot;kind&quot;: &quot;AUTH_DENIED&quot;,
+        &quot;status_code&quot;: 403,
+        &quot;is_auth_denial&quot;: true,
+        &quot;reason&quot;: &quot;HTTP 鉴权拒绝状态码 403&quot;
+      },
+      &quot;anonymous&quot;: {
+        &quot;kind&quot;: &quot;AUTH_DENIED&quot;,
+        &quot;status_code&quot;: 401,
+        &quot;is_auth_denial&quot;: true,
+        &quot;reason&quot;: &quot;HTTP 鉴权拒绝状态码 401&quot;
+      },
+      &quot;visitor_self&quot;: {
+        &quot;kind&quot;: &quot;VALID&quot;,
+        &quot;status_code&quot;: 200,
+        &quot;is_auth_denial&quot;: false,
+        &quot;reason&quot;: &quot;有效 JSON 业务响应&quot;
+      }
+    },
+    &quot;anonymous_denied&quot;: true,
+    &quot;anonymous_exact_match&quot;: false,
+    &quot;anonymous_value_similarity&quot;: 0.0,
+    &quot;structure_similarity&quot;: 0.0,
+    &quot;value_similarity&quot;: 0.0,
+    &quot;exact_value_match&quot;: false,
+    &quot;owner_meaningful_value_count&quot;: 2,
+    &quot;visitor_meaningful_value_count&quot;: 0,
+    &quot;shared_value_count&quot;: 0,
+    &quot;owner_specific_shared_value_count&quot;: 0,
+    &quot;owner_specific_shared_value_paths&quot;: [],
+    &quot;shared_resource_identifier_count&quot;: 0,
+    &quot;shared_resource_identifier_paths&quot;: [],
+    &quot;owner_only_shared_resource_identifier_count&quot;: 0,
+    &quot;owner_only_shared_resource_identifier_paths&quot;: [],
+    &quot;visitor_self_provided&quot;: true,
+    &quot;visitor_self_exact_match&quot;: false,
+    &quot;visitor_self_value_similarity&quot;: 0.0,
+    &quot;visitor_self_shared_resource_identifier_count&quot;: 0,
+    &quot;confirmation_signals&quot;: [],
+    &quot;expected_public&quot;: false,
+    &quot;requires_auth&quot;: true,
+    &quot;trusted_resource_id_paths&quot;: [
+      &quot;id&quot;
+    ],
+    &quot;denial_body_conflict&quot;: false,
+    &quot;owner_shared_nonpublic_value_paths&quot;: [],
+    &quot;expected_visitor_access&quot;: &quot;deny&quot;,
+    &quot;policy_scope&quot;: &quot;Configured Owner/Visitor identities and selected resource pair only&quot;
+  }
+}</pre></details></td></tr><tr data-audit-item='result' data-verdict='CONFIRMED' data-endpoint='GET /api/users/{user_id}/profile'><td><span class='pill' style='background:#dc2626' title='确认漏洞'>CONFIRMED</span></td><td>BOLA</td><td><code>GET /api/users/{user_id}/profile</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54446/api/users/1001/profile。</p><p class='result-summary'>已确认对象级越权：双方响应的业务值一致；双方响应存在较高的非公开业务值重合。</p><p class='meta'>依据：匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/users/1001/profile&quot;,
+  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/profile&quot;,
   &quot;owner&quot;: {
     &quot;status&quot;: 200,
     &quot;body&quot;: &quot;{\&quot;department\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;1001\&quot;, \&quot;name\&quot;: \&quot;[REDACTED]\&quot;, \&quot;role\&quot;: \&quot;user\&quot;, \&quot;salary\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
@@ -278,103 +370,11 @@
     &quot;expected_visitor_access&quot;: &quot;deny&quot;,
     &quot;policy_scope&quot;: &quot;Configured Owner/Visitor identities and selected resource pair only&quot;
   }
-}</pre></details></td></tr><tr data-audit-item='result' data-verdict='SECURE' data-endpoint='GET /api/documents/{doc_uuid}'><td><span class='pill' style='background:#059669' title='所测检查通过'>SECURE</span></td><td>BOLA</td><td><code>GET /api/documents/{doc_uuid}</code></td><td><p class='result-summary'>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54499/api/documents/550e8400-e29b-41d4-a716-446655440000。</p><p class='result-summary'>本次对照显示未授权身份的访问被拒绝；结论仅限所测身份和资源。</p><p class='meta'>依据：访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div><pre>{
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/documents/550e8400-e29b-41d4-a716-446655440000&quot;,
-  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54499/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2&quot;,
-  &quot;owner&quot;: {
-    &quot;status&quot;: 200,
-    &quot;body&quot;: &quot;{\&quot;content\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;550e8400-e29b-41d4-a716-446655440000\&quot;, \&quot;owner_id\&quot;: \&quot;1001\&quot;, \&quot;title\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
-    &quot;sha256&quot;: &quot;b93942ad955470a72b38f87a4b9e353caadac44614e4ab79ad6fcf3cfd0d8b52&quot;,
-    &quot;truncated&quot;: false,
-    &quot;error&quot;: null
-  },
-  &quot;visitor_cross&quot;: {
-    &quot;status&quot;: 403,
-    &quot;body&quot;: &quot;{\&quot;code\&quot;: 403, \&quot;error\&quot;: \&quot;Forbidden\&quot;}&quot;,
-    &quot;sha256&quot;: &quot;8b0a6238de200b26459309970c3539c86a387fe04c6cd953bb31fc13474e6670&quot;,
-    &quot;truncated&quot;: false,
-    &quot;error&quot;: null
-  },
-  &quot;anonymous&quot;: {
-    &quot;status&quot;: 401,
-    &quot;body&quot;: &quot;{\&quot;code\&quot;: 401, \&quot;error\&quot;: \&quot;Unauthorized\&quot;}&quot;,
-    &quot;sha256&quot;: &quot;2f67a496c42e029b18142f8153e3cb599c5402f3df237fdd05b95f937e6ede3a&quot;,
-    &quot;truncated&quot;: false,
-    &quot;error&quot;: null
-  },
-  &quot;visitor_self&quot;: {
-    &quot;status&quot;: 200,
-    &quot;body&quot;: &quot;{\&quot;content\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;7d444840-9dc0-11d1-b245-5ffdce74fad2\&quot;, \&quot;owner_id\&quot;: \&quot;1002\&quot;, \&quot;title\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
-    &quot;sha256&quot;: &quot;5adef504266413baea03b6097afeabdee0195487b06e79343216476c12d1df69&quot;,
-    &quot;truncated&quot;: false,
-    &quot;error&quot;: null
-  },
-  &quot;metrics&quot;: {
-    &quot;confidence&quot;: 1.0,
-    &quot;similarity&quot;: 0.0
-  },
-  &quot;decision_evidence&quot;: {
-    &quot;responses&quot;: {
-      &quot;owner&quot;: {
-        &quot;kind&quot;: &quot;VALID&quot;,
-        &quot;status_code&quot;: 200,
-        &quot;is_auth_denial&quot;: false,
-        &quot;reason&quot;: &quot;有效 JSON 业务响应&quot;
-      },
-      &quot;visitor_cross&quot;: {
-        &quot;kind&quot;: &quot;AUTH_DENIED&quot;,
-        &quot;status_code&quot;: 403,
-        &quot;is_auth_denial&quot;: true,
-        &quot;reason&quot;: &quot;HTTP 鉴权拒绝状态码 403&quot;
-      },
-      &quot;anonymous&quot;: {
-        &quot;kind&quot;: &quot;AUTH_DENIED&quot;,
-        &quot;status_code&quot;: 401,
-        &quot;is_auth_denial&quot;: true,
-        &quot;reason&quot;: &quot;HTTP 鉴权拒绝状态码 401&quot;
-      },
-      &quot;visitor_self&quot;: {
-        &quot;kind&quot;: &quot;VALID&quot;,
-        &quot;status_code&quot;: 200,
-        &quot;is_auth_denial&quot;: false,
-        &quot;reason&quot;: &quot;有效 JSON 业务响应&quot;
-      }
-    },
-    &quot;anonymous_denied&quot;: true,
-    &quot;anonymous_exact_match&quot;: false,
-    &quot;anonymous_value_similarity&quot;: 0.0,
-    &quot;structure_similarity&quot;: 0.0,
-    &quot;value_similarity&quot;: 0.0,
-    &quot;exact_value_match&quot;: false,
-    &quot;owner_meaningful_value_count&quot;: 2,
-    &quot;visitor_meaningful_value_count&quot;: 0,
-    &quot;shared_value_count&quot;: 0,
-    &quot;owner_specific_shared_value_count&quot;: 0,
-    &quot;owner_specific_shared_value_paths&quot;: [],
-    &quot;shared_resource_identifier_count&quot;: 0,
-    &quot;shared_resource_identifier_paths&quot;: [],
-    &quot;owner_only_shared_resource_identifier_count&quot;: 0,
-    &quot;owner_only_shared_resource_identifier_paths&quot;: [],
-    &quot;visitor_self_provided&quot;: true,
-    &quot;visitor_self_exact_match&quot;: false,
-    &quot;visitor_self_value_similarity&quot;: 0.0,
-    &quot;visitor_self_shared_resource_identifier_count&quot;: 0,
-    &quot;confirmation_signals&quot;: [],
-    &quot;expected_public&quot;: false,
-    &quot;requires_auth&quot;: true,
-    &quot;trusted_resource_id_paths&quot;: [
-      &quot;id&quot;
-    ],
-    &quot;denial_body_conflict&quot;: false,
-    &quot;owner_shared_nonpublic_value_paths&quot;: [],
-    &quot;expected_visitor_access&quot;: &quot;deny&quot;,
-    &quot;policy_scope&quot;: &quot;Configured Owner/Visitor identities and selected resource pair only&quot;
-  }
-}</pre></details></td></tr><tr data-audit-item='result' data-verdict='CONFIRMED' data-endpoint='PATCH /api/users/{user_id}/settings'><td><span class='pill' style='background:#dc2626' title='确认漏洞'>CONFIRMED</span></td><td>MASS_ASSIGNMENT</td><td><code>PATCH /api/users/{user_id}/settings</code></td><td><p class='result-summary'>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54499/api/users/1002/settings。</p><p class='result-summary'>独立读回确认该字段的测试值已持久保存。原状态已通过读回核验。</p><p class='meta'>依据：Privilege field &#x27;role&#x27; persisted after mutation</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。</p><strong>安全复验步骤</strong><ol><li>仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。</li><li>用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。</li><li>恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。</li></ol></div><pre>{
+}</pre></details></td></tr><tr data-audit-item='result' data-verdict='CONFIRMED' data-endpoint='PATCH /api/users/{user_id}/settings'><td><span class='pill' style='background:#dc2626' title='确认漏洞'>CONFIRMED</span></td><td>MASS_ASSIGNMENT</td><td><code>PATCH /api/users/{user_id}/settings</code></td><td><p class='result-summary'>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54446/api/users/1002/settings。</p><p class='result-summary'>独立读回确认该字段的测试值已持久保存。原状态已通过读回核验。</p><p class='meta'>依据：Privilege field &#x27;role&#x27; persisted after mutation</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。</p><strong>安全复验步骤</strong><ol><li>仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。</li><li>用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。</li><li>恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。</li></ol></div><pre>{
   &quot;field&quot;: &quot;role&quot;,
   &quot;readback_field&quot;: &quot;role&quot;,
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/settings&quot;,
-  &quot;readback_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/profile&quot;,
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/settings&quot;,
+  &quot;readback_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/profile&quot;,
   &quot;snapshot_fields&quot;: [
     &quot;role&quot;
   ],
@@ -415,7 +415,7 @@
   ],
   &quot;untested_fields&quot;: [],
   &quot;readback_consistency&quot;: &quot;strong&quot;
-}</pre></details></td></tr><tr data-audit-item='result' data-verdict='SECURE' data-endpoint='PATCH /api/users/{user_id}/nickname'><td><span class='pill' style='background:#059669' title='所测检查通过'>SECURE</span></td><td>MASS_ASSIGNMENT</td><td><code>PATCH /api/users/{user_id}/nickname</code></td><td><p class='result-summary'>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54499/api/users/1002/nickname。</p><p class='result-summary'>本次强一致读回未发现配置字段持久变化；结论仅限已执行的字段。原状态已通过读回核验。</p><p class='meta'>依据：Strongly consistent readback showed no persistence for all configured fields</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。</p><strong>安全复验步骤</strong><ol><li>仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。</li><li>用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。</li><li>恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。</li></ol></div><pre>{
+}</pre></details></td></tr><tr data-audit-item='result' data-verdict='SECURE' data-endpoint='PATCH /api/users/{user_id}/nickname'><td><span class='pill' style='background:#059669' title='所测检查通过'>SECURE</span></td><td>MASS_ASSIGNMENT</td><td><code>PATCH /api/users/{user_id}/nickname</code></td><td><p class='result-summary'>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54446/api/users/1002/nickname。</p><p class='result-summary'>本次强一致读回未发现配置字段持久变化；结论仅限已执行的字段。原状态已通过读回核验。</p><p class='meta'>依据：Strongly consistent readback showed no persistence for all configured fields</p><details><summary>修复方向、复验步骤和证据</summary><div class='guidance'><p><strong>修复方向：</strong>为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。</p><strong>安全复验步骤</strong><ol><li>仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。</li><li>用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。</li><li>恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。</li></ol></div><pre>{
   &quot;tested_fields&quot;: [
     &quot;role&quot;
   ],
@@ -426,7 +426,7 @@
   &quot;configured_fields&quot;: [
     &quot;role&quot;
   ],
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/nickname&quot;,
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/nickname&quot;,
   &quot;cases&quot;: [
     {
       &quot;field&quot;: &quot;role&quot;,
@@ -454,15 +454,15 @@
                     </div>
                     <span class="severity">High</span>
                   </div>
-                  <p>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54499/api/users/1001/profile。</p>
+                  <p>Visitor 身份访问配置为 Owner 的资源：http://127.0.0.1:54446/api/users/1001/profile。</p>
                   <p class="verification">已确认对象级越权：双方响应的业务值一致；双方响应存在较高的非公开业务值重合。</p>
                   <p class="meta">依据：匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。</p>
                   <div class='guidance'><p><strong>修复方向：</strong>服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。</p><strong>安全复验步骤</strong><ol><li>在测试环境准备 Owner、Visitor 两个独立账户和各自的有效资源；先明确各身份按业务策略应被允许还是拒绝。</li><li>分别用 Owner、Visitor 和 Anonymous 读取 Owner 的同一资源，核对允许与拒绝结果及响应数据。凭据从本地安全配置加载。</li><li>同时验证 Visitor 可访问自身资源，以及合法团队共享、管理员访问按策略成功；重新扫描并比较结论。</li></ol></div>
                   <details>
                     <summary>查看已最小化的证据</summary>
                     <pre>{
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/users/1001/profile&quot;,
-  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/profile&quot;,
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/users/1001/profile&quot;,
+  &quot;visitor_self_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/profile&quot;,
   &quot;owner&quot;: {
     &quot;status&quot;: 200,
     &quot;body&quot;: &quot;{\&quot;department\&quot;: \&quot;[REDACTED]\&quot;, \&quot;id\&quot;: \&quot;1001\&quot;, \&quot;name\&quot;: \&quot;[REDACTED]\&quot;, \&quot;role\&quot;: \&quot;user\&quot;, \&quot;salary\&quot;: \&quot;[REDACTED]\&quot;}&quot;,
@@ -576,7 +576,7 @@
                     </div>
                     <span class="severity">Critical</span>
                   </div>
-                  <p>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54499/api/users/1002/settings。</p>
+                  <p>写入检查：Visitor 提交字段 role；测试资源：http://127.0.0.1:54446/api/users/1002/settings。</p>
                   <p class="verification">独立读回确认该字段的测试值已持久保存。原状态已通过读回核验。</p>
                   <p class="meta">依据：Privilege field &#x27;role&#x27; persisted after mutation</p>
                   <div class='guidance'><p><strong>修复方向：</strong>为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。</p><strong>安全复验步骤</strong><ol><li>仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。</li><li>用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。</li><li>恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。</li></ol></div>
@@ -585,8 +585,8 @@
                     <pre>{
   &quot;field&quot;: &quot;role&quot;,
   &quot;readback_field&quot;: &quot;role&quot;,
-  &quot;target_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/settings&quot;,
-  &quot;readback_url&quot;: &quot;http://127.0.0.1:54499/api/users/1002/profile&quot;,
+  &quot;target_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/settings&quot;,
+  &quot;readback_url&quot;: &quot;http://127.0.0.1:54446/api/users/1002/profile&quot;,
   &quot;snapshot_fields&quot;: [
     &quot;role&quot;
   ],
