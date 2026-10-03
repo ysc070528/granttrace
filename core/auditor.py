@@ -21,6 +21,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core import __version__
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
 from core.evidence import body_sha256, sanitize_body, sanitize_evidence
@@ -269,7 +270,7 @@ class APISentinelAuditor:
         try:
             headers = {
                 "accept": "application/json",
-                "user-agent": "GrantTrace/2.3.1-final",
+                "user-agent": f"GrantTrace/{__version__}",
                 **self._identity_headers(identity_name),
             }
             encoded_data = None
@@ -1054,7 +1055,7 @@ class APISentinelAuditor:
         endpoints = self.parser.get_endpoints()
         self.stats["total_endpoints"] = len(endpoints)
         print("=" * 68)
-        print("GrantTrace 2.3.1-final safety-first audit")
+        print(f"GrantTrace {__version__} safety-first audit")
         print(f"Specification: {self.parser.version} | endpoints: {len(endpoints)}")
         print(
             "Write tests: "

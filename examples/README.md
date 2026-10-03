@@ -1,6 +1,6 @@
 # Verified loopback example
 
-Regenerated from this development branch on 2026-10-03 with Python 3.14.5 and PyYAML 6.0.3. Package metadata remains 2.3.1; this is not a newly published release. The complete mock
+Regenerated for the release-checklist revision on 2026-10-03 with Python 3.14.5 and PyYAML 6.0.3. Runtime and package metadata both declare 2.3.1; this is not a newly published release. The complete mock
 database was compared before/after and was unchanged. With vulnerability gates
 enabled the CLI exits 1, as expected for this deliberately vulnerable fixture.
 See ../VERIFICATION.md for full test scope and historical runtime boundaries.

@@ -1,5 +1,23 @@
 # GrantTrace 验收记录
 
+## 2026-10-03 发布自检修订
+
+本轮对应截图自检清单，逐项结果见 [发布自检](docs/release-checklist.md)。本轮代码与既有 Release 的版本号同为 **2.3.1**；运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据使用一致版本。没有修改历史 `v2.3.1` 标签或重新发布其 ZIP，历史资产不包含本轮改动。
+
+- **完整回归：268/268 通过，0 失败、0 错误、0 跳过**，分别在 Windows Python 3.12.11 和 3.14.5、真实 PyYAML 6.0.3 下执行。新增三项回归验证项目版本、实际 CLI 默认报告以及直接 Reporter 默认输出。
+- 实际不传 `-o` 的扫描生成 **`granttrace_report.html`**。只读结果为 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，确定性覆盖率 60%；JSON/YAML 主动结果均为 2 CONFIRMED、1 PUBLIC、2 SECURE，确定性覆盖率 100%。三个模式的完整数据库均与运行前一致，主动 Mass Assignment 的恢复核验成功。
+- `scripts/verify_business_scenarios.py` 六个场景全部符合独立真值，样本误报、漏报、不确定各为 0；范围限本地模型。
+- `scripts/verify_install.py` 在本次独立临时目录构建 wheel，新环境安装后核对文件名及 metadata、运行时和 CLI 版本；从源码目录外运行真实只读扫描，不传 `-o` 生成默认报告并核对 HTML/JSON 版本。JSON/YAML 预检、只读计划和草稿阻断均通过。离线依赖来自当前平台的 PyYAML wheelhouse。另放入无效旧版本 wheel 后复验通过，证明旧 `dist/` 产物不会被误选。
+- Git 跟踪列表无 `config.json`。实际验证 11 个本地配置/报告/计划产物被忽略，6 个示例/schema/源码配置路径不被忽略。源码配置规则仅作用于仓库根，专用 `*.local.json` 与草稿清单规则仍适用于各目录。
+- GitHub 仓库实时设置核验：Topics 保留原列表并添加 `mass-assignment`；private vulnerability reporting 为 `enabled: true`；`delete_branch_on_merge: true`。SECURITY 已提供私密表单链接，提交报告需要登录 GitHub。
+- README 首屏补英文一句话和无需展开的报告图；示例 HTML/JSON、完整截图和紧凑预览均重新生成。Edge 实际页面版本显示 `v2.3.1`，搜索/状态筛选正常，本地文档链接与图片路径检查通过。
+
+尚未完成的清单项是“远程分支仅保留 main”。七个旧功能分支已验证为 `main` 的祖先，但自动审批拒绝删除远程分支，理由是截图请求没有明确授权这项删除。旧分支继续保留；本轮新 PR 分支在审查期间也需保留，合并后由已启用的自动删除设置清理。需要维护者明确批准旧分支删除后再核验并勾选此项。
+
+本轮没有访问生产 API、发布新的 Release 或合并本轮 PR。CI 的实际运行结果以本轮 PR 检查为准。
+
+---
+
 ## 2026-10-03 开发分支：首次体验、报告与参数编码
 
 本记录对应本次拉取请求代码；包元数据仍为 GrantTrace 2.3.1，尚未发布新的版本。历史发布验收在下方独立保留。

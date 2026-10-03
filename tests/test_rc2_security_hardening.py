@@ -380,7 +380,7 @@ class StrictTypeAndStructureTests(unittest.TestCase):
 
 
 class VersionConsistencyTests(unittest.TestCase):
-    """Ensure version 2.3.1-final is consistently declared across project components."""
+    """Ensure the command line and core package declare the release version."""
 
     def test_version_cli_flag(self):
         stdout_buf = io.StringIO()
@@ -388,11 +388,12 @@ class VersionConsistencyTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 main(["--version"])
             self.assertEqual(ctx.exception.code, 0)
-        self.assertIn("2.3.1-final", stdout_buf.getvalue())
+        import core
+        self.assertEqual(stdout_buf.getvalue().strip(), f"GrantTrace {core.__version__}")
 
     def test_core_package_version(self):
         import core
-        self.assertEqual(core.__version__, "2.3.1-final")
+        self.assertEqual(core.__version__, "2.3.1")
 
 
 if __name__ == "__main__":

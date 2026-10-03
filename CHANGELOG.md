@@ -2,6 +2,11 @@
 
 ## Unreleased - Onboarding, actionable reports and parameter contracts
 
+- Align the runtime version with package metadata and the existing v2.3.1 release;
+  use granttrace_report.html when no output path is supplied. These unreleased
+  changes are not included in the historical v2.3.1 release assets.
+- Add a visible README report preview, private vulnerability reporting link,
+  local-output ignore rules and a reproducible release checklist.
 - Keep one five-minute README walkthrough and link detailed configuration,
   migration, complete sample reports and independently recorded verification.
 - Explain identity/resource access, changed fields, restoration and next steps
@@ -18,7 +23,7 @@
 - Remove tests' dependence on untracked config.json; automate JSON/YAML mock
   restoration and clean wheel installation outside the checkout in CI.
 
-## 2.3.1 (v2.3.1-final) - Verified authorization, snapshot and credential fixes
+## 2.3.1 - Verified authorization, snapshot and credential fixes
 
 - Require trustworthy, clean anonymous rejection before a visitor-denial branch
   can produce endpoint-level SECURE; leaked business data remains suspicious.

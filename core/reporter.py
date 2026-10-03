@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from core import __version__
 from core.evidence import sanitize_url
 
 
@@ -152,7 +153,7 @@ class SecurityReportGenerator:
         stats: Dict[str, Any],
         findings: List[Dict[str, Any]],
         target_url: str,
-        output_path: str = "API_Security_Report.html",
+        output_path: str = "granttrace_report.html",
         results: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         results = results or []
@@ -304,7 +305,7 @@ class SecurityReportGenerator:
       <div class="meta">目标：<strong>{cls._escape(target_url)}</strong></div>
       <div class="meta">生成时间：{cls._escape(generated_at)}</div>
     </div>
-    <span class="pill" style="background:#334155">v2.3.1-final</span>
+    <span class="pill" style="background:#334155">v{cls._escape(__version__)}</span>
   </header>
   <section class="grid">{cards_html}</section>
   {warning_html}
