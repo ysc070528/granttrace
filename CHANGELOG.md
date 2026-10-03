@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased / 2.4.1.dev0
+## 2.4.1 - 2026-10-03
 
 ### Added
 
@@ -15,12 +15,35 @@
 ### Changed
 
 - Put the single-command installed-package demo before the source-checkout
-  walkthrough, while clearly identifying the unreleased development version and
-  preserving configuration onboarding and safety boundaries.
-- Keep the existing `granttrace --spec ...` CLI and detection/write-safety
-  semantics unchanged; the stable release remains v2.4.0.
+  walkthrough and retain configuration onboarding and safety boundaries. During
+  release preparation, distinguish the upcoming package from the published stable
+  version and do not claim an unpublished PyPI release is available.
 - Give missing spec/config files and offline configuration failures a concise
   next step; an empty write allowlist still sends no PATCH requests.
+- Promote the 2.4.1.dev0 development package to 2.4.1 consistently across runtime,
+  package metadata and generated reports; update the release acceptance checklist.
+
+### Quality
+
+- Resolve the existing 20 mypy errors in six files using accurate annotations and
+  type narrowing, without new suppression directives or weaker mypy settings.
+- Make mypy a blocking CI check and add a minimum 80% branch-aware coverage gate.
+- Add weekly Dependabot checks for pip dependencies and GitHub Actions, without
+  automatic merging; exclude the release workflow from dependency updates.
+- Verify installed demo resources, source-independent startup, both demo modes,
+  complete database restoration and local server shutdown.
+
+### Security / Safety
+
+- The demo accepts no external target or user credentials. Its active PATCH checks
+  run only against bundled, disposable data on a dynamic `127.0.0.1` server.
+- Keep auditing users' own APIs read-only by default; `granttrace demo --read-only`
+  sends no PATCH requests.
+- Preserve the BOLA / IDOR and Mass Assignment detection criteria, explicit write
+  allowlists, independent GET readback, original-state snapshots and rollback
+  verification. Failed recovery still blocks subsequent writes.
+- Keep the existing `granttrace --spec ...` CLI, TLS / HTTP / redirect / proxy
+  safety boundaries and evidence minimisation unchanged.
 
 ## 2.4.0 - 2026-10-03
 

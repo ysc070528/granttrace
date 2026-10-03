@@ -28,7 +28,7 @@ python -m coverage xml
 python -m coverage json
 ```
 
-Mypy is advisory while existing dynamic JSON type issues are tracked:
+Mypy is a blocking CI check and must report zero errors; coverage must be at least 80%:
 
 ```bash
 python -m mypy
