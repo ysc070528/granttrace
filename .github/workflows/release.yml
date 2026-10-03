@@ -1,0 +1,237 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release to publish for the first PyPI upload
+        required: true
+        default: v2.4.0
+        type: choice
+        options: [v2.4.0]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-granttrace
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and validate distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+      sha256s: ${{ steps.distributions.outputs.sha256s }}
+    steps:
+      - name: Validate official release and resolve its source commit
+        id: release
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          require(repo == "ysc070528/granttrace", "Unexpected publishing repository")
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+              require(os.environ["GITHUB_REF"] == "refs/heads/main",
+                      "Manual publishing must run the reviewed workflow from main")
+              tag = event.get("inputs", {}).get("tag")
+              require(tag == "v2.4.0", "Manual publishing only supports v2.4.0")
+          elif os.environ["GITHUB_EVENT_NAME"] == "release":
+              release = event["release"]
+              require(event["action"] == "published"
+                      and not release["draft"] and not release["prerelease"],
+                      "Only officially published stable releases can be uploaded")
+              tag = release["tag_name"]
+          else:
+              raise SystemExit("Unsupported publishing event")
+
+          match = re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag or "")
+          require(match is not None, "Expected a stable vMAJOR.MINOR.PATCH tag")
+          require(tuple(map(int, match.groups())) >= (2, 4, 0),
+                  "Historical versions before v2.4.0 must not be published here")
+          with urlopen(f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+                       timeout=30) as response:
+              official = json.load(response)
+          require(official["tag_name"] == tag and official["published_at"]
+                  and not official["draft"] and not official["prerelease"],
+                  "Target must have an existing official GitHub Release")
+
+          ref = f"refs/tags/{tag}"
+          remote = subprocess.check_output(
+              ["git", "ls-remote", "--exit-code", f"https://github.com/{repo}.git",
+               ref, ref + "^{}"], text=True)
+          refs = {line.split("\t")[1]: line.split("\t")[0]
+                  for line in remote.splitlines()}
+          commit = refs.get(ref + "^{}", refs.get(ref))
+          require(re.fullmatch(r"[0-9a-f]{40}", commit or "") is not None,
+                  "Cannot resolve release tag to a commit")
+          if tag == "v2.4.0":
+              require(commit == "664412c04e409ac98a5861145763b8bfe54d2d48",
+                      "v2.4.0 tag does not point to its verified release commit")
+          version = tag[1:]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\ncommit={commit}\n")
+          print(f"Building {tag} from verified tag commit {commit}")
+          PY
+
+      - name: Checkout the resolved release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.commit }}
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check project and runtime versions before building
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          version = os.environ["RELEASE_VERSION"]
+          require(project["name"] == "granttrace", "Unexpected project name")
+          require(project["version"] == version, "Tag/project version mismatch")
+          tree = ast.parse(Path("core/__init__.py").read_text())
+          runtime = next(ast.literal_eval(node.value) for node in tree.body
+                         if isinstance(node, ast.Assign)
+                         and any(isinstance(target, ast.Name)
+                                 and target.id == "__version__" for target in node.targets))
+          require(runtime == version, "Tag/runtime version mismatch")
+          require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+                  == os.environ["RELEASE_COMMIT"], "Checkout/release commit mismatch")
+          PY
+
+      - name: Install build and metadata verification tools
+        run: python -m pip install "build>=1.2,<2" "twine>=6,<8"
+
+      - name: Build wheel and sdist from the release source
+        run: python -m build
+
+      - name: Validate distribution names, metadata and hashes
+        id: distributions
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tarfile
+          from email.parser import Parser
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          version = os.environ["RELEASE_VERSION"]
+          wheel = f"granttrace-{version}-py3-none-any.whl"
+          sdist = f"granttrace-{version}.tar.gz"
+          files = {path.name: path for path in Path("dist").iterdir()}
+          require(set(files) == {wheel, sdist}, "Unexpected distribution files")
+          require(all(path.is_file() for path in files.values()), "Expected regular files")
+          with ZipFile(files[wheel]) as archive:
+              metadata = [name for name in archive.namelist()
+                          if name.endswith(".dist-info/METADATA")]
+              require(len(metadata) == 1, "Expected exactly one wheel METADATA")
+              wheel_info = archive.read(metadata[0]).decode("utf-8")
+          with tarfile.open(files[sdist]) as archive:
+              sdist_info = archive.extractfile(f"granttrace-{version}/PKG-INFO").read().decode("utf-8")
+          for text in (wheel_info, sdist_info):
+              info = Parser().parsestr(text)
+              require(info["Name"] == "granttrace", "Unexpected package name")
+              require(info["Version"] == version, "Tag/distribution version mismatch")
+          hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for name, path in files.items()}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("sha256s=" + json.dumps(hashes, sort_keys=True) + "\n")
+          print(json.dumps(hashes, indent=2))
+          PY
+          python -m twine check --strict dist/*
+
+      - name: Upload validated distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish distributions with OIDC
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/granttrace/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the validated build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: distributions
+          path: dist
+
+      - name: Verify the downloaded files are the validated distributions
+        env:
+          DIST_SHA256S: ${{ needs.build.outputs.sha256s }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          expected = json.loads(os.environ["DIST_SHA256S"])
+          files = {path.name: path for path in Path("dist").iterdir()}
+          require(set(files) == set(expected), "Unexpected downloaded files")
+          for name, path in files.items():
+              require(path.is_file(), "Expected regular distribution files")
+              require(hashlib.sha256(path.read_bytes()).hexdigest() == expected[name],
+                      "Artifact hash mismatch")
+          PY
+
+      - name: Publish to PyPI using Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          print-hash: true
+
