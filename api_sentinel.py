@@ -33,7 +33,8 @@ BANNER = rf"""
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Safety-first OpenAPI authorization and mass-assignment auditor"
+        description="Safety-first OpenAPI authorization and mass-assignment auditor",
+        epilog="Built-in local demo: granttrace demo (no spec, config or credentials needed)",
     )
     parser.add_argument("--spec", "-s", default=None,
                         help="OpenAPI/Swagger JSON or YAML (default: openapi.json)")
@@ -128,10 +129,26 @@ def _reject_constant(val: str) -> None:
     raise ValueError(f"Non-standard JSON number not allowed: {val}")
 
 
+_MISSING_FILE_GUIDANCE = (
+    "For the built-in local demo, run 'granttrace demo'. "
+    "For your own API, select a local OpenAPI file and create a draft with "
+    "'granttrace --spec <openapi-file> --init-config config.local.json'."
+)
+
+
+def _print_config_next_steps() -> None:
+    print("[NEXT] Review identities, resource IDs in parameter_values, and independent GET readback mappings. "
+          "Access expectations must come from your API's business rules.", file=sys.stderr)
+    print("[NEXT] After editing, run --validate-config, then --dry-run with the same --spec and --config. "
+          "Both checks are offline.", file=sys.stderr)
+
+
 def _load_spec(path: str) -> Dict[str, Any]:
     """Use the scanner's local JSON/YAML loader for both preflight modes."""
     try:
         return OpenAPIParser(path).raw_spec
+    except FileNotFoundError as exc:
+        raise ValueError(f"Cannot load specification '{path}': {exc}. {_MISSING_FILE_GUIDANCE}") from exc
     except Exception as exc:
         raise ValueError(f"Cannot load specification '{path}': {exc}") from exc
 
@@ -147,9 +164,10 @@ def _reject_incomplete_draft(config: Any) -> None:
 
 def run_config_validation(config_path_str: str, spec_path: Optional[str] = None) -> int:
     config_file = Path(config_path_str)
-    safe_path_str = sanitize_log_text(config_path_str)
+    safe_path_str = sanitize_log_text(sanitize_text(config_path_str))
     if not config_file.is_file():
         print(f"[ERROR] Configuration file does not exist: {safe_path_str}", file=sys.stderr)
+        print("[NEXT] " + _MISSING_FILE_GUIDANCE, file=sys.stderr)
         return 2
     try:
         with config_file.open("r", encoding="utf-8") as handle:
@@ -202,6 +220,7 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
             print(f"[WARN] In addition, {result.summary.warnings_count} warning(s) observed:", file=sys.stderr)
             for warning in result.warnings:
                 print(warning.format(), file=sys.stderr)
+        _print_config_next_steps()
         return 2
 
     print(f"[OK] Configuration is valid: {safe_path_str}")
@@ -221,7 +240,7 @@ def _load_config(path: Optional[str]) -> Dict[str, Any]:
         return {}
     config_path = Path(path)
     if not config_path.is_file():
-        raise ValueError(f"configuration file does not exist: {path}")
+        raise ValueError(f"configuration file does not exist: {path}. {_MISSING_FILE_GUIDANCE}")
     try:
         with config_path.open("r", encoding="utf-8") as handle:
             config = json.load(handle, parse_constant=_reject_constant)
@@ -241,7 +260,11 @@ def _ensure_parent(path: str) -> None:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_argument_parser().parse_args(argv)
+    selected = list(sys.argv[1:] if argv is None else argv)
+    if selected and selected[0] == "demo":
+        from core.demo import demo_main
+        return demo_main(selected[1:])
+    args = build_argument_parser().parse_args(selected)
     print(BANNER)
     if args.init_config is not None:
         if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint:
@@ -309,6 +332,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             for issue in val_result.errors:
                 print(issue.format(), file=sys.stderr)
+            _print_config_next_steps()
             return 2
 
     try:
@@ -316,6 +340,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         write_allowlist = list(args.write_endpoint) if args.write_endpoint else config.get("write_allowlist", [])
         if not isinstance(write_allowlist, list):
             raise ValueError("write_allowlist must be a list")
+
+        if args.allow_write_tests and not write_allowlist:
+            print("[WARN] Write tests requested, but write_allowlist is empty; no PATCH requests will be sent. "
+                  "Review explicit PATCH entries and independent GET readbacks, then run --validate-config "
+                  "and --dry-run before scanning.", file=sys.stderr)
 
         auditor = APISentinelAuditor(
             spec_path=spec_path,

@@ -45,6 +45,7 @@ build/
 # Local reports and exported plans (curated examples remain tracked)
 granttrace_report.html
 granttrace_report.json
+granttrace-demo/
 API_Security_Report.html
 API_Security_Report.json
 report.html

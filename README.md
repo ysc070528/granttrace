@@ -5,6 +5,7 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
 **Stable:** [v2.4.0](https://github.com/ysc070528/granttrace/releases/tag/v2.4.0)
+**Development:** 2.4.1.dev0 (unreleased)
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -22,7 +23,46 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## 五分钟体验
 
-需要 Python 3.9+。在终端中克隆、安装并启动本机演示服务：
+需要 Python 3.9+。`demo` 已加入 **2.4.1.dev0 开发分支，尚未发布到 PyPI**；当前稳定版 v2.4.0 暂不支持。含 demo 的版本发布后，首次体验只需：
+
+```bash
+pip install granttrace
+granttrace demo
+```
+
+审查当前开发分支时，先安装本轮构建的 wheel，再运行同一条 demo 命令：
+
+```bash
+python -m pip install dist/granttrace-2.4.1.dev0-py3-none-any.whl
+granttrace demo
+```
+
+安装后可在任意目录运行，无需 clone、准备配置、另开终端或访问外部 API。Demo 自动启动动态端口的 `127.0.0.1` 靶场，比较身份访问、演示 BOLA / IDOR 与 Mass Assignment，并通过独立读回与恢复核验展示 PATCH 测试证据。**主动写操作仅发生在内置、可丢弃的本机靶场**；demo 不接受外部 target 或用户凭据，结束时关闭靶场。
+
+HTML / JSON 报告保留在当前目录的 `granttrace-demo/` 唯一子目录，终端会输出绝对路径，不覆盖已有报告。可选用 `granttrace demo --output-dir PATH` 指定报告父目录，或 `granttrace demo --read-only` 仅体验只读身份访问。
+
+完整离线示例：[HTML 报告](examples/sample_report.html)（下载后用浏览器打开）与 [JSON 结果](examples/sample_result.json)。
+
+## 接入自己的 API
+
+先从规范生成配置草稿和待填清单：
+
+```bash
+granttrace --spec your-openapi.yaml --init-config config.local.json
+```
+
+填写不同的测试账户、各自资源、授权预期和必要读回信息，再按清单移除草稿标记与全部占位值。草稿未完成时会阻止预检、计划与扫描；写允许清单默认为空。
+
+```bash
+granttrace --spec your-openapi.yaml --config config.local.json --validate-config
+granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json
+```
+
+接入自己的 API 时仍默认只读，主动 PATCH 测试必须显式开启并满足 allowlist、独立 readback 和恢复条件。账户、API Key / Cookie、合法共享和管理员访问配置见 [配置指南](docs/configuration.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
+
+## 从源码开发 / 运行仓库 mock
+
+需要查看源码或手工运行仓库靶场时：
 
 ```bash
 git clone https://github.com/ysc070528/granttrace.git
@@ -46,25 +86,6 @@ granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.ex
 ```
 
 再次打开 **`granttrace_report.html`**。预期 **2 个 CONFIRMED、1 个 PUBLIC、2 个 SECURE**，确定性覆盖率 **100%**，批量赋值发现的 `rollback_verified` 为 `true`。本次扫描更新同名 HTML / JSON 文件；这些结果只属于内置五个演示端点。
-
-完整离线示例：[HTML 报告](examples/sample_report.html)（下载后用浏览器打开）与 [JSON 结果](examples/sample_result.json)。
-
-## 接入自己的 API
-
-先从规范生成配置草稿和待填清单：
-
-```bash
-granttrace --spec your-openapi.yaml --init-config config.local.json
-```
-
-填写不同的测试账户、各自资源、授权预期和必要读回信息，再按清单移除草稿标记与全部占位值。草稿未完成时会阻止预检、计划与扫描；写允许清单默认为空。
-
-```bash
-granttrace --spec your-openapi.yaml --config config.local.json --validate-config
-granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json
-```
-
-账户、API Key / Cookie、合法共享和管理员访问配置见 [配置指南](docs/configuration.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
 
 ## 验证与边界
 

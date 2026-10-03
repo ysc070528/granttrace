@@ -1,0 +1,82 @@
+{
+  "description": "Bundled disposable demo only. Public fictional role labels; no user credentials.",
+  "identities": {
+    "owner": {
+      "id": "1001",
+      "token": null,
+      "parameters": {
+        "user_id": "1001"
+      },
+      "headers": {
+        "X-GrantTrace-Demo-Identity": "granttrace-demo-owner-1001"
+      },
+      "auth_header_names": [
+        "X-GrantTrace-Demo-Identity"
+      ]
+    },
+    "visitor": {
+      "id": "1002",
+      "token": null,
+      "parameters": {
+        "user_id": "1002"
+      },
+      "headers": {
+        "X-GrantTrace-Demo-Identity": "granttrace-demo-visitor-1002"
+      },
+      "auth_header_names": [
+        "X-GrantTrace-Demo-Identity"
+      ]
+    },
+    "anonymous": {
+      "id": null,
+      "token": null,
+      "headers": {},
+      "parameters": {}
+    }
+  },
+  "parameter_values": {
+    "GET /api/public/articles/{article_id}": {
+      "article_id": 101
+    },
+    "GET /api/documents/{doc_uuid}": {
+      "owner": {
+        "doc_uuid": "550e8400-e29b-41d4-a716-446655440000"
+      },
+      "visitor": {
+        "doc_uuid": "7d444840-9dc0-11d1-b245-5ffdce74fad2"
+      }
+    }
+  },
+  "write_allowlist": [
+    "PATCH /api/users/{user_id}/settings",
+    "PATCH /api/users/{user_id}/nickname"
+  ],
+  "readbacks": {
+    "PATCH /api/users/{user_id}/settings": {
+      "method": "GET",
+      "path": "/api/users/{user_id}/profile",
+      "consistency": "strong",
+      "field_map": {
+        "role": "role"
+      }
+    },
+    "PATCH /api/users/{user_id}/nickname": {
+      "method": "GET",
+      "path": "/api/users/{user_id}/profile",
+      "consistency": "strong",
+      "field_map": {
+        "role": "role"
+      }
+    }
+  },
+  "bola": {
+    "GET /api/public/articles/{article_id}": {
+      "expected_public": true
+    },
+    "GET /api/documents/{doc_uuid}": {
+      "resource_id_paths": [
+        "id"
+      ]
+    }
+  }
+}
