@@ -32,6 +32,10 @@ jobs:
       - name: Validate official release and resolve its source commit
         id: release
         shell: bash
+        env:
+          # Actions provides this short-lived, contents:read GitHub credential.
+          # It is used only for repository metadata, never for PyPI uploading.
+          GH_REPO_READ_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
           import json
@@ -39,7 +43,7 @@ jobs:
           import re
           import subprocess
           from pathlib import Path
-          from urllib.request import urlopen
+          from urllib.request import Request, urlopen
 
           def require(condition, message):
               if not condition:
@@ -66,8 +70,12 @@ jobs:
           require(match is not None, "Expected a stable vMAJOR.MINOR.PATCH tag")
           require(tuple(map(int, match.groups())) >= (2, 4, 0),
                   "Historical versions before v2.4.0 must not be published here")
-          with urlopen(f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
-                       timeout=30) as response:
+          request = Request(
+              f"https://api.github.com/repos/{repo}/releases/tags/{tag}",
+              headers={"Authorization": "Bearer " + os.environ["GH_REPO_READ_TOKEN"],
+                       "Accept": "application/vnd.github+json",
+                       "User-Agent": "GrantTrace-release-validation"})
+          with urlopen(request, timeout=30) as response:
               official = json.load(response)
           require(official["tag_name"] == tag and official["published_at"]
                   and not official["draft"] and not official["prerelease"],
