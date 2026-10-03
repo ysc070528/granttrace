@@ -60,6 +60,7 @@ source = ["core", "api_sentinel"]
 [tool.coverage.report]
 show_missing = true
 precision = 2
+fail_under = 80
 
 [tool.coverage.xml]
 output = "dist/coverage.xml"
@@ -68,7 +69,7 @@ output = "dist/coverage.xml"
 output = "dist/coverage.json"
 
 [tool.mypy]
-# Advisory snapshot of product code on the quality job's interpreter.
+# Type-check product code on the quality job's interpreter.
 python_version = "3.12"
 files = ["api_sentinel.py", "core"]
 check_untyped_defs = true
