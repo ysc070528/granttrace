@@ -224,6 +224,12 @@
           "type": "boolean",
           "description": "Whether this operation is intended to be publicly accessible"
         },
+        "expected_visitor_access": {
+          "type": "string",
+          "enum": ["allow", "deny"],
+          "default": "deny",
+          "description": "Expected cross-resource access for ONLY the configured Visitor, Owner and resource pair. Use allow for a verified sharing/admin relationship; not a blanket endpoint exemption."
+        },
         "resource_id_paths": {
           "type": "array",
           "description": "JSON field paths containing trustworthy resource ownership identifiers",

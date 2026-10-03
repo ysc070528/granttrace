@@ -109,6 +109,7 @@ class ConfigValidator:
 
     KNOWN_BOLA_KEYS = {
         "expected_public",
+        "expected_visitor_access",
         "resource_id_paths",
     }
 
@@ -1369,6 +1370,16 @@ class ConfigValidator:
                         message="'expected_public' must be a boolean",
                         expected="boolean",
                         actual=safe_diagnostic_value(policy["expected_public"]),
+                    )
+                )
+
+            if "expected_visitor_access" in policy and policy["expected_visitor_access"] not in ("allow", "deny"):
+                issues.append(
+                    ConfigIssue(
+                        path=f"bola.{ep_key}.expected_visitor_access",
+                        message="'expected_visitor_access' must explicitly be 'allow' or 'deny'",
+                        expected="allow or deny (defaults to deny)",
+                        actual=safe_diagnostic_value(policy["expected_visitor_access"]),
                     )
                 )
 

@@ -28,6 +28,7 @@ from core.transactions import PatchSnapshot, get_path, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
+from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -145,6 +146,7 @@ class APISentinelAuditor:
             "bola_confirmed": 0,
             "mass_assignment_confirmed": 0,
             "public_endpoints": 0,
+            "authorized_endpoints": 0,
             "secure_endpoints": 0,
             "suspicious_count": 0,
             "inconclusive_count": 0,
@@ -320,6 +322,28 @@ class APISentinelAuditor:
     ) -> str:
         raw_path = ep["path"]
         parameters = ep.get("parameters", [])
+        if (not isinstance(raw_path, str) or not raw_path.startswith("/")
+                or any(character in raw_path for character in "?#\r\n")):
+            raise ParameterSerializationError("Operation path must be an absolute path without a query/fragment; no request was sent")
+        if not isinstance(parameters, list) or any(not isinstance(item, dict) for item in parameters):
+            raise ParameterSerializationError("Operation parameters must be an array of metadata objects; no request was sent")
+        swagger2 = str(ep.get("spec_version", self.parser.raw_spec.get("swagger", ""))).startswith("2.")
+        supported = []
+        for metadata in parameters:
+            location, name = metadata.get("in"), metadata.get("name")
+            if location == "body" and swagger2:
+                continue  # Swagger request bodies have their own payload encoder.
+            if location == "header" and isinstance(name, str):
+                normalized = name.lower()
+                if not swagger2 and normalized in {"authorization", "accept", "content-type"}:
+                    continue  # OAS 3 requires these Parameter Objects to be ignored.
+                if (self._is_auth_header(name)
+                        and all(self._identity_headers(role).get(normalized) for role in ("owner", "visitor"))):
+                    continue  # Authentication comes only from the actual requester.
+            if location not in {"path", "query"}:
+                raise ParameterSerializationError("Header/cookie/formData parameter serialization is unsupported; configure authentication in identity headers; no request was sent")
+            supported.append(metadata)
+        parameters = supported
         values = self._operation_parameter_values(ep, resource_identity)
         if extra_values:
             values.update(extra_values)
@@ -335,26 +359,32 @@ class APISentinelAuditor:
                 ),
                 {"name": param_name, "in": "path", "schema": {"type": "string"}},
             )
-            value = values.get(param_name)
-            if value is None:
-                value = SmartDataGenerator.generate_value_for_param(metadata, candidate_id=candidate_id)
-            test_path = test_path.replace("{" + param_name + "}", urllib.parse.quote(str(value), safe=""))
+            value = values.get(param_name) if param_name in values else SmartDataGenerator.generate_raw_value_for_param(metadata, candidate_id=candidate_id)
+            test_path = test_path.replace("{" + param_name + "}", serialize_path_parameter(metadata, value, swagger2=swagger2))
+
+        if "{" in test_path or "}" in test_path:
+            raise ParameterSerializationError("Unresolved or malformed path template; no request was sent")
+        template_names = set(re.findall(r"\{([^}]+)\}", raw_path))
+        if any(item.get("in") == "path" and item.get("name") not in template_names for item in parameters):
+            raise ParameterSerializationError("Declared path parameter is absent from the operation path; no request was sent")
 
         query_pairs: List[Tuple[str, str]] = []
-        for metadata in parameters:
+        emitted_names: Dict[str, int] = {}
+        for index, metadata in enumerate(parameters):
             if metadata.get("in") != "query":
                 continue
-            name = str(metadata.get("name", ""))
-            if not name:
-                continue
-            value = values.get(name)
-            if value is None:
-                value = SmartDataGenerator.generate_value_for_param(metadata, candidate_id=candidate_id)
-            query_pairs.append((name, str(value)))
+            name = metadata.get("name")
+            value = values.get(name) if name in values else SmartDataGenerator.generate_raw_value_for_param(metadata, candidate_id=candidate_id)
+            pairs = serialize_query_parameter(metadata, value, swagger2=swagger2)
+            for encoded_name, _ in pairs:
+                if encoded_name in emitted_names and emitted_names[encoded_name] != index:
+                    raise ParameterSerializationError("Different query parameters serialize to the same name; no request was sent")
+                emitted_names[encoded_name] = index
+            query_pairs.extend(pairs)
 
         url = f"{self.target_base_url}{test_path}"
         if query_pairs:
-            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query_pairs)
+            url += "?" + "&".join(name + "=" + value for name, value in query_pairs)
         return url
 
     def _safe_body(self, result: HTTPResult) -> Dict[str, Any]:
@@ -396,7 +426,7 @@ class APISentinelAuditor:
             self.stats["total_checks"] += 1
             if verdict not in {Verdict.SKIPPED, Verdict.ERROR}:
                 self.stats["audited_count"] += 1
-            if verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC}:
+            if verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}:
                 self.stats["conclusive_count"] += 1
             if verdict == Verdict.CONFIRMED:
                 self.stats["confirmed"] += 1
@@ -404,6 +434,8 @@ class APISentinelAuditor:
                 self.stats["secure_endpoints"] += 1
             elif verdict == Verdict.PUBLIC:
                 self.stats["public_endpoints"] += 1
+            elif verdict == Verdict.AUTHORIZED:
+                self.stats["authorized_endpoints"] += 1
             elif verdict == Verdict.SUSPICIOUS:
                 self.stats["suspicious_count"] += 1
             elif verdict == Verdict.INCONCLUSIVE:
@@ -439,8 +471,12 @@ class APISentinelAuditor:
             self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found")
             return
 
-        owner_url = self._build_url(ep, "owner")
-        visitor_self_url = self._build_url(ep, "visitor")
+        try:
+            owner_url = self._build_url(ep, "owner")
+            visitor_self_url = self._build_url(ep, "visitor")
+        except ParameterSerializationError as exc:
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc))
+            return
         owner = self._http_request(ep["method"], owner_url, identity_name="owner")
         visitor_cross = self._http_request(ep["method"], owner_url, identity_name="visitor")
         anonymous = self._http_request(ep["method"], owner_url, identity_name="anonymous")
@@ -474,6 +510,9 @@ class APISentinelAuditor:
         policy = self.bola_config.get(self._operation_key(ep), {})
         if not isinstance(policy, dict):
             raise ValueError("BOLA operation policy must be an object")
+        expected_access = policy.get("expected_visitor_access", "deny")
+        if expected_access not in ("allow", "deny"):
+            raise ValueError("expected_visitor_access must be 'allow' or 'deny'")
         security = ep.get("security", [])
         requires_auth = bool(security) and {} not in security
         expected_public = policy.get("expected_public") is True or (
@@ -490,12 +529,24 @@ class APISentinelAuditor:
         )
 
         verdict = self._map_bola_verdict(evaluation.get("verdict", "INCONCLUSIVE"))
+        reason = evaluation.get("reason", "No reason supplied")
+        # OpenAPI cannot establish business authorization. Apply ONLY the explicit
+        # expectation for this selected identity/resource pair after the existing
+        # data, self-baseline and anonymous-denial evidence checks have succeeded.
+        if expected_access == "allow" and verdict == Verdict.CONFIRMED:
+            verdict = Verdict.AUTHORIZED
+            reason = "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy"
+        elif expected_access == "allow" and verdict == Verdict.SECURE:
+            verdict = Verdict.INCONCLUSIVE
+            reason = "Configured Visitor should have access to this selected Owner resource, but was denied; verify the identity and sharing/admin policy"
         evidence["metrics"] = {
             key: value
             for key, value in evaluation.items()
             if key not in {"verdict", "reason"} and isinstance(value, (str, int, float, bool, type(None)))
         }
         evidence["decision_evidence"] = evaluation.get("evidence", {})
+        evidence["decision_evidence"]["expected_visitor_access"] = expected_access
+        evidence["decision_evidence"]["policy_scope"] = "Configured Owner/Visitor identities and selected resource pair only"
         finding = None
         if verdict == Verdict.CONFIRMED:
             finding = {
@@ -513,7 +564,7 @@ class APISentinelAuditor:
             ep,
             "BOLA",
             verdict,
-            evaluation.get("reason", "No reason supplied"),
+            reason,
             evidence=evidence,
             finding=finding,
         )
@@ -665,10 +716,14 @@ class APISentinelAuditor:
         mapping: Dict[str, Any],
         identity_name: str,
     ) -> Tuple[str, HTTPResult]:
+        documented = next((candidate for candidate in self.parser.get_endpoints()
+                           if candidate["method"] == str(mapping.get("method", "GET")).upper()
+                           and candidate["path"] == str(mapping["path"])), None)
         read_ep = {
             "method": str(mapping.get("method", "GET")).upper(),
             "path": str(mapping["path"]),
-            "parameters": mapping.get("parameters", ep.get("parameters", [])),
+            "parameters": mapping.get("parameters", (documented or ep).get("parameters", [])),
+            "spec_version": (documented or ep).get("spec_version", self.parser.raw_spec.get("openapi", self.parser.raw_spec.get("swagger", ""))),
             "operation_id": f"readback_{ep.get('operation_id', '')}",
         }
         url = self._build_url(read_ep, identity_name, mapping.get("parameter_values"))
@@ -828,12 +883,21 @@ class APISentinelAuditor:
         unverified = [f"{name}: no mutation case was generated" for name in field_map if name not in generated_paths]
         verified_safe: List[str] = []
         tested: List[str] = []
-        mutation_url = self._build_url(ep, "visitor")
+        case_summaries: List[Dict[str, Any]] = []
+        try:
+            mutation_url = self._build_url(ep, "visitor")
+        except ParameterSerializationError as exc:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
+            return
 
         with self._resource_lock(mutation_url):
             for case in cases:
                 field_path = case["field_path"]
-                read_url, before_http = self._readback_result(ep, readback, "visitor")
+                try:
+                    read_url, before_http = self._readback_result(ep, readback, "visitor")
+                except ParameterSerializationError as exc:
+                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
+                    return
                 if before_http.error:
                     self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
                                         f"Read-before-write failed: {before_http.error}",
@@ -867,6 +931,8 @@ class APISentinelAuditor:
                 persisted = exists and json_values_equal(value, snapshot.target)
                 evidence = {
                     "field": field_path, "readback_field": field_map[field_path],
+                    "target_url": mutation_url,
+                    "readback_url": read_url,
                     "snapshot_fields": list(snapshot.restore),
                     "verification_scope": "Full readback document except explicitly ignored volatile paths",
                     "ignored_readback_paths": readback.get("ignore_readback_paths", []),
@@ -880,6 +946,12 @@ class APISentinelAuditor:
                     "untested_fields": [name for name in field_map if name not in tested],
                     "readback_consistency": readback.get("consistency", "unspecified"),
                 }
+                case_summaries.append({
+                    "field": field_path, "readback_field": field_map[field_path],
+                    "persisted": persisted,
+                    "rollback_verified": transaction["rollback_verified"],
+                    "recovery_sent": transaction["recovery_sent"],
+                })
                 if persisted:
                     finding = {
                         "type": "Mass Assignment (independent readback confirmed)",
@@ -925,7 +997,11 @@ class APISentinelAuditor:
                 else:
                     unverified.append(f"{field_path}: mutation was rejected or returned a business error")
         evidence = {"tested_fields": tested, "safe_fields": verified_safe, "unverified": unverified,
-                    "configured_fields": list(field_map)}
+                    "configured_fields": list(field_map), "target_url": mutation_url,
+                    "cases": case_summaries,
+                    "rollback_verified": all(case["rollback_verified"] is True for case in case_summaries) if case_summaries else None,
+                    "recovery_sent": any(case["recovery_sent"] for case in case_summaries),
+                    "ignored_readback_paths": readback.get("ignore_readback_paths", [])}
         if verified_safe and not unverified and len(verified_safe) == len(field_map):
             with self._result_lock:
                 self.stats["raw_filtered_count"] += 1
@@ -945,7 +1021,7 @@ class APISentinelAuditor:
         conclusive = sum(
             1
             for item in endpoint_results
-            if item["verdict"] in {Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value}
+            if item["verdict"] in {Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
         )
         self.stats["coverage_pct"] = round(attempted * 100.0 / total, 1)
         self.stats["conclusive_coverage_pct"] = round(conclusive * 100.0 / total, 1)
