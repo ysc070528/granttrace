@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from core import __version__
 from core.config_validator import ConfigValidator
@@ -102,7 +102,7 @@ class APISentinelAuditor:
             if not is_valid or method != "PATCH":
                 raise ValueError("write_allowlist entries must be 'PATCH /case-sensitive-path'")
             self.write_allowlist.add(canonical)
-        self._writes_halted_reason = None
+        self._writes_halted_reason: Optional[str] = None
 
         context = ssl._create_unverified_context() if insecure_ssl else ssl.create_default_context()
         self._opener = urllib.request.build_opener(
@@ -495,7 +495,7 @@ class APISentinelAuditor:
         if visitor_self is not None:
             request_results["visitor_self"] = visitor_self
         transport_errors = [f"{name}: {item.error}" for name, item in request_results.items() if item.error]
-        evidence = {
+        evidence: Dict[str, Any] = {
             "target_url": owner_url,
             "visitor_self_url": visitor_self_url if visitor_self is not None else None,
             **{name: self._safe_body(item) for name, item in request_results.items()},
@@ -621,7 +621,7 @@ class APISentinelAuditor:
                 if last:
                     cursor[part] = value
                     return
-                expected = [] if isinstance(next_part, int) else {}
+                expected: Union[List[object], Dict[str, object]] = [] if isinstance(next_part, int) else {}
                 if not isinstance(cursor.get(part), type(expected)):
                     cursor[part] = expected
                 cursor = cursor[part]
@@ -680,7 +680,8 @@ class APISentinelAuditor:
                         else {},
                     })
                     continue
-                payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
+                configured_payload = item.get("payload")
+                payload = configured_payload if isinstance(configured_payload, dict) else item
                 for field_path, value in payload.items():
                     cases.append({
                         "field_path": str(field_path),
@@ -954,7 +955,7 @@ class APISentinelAuditor:
                     "recovery_sent": transaction["recovery_sent"],
                 })
                 if persisted:
-                    finding = {
+                    finding: Dict[str, Any] = {
                         "type": "Mass Assignment (independent readback confirmed)",
                         "cwe": "CWE-915", "severity": "Critical", "endpoint": operation_key,
                         "target_url": mutation_url,

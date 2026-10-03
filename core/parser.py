@@ -14,7 +14,7 @@ import copy
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import unquote, urlsplit
 
 
@@ -96,7 +96,7 @@ class OpenAPIParser:
             )
         return siblings
 
-    def _reference_target(self, ref_uri: str, base_file: Path) -> Tuple[Path, str, str]:
+    def _reference_target(self, ref_uri: object, base_file: Path) -> Tuple[Path, str, str]:
         if not isinstance(ref_uri, str) or not ref_uri:
             raise ValueError("$ref must be a non-empty string")
 
@@ -126,7 +126,7 @@ class OpenAPIParser:
         cache_key = f"{target_file}#{fragment}"
         return target_file, fragment, cache_key
 
-    def _lookup_ref(self, ref_uri: str, base_file: Path) -> Tuple[Any, Path, str]:
+    def _lookup_ref(self, ref_uri: object, base_file: Path) -> Tuple[Any, Path, str]:
         target_file, fragment, cache_key = self._reference_target(ref_uri, base_file)
         document = self._read_file(str(target_file))
         current: Any = document
@@ -150,7 +150,7 @@ class OpenAPIParser:
 
     def _resolve_ref_chain(
         self,
-        ref_uri: str,
+        ref_uri: object,
         base_file: Path,
         max_depth: int,
         seen: Optional[Set[str]] = None,
@@ -224,12 +224,12 @@ class OpenAPIParser:
 
     def _deep_resolve_schema(
         self,
-        schema: Dict[str, Any],
+        schema: Union[Dict[str, Any], bool],
         depth: int = 20,
         *,
         _base_file: Optional[Path] = None,
         _seen: Optional[Set[str]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[Dict[str, Any], bool]:
         """Recursively resolve schema refs, compositions, properties and items."""
         if not isinstance(schema, dict) or depth <= 0:
             return copy.deepcopy(schema)
@@ -387,7 +387,7 @@ class OpenAPIParser:
         op_data: Dict[str, Any],
         parameters: Optional[List[Dict[str, Any]]] = None,
         base_file: Optional[Path] = None,
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], List[str]]:
+    ) -> Tuple[Optional[Union[Dict[str, Any], bool]], Optional[str], List[str]]:
         request_body = op_data.get("requestBody", {})
         request_file = (base_file or self._spec_file).resolve()
         if isinstance(request_body, dict) and "$ref" in request_body:
@@ -437,7 +437,7 @@ class OpenAPIParser:
         op_data: Dict[str, Any],
         parameters: Optional[List[Dict[str, Any]]] = None,
         base_file: Optional[Path] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[Union[Dict[str, Any], bool]]:
         """Backward-compatible request schema helper."""
         schema, _, _ = self._extract_request_body_details(op_data, parameters, base_file)
         return schema
