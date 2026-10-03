@@ -1,0 +1,40 @@
+{
+  "users": {
+    "1001": {
+      "id": "1001",
+      "name": "Demo Owner",
+      "role": "user",
+      "salary": "Fictional demo salary",
+      "department": "Engineering"
+    },
+    "1002": {
+      "id": "1002",
+      "name": "Demo Visitor",
+      "role": "user",
+      "salary": "Fictional demo salary",
+      "department": "Marketing"
+    }
+  },
+  "documents": {
+    "550e8400-e29b-41d4-a716-446655440000": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "owner_id": "1001",
+      "title": "Fictional demo document",
+      "content": "Disposable demo content; no production data"
+    },
+    "7d444840-9dc0-11d1-b245-5ffdce74fad2": {
+      "id": "7d444840-9dc0-11d1-b245-5ffdce74fad2",
+      "owner_id": "1002",
+      "title": "Fictional demo document",
+      "content": "Disposable demo content; no production data"
+    }
+  },
+  "articles": {
+    "101": {
+      "id": 101,
+      "title": "GrantTrace fictional demo announcement",
+      "author": "Security Team",
+      "public": true
+    }
+  }
+}

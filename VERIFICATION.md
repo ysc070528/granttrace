@@ -1,5 +1,34 @@
 # GrantTrace 验收记录
 
+## 2026-10-03 2.4.1.dev0 内置 demo 验收
+
+本轮仅改善安装后的首次体验，稳定版仍为 v2.4.0，开发版本为
+2.4.1.dev0；本记录不表示开发版已发布。原检测语义、配置验证规则和
+PATCH allowlist / 独立读回 / 回滚限制保持不变，兼容入口保留。
+
+本地 Windows / Python 3.14.5 实际验证结果：
+
+- 完整 unittest 与 coverage 运行均为 **304 项通过**，0 失败、0 错误、
+  0 跳过，其中新增 27 项 demo 测试、9 项首次使用提示测试。
+- 总覆盖率 **80.85%**，语句 **83.78%**，分支 **75.17%**；分别高于
+  之前的 79.66% / 82.66% / 74.02%。
+- 业务场景、JSON / YAML 示例、真实 wheel 安装脚本全部通过；Ruff、
+  pip check 与严格 pip-audit 通过，未发现已知运行依赖漏洞。
+- mypy 仍为 **20 个问题 / 6 个文件**，新增 demo 未增加类型诊断；保持 advisory。
+- 全新虚拟环境在仓库外的空目录安装 wheel，未复制任何仓库文件，
+  `granttrace demo` 成功；环境代理被绕过，靶场只绑定动态 127.0.0.1 端口。
+- 完整 demo 为 **1 BOLA / IDOR + 1 Mass Assignment**；独立 GET 读回、
+  `rollback_verified`、整库恢复与服务器关闭均成功。只读 demo 未发送 PATCH。
+- HTML / JSON 报告保留在唯一 run 子目录，不覆盖旧文件；本地安装验收
+  证据另存于被忽略的 `dist/demo-validation/`。
+- 异常回归包含构造/启动/ready 失败、JSON 与报告错误、真实 PATCH 后
+  KeyboardInterrupt、读回失败后恢复、回滚证据缺失与整库残留；均可靠关闭
+  靶场，恢复失败或证据不足不会显示 demo 成功。
+
+Python 3.9 / 3.12 / 3.14 与 CodeQL 的远程结果以本轮 PR 的实际检查为准。
+本轮只创建 PR 供审查，不合并、不创建 tag、不发布 GitHub Release 或 PyPI。
+以下历史记录完整保留。
+
 ## 2026-10-03 v2.4.0 发布前验收
 
 本轮在已合并 PR #11 的最新 `main`（`4b65e54`）基础上创建

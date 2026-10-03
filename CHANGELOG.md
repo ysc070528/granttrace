@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased / 2.4.1.dev0
+
+### Added
+
+- Add `granttrace demo` with packaged OpenAPI, configuration and fictional mock
+  data, so an installed wheel can demonstrate identity comparison, BOLA / IDOR,
+  Mass Assignment, independent readback and rollback verification outside a Git
+  checkout without user credentials or external API access.
+- Start the disposable mock on a dynamic loopback port, close it on completion
+  or failure, and retain HTML / JSON reports in a unique output directory.
+- Add `--output-dir` and optional `--read-only` controls for the built-in demo.
+
+### Changed
+
+- Put the single-command installed-package demo before the source-checkout
+  walkthrough, while clearly identifying the unreleased development version and
+  preserving configuration onboarding and safety boundaries.
+- Keep the existing `granttrace --spec ...` CLI and detection/write-safety
+  semantics unchanged; the stable release remains v2.4.0.
+- Give missing spec/config files and offline configuration failures a concise
+  next step; an empty write allowlist still sends no PATCH requests.
+
 ## 2.4.0 - 2026-10-03
 
 ### Added

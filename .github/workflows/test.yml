@@ -103,6 +103,7 @@ jobs:
             dist/business-scenarios.json
             dist/install-verification.json
             dist/mock-validation/
+            dist/demo-validation/
 
   types:
     name: Mypy (advisory)

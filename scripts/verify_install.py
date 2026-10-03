@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,11 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from email.parser import Parser
 from zipfile import ZipFile
+
+
+DEMO_RESOURCES = {
+    "core/demo_assets/openapi.json", "core/demo_assets/demo-config.json", "core/demo_assets/mock-data.json",
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -85,6 +91,11 @@ def main():
             if len(metadata_files) != 1:
                 raise RuntimeError("Built wheel does not contain exactly one distribution metadata file")
             wheel_metadata = Parser().parsestr(archive.read(metadata_files[0]).decode("utf-8"))
+            if not DEMO_RESOURCES.issubset(archive.namelist()):
+                raise RuntimeError("Built wheel is missing bundled demo resources")
+            for name in DEMO_RESOURCES:
+                if archive.read(name) != (ROOT / name).read_bytes():
+                    raise RuntimeError("Wheel demo resource differs from the current source")
         if wheel_metadata["Name"] != "granttrace" or wheel_metadata["Version"] != __version__:
             raise RuntimeError("Built wheel metadata disagrees with the GrantTrace release version")
         if wheels[0].name.split("-")[1] != __version__:
@@ -123,6 +134,52 @@ def main():
         version = run([cli, "--version"], outside, env)
         if version != f"GrantTrace {__version__}":
             raise RuntimeError("Installed CLI version disagrees with wheel, runtime, and project metadata")
+        # Run the first experience before using any repository spec/config paths.
+        # Only the installed package may supply the mock, resources and scanner.
+        demo_folder = outside / "empty-demo-directory"
+        demo_folder.mkdir()
+        demo_env = dict(env, HTTP_PROXY="http://127.0.0.1:1", http_proxy="http://127.0.0.1:1",
+                        HTTPS_PROXY="http://127.0.0.1:1", https_proxy="http://127.0.0.1:1",
+                        NO_PROXY="", no_proxy="")
+        demo_output = run([cli, "demo"], demo_folder, demo_env)
+        demo_reports = list(demo_folder.glob("granttrace-demo/*/granttrace_report.json"))
+        if len(demo_reports) != 1 or {item.name for item in demo_folder.iterdir()} != {"granttrace-demo"}:
+            raise RuntimeError("Installed demo must need no working-directory spec, config or mock files")
+        demo_report = json.loads(demo_reports[0].read_text(encoding="utf-8"))
+        demo_html = demo_reports[0].with_name("granttrace_report.html")
+        verification = demo_report["demo"]
+        if (demo_report["tool_version"] != __version__
+                or demo_report["stats"]["bola_confirmed"] != 1
+                or demo_report["stats"]["mass_assignment_confirmed"] != 1
+                or demo_report["stats"]["error_count"] != 0
+                or not all(verification[key] is True for key in (
+                    "rollback_verified", "database_restored", "server_stopped", "target_bound_to_loopback"))
+                or verification["user_agents"] != [f"GrantTrace/{__version__}"]
+                or not demo_html.is_file()
+                or f">v{__version__}</span>" not in demo_html.read_text(encoding="utf-8")
+                or "Demo completed successfully." not in demo_output):
+            raise RuntimeError("Installed packaged demo or its readback/rollback verification failed")
+        demo_port = int(demo_report["target"].rsplit(":", 1)[1])
+        try:
+            connection = socket.create_connection(("127.0.0.1", demo_port), timeout=1)
+        except OSError:
+            pass
+        else:
+            connection.close()
+            raise RuntimeError("Installed demo left its local server listening")
+        evidence_dir = ROOT / "dist" / "demo-validation"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(demo_reports[0], evidence_dir / "granttrace_report.json")
+        shutil.copyfile(demo_html, evidence_dir / "granttrace_report.html")
+        readonly_demo_output = run([cli, "demo", "--read-only", "--output-dir", "readonly"], demo_folder, demo_env)
+        readonly_demo = json.loads(next((demo_folder / "readonly").glob("*/granttrace_report.json")).read_text(
+            encoding="utf-8"))
+        if (readonly_demo["demo"]["request_methods"] != ["GET"]
+                or readonly_demo["demo"]["rollback_verified"] is not None
+                or not readonly_demo["demo"]["database_restored"]
+                or not readonly_demo["demo"]["server_stopped"]
+                or "not applicable (read-only)" not in readonly_demo_output):
+            raise RuntimeError("Installed read-only demo must send no PATCH")
         run([cli, "--spec", spec, "--config", config, "--validate-config"], outside, env)
         # Exercise the installed scanner and its default output outside the checkout.
         TargetMockHandler.reset_database()
@@ -237,6 +294,15 @@ def main():
             "wheel_metadata_version": wheel_metadata["Version"],
             "installed_metadata_version": installed["metadata_version"],
             "installed_runtime_version": installed["runtime_version"],
+            "demo_resources_in_wheel": sorted(DEMO_RESOURCES),
+            "installed_demo_without_checkout_files": True,
+            "installed_demo_bola_confirmed": demo_report["stats"]["bola_confirmed"],
+            "installed_demo_mass_assignment_confirmed": demo_report["stats"]["mass_assignment_confirmed"],
+            "installed_demo_rollback_verified": verification["rollback_verified"],
+            "installed_demo_database_restored": verification["database_restored"],
+            "installed_demo_server_stopped": verification["server_stopped"],
+            "installed_demo_environment_proxy_bypassed": True,
+            "installed_demo_readonly_patch_requests": 0,
             "version_consistency": True,
             "fresh_build_directory": not bool(args.wheel),
             "supplied_release_wheel": bool(args.wheel),
