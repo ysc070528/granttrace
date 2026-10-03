@@ -1,0 +1,97 @@
+name: Bug report / 问题报告
+description: Report a reproducible bug with a minimal, redacted example.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **公开 Issue 请勿上传 Token、Cookie、API Key、生产数据或敏感身份信息。**
+        **Do not upload tokens, cookies, API keys, production data or sensitive identity information.**
+
+        GrantTrace 自身的安全漏洞不要公开提 Issue。请先阅读 [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md)，使用 [GitHub Private Vulnerability Reporting](https://github.com/ysc070528/granttrace/security/advisories/new)。
+        Report vulnerabilities in GrantTrace privately through the links above.
+  - type: input
+    id: granttrace-version
+    attributes:
+      label: GrantTrace 版本 / Version
+      description: Paste the output of granttrace --version.
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python 版本 / Version
+      description: Paste the output of python --version.
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: 操作系统 / Operating system
+      placeholder: Windows 11, Ubuntu 24.04, macOS 15
+    validations:
+      required: true
+  - type: input
+    id: spec-version
+    attributes:
+      label: OpenAPI / Swagger 版本 / Version
+      placeholder: OpenAPI 3.0.3, OpenAPI 3.1.0, Swagger 2.0
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: 执行命令 / Command
+      description: Replace private paths, target identifiers and all credentials with placeholders.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: 预期结果 / Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual-result
+    attributes:
+      label: 实际结果 / Actual result
+      description: Include only redacted output; reports can still contain sensitive data.
+    validations:
+      required: true
+  - type: textarea
+    id: minimal-reproduction
+    attributes:
+      label: 最小复现 / Minimal reproduction
+      description: Provide steps and a public synthetic spec/config or local mock example. Do not share production data.
+    validations:
+      required: true
+  - type: dropdown
+    id: active-write-tests
+    attributes:
+      label: 是否使用主动写测试 / Active write tests enabled?
+      description: Did the command include --allow-write-tests?
+      options:
+        - "否 / No"
+        - "是 / Yes"
+        - "不确定 / Unsure"
+    validations:
+      required: true
+  - type: dropdown
+    id: isolated-environment
+    attributes:
+      label: 是否为隔离测试环境 / Isolated test environment?
+      description: Use disposable, authorized test resources when reproducing active write issues.
+      options:
+        - "是 / Yes"
+        - "否 / No"
+        - "不确定 / Unsure"
+    validations:
+      required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: 敏感信息检查 / Sensitive information check
+      options:
+        - label: I have removed credentials, production data and sensitive identity information from this report.
+          required: true

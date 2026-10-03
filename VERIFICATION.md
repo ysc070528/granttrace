@@ -1,5 +1,65 @@
 # GrantTrace 验收记录
 
+## 2026-10-03 v2.4.0 发布前验收
+
+本轮在已合并 PR #11 的最新 `main`（`4b65e54`）基础上创建
+`codex/v2.4.0-release`，将统一版本来源从 **2.4.0.dev0** 切换为
+**2.4.0**。保留 `api_sentinel.py`、`APISentinelAuditor` 兼容入口，未改变
+BOLA / IDOR / Mass Assignment 判断标准，未降低 allowlist、独立读回或恢复
+限制，未新增 POST / PUT 主动测试或自动认证功能。验证仅使用本机 loopback
+靶场、离线测试与公开包索引 / 漏洞服务，未使用真实凭据或生产 API。
+
+### 本地实际结果
+
+环境：Windows，Python **3.14.5**，PyYAML **6.0.3**。
+
+| 检查 | 实际结果 |
+|---|---|
+| `python -m unittest discover -s tests` | **268/268 通过**；0 失败、0 错误、0 跳过 |
+| `python scripts/verify_business_scenarios.py` | 六个业务模型全部匹配预先声明的真值；本地样本误报、漏报、不确定均为 0 |
+| `python scripts/verify_examples.py --update-examples` | 只读 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，确定性覆盖率 60%；主动 JSON / YAML 均 2 CONFIRMED、1 PUBLIC、2 SECURE，确定性覆盖率 100%；完整数据库恢复成功，示例重生成为 2.4.0 |
+| `python scripts/verify_install.py` | 在全新虚拟环境安装本轮构建的 **granttrace-2.4.0-py3-none-any.whl**，从源码目录外执行安装后的 CLI；版本、预检、计划和真实只读 / 主动扫描均通过 |
+| `python -m ruff check .` | 全部通过 |
+| `python -m coverage erase` / `run -m unittest discover -s tests` / `report` / `xml` / `json` | 真实执行 268 项测试并生成结果；总覆盖率 **79.66%**，语句 **3071/3715 = 82.66%**，分支 **1467/1982 = 74.02%**，无排除行，与此前参考一致 |
+| `python -m pip check` | 无依赖冲突 |
+| `python -m pip_audit --strict --progress-spinner off .` | 本轮解析的项目运行依赖无已知漏洞；严格模式通过 |
+| `python -m mypy` | **20 个问题 / 6 个文件**，检查 13 个源码文件；与此前状态一致，继续作为 advisory |
+| actionlint 检查工作流 | 通过 |
+| `python -m build` / `python -m twine check --strict` | wheel / sdist 均成功构建且 metadata / README 检查通过；Apache-2.0 使用标准 SPDX metadata |
+| `python scripts/verify_install.py --wheel dist/granttrace-2.4.0-py3-none-any.whl` | 指定正式构建的 wheel，源码目录外的新虚拟环境中全部安装与真实 mock 扫描验收通过 |
+| sdist 解压后的源码目录外复验 | 268 项测试、业务场景、JSON / YAML 示例全部通过；公开配置、指南、兼容入口和验收脚本完整 |
+
+独立安装验证实际记录只读模式发送 **0 次 PATCH**，主动模式发送 **3 次 PATCH**。
+该次数包含探测与恢复请求，不代表三个独立漏洞。安装后的 metadata、
+`core.__version__`、CLI `--version` / Banner、HTML 报告、JSON `tool_version`
+均为 **2.4.0**，实际请求 User-Agent 为 **`GrantTrace/2.4.0`**。
+主动 Mass Assignment 的 `rollback_verified` 为 `true`，完整数据库与扫描前
+一致；JSON / YAML 只读计划等价且未发送目标请求，未完成配置草稿仍被阻止。
+
+coverage 只测量单元测试父进程中的产品代码 `api_sentinel.py` 与 `core/`，
+包含未执行代码，不包含测试、mock、验收脚本或另行启动的 Python 子进程。
+端点确定性覆盖率 60% / 100% 与这里的代码覆盖率是不同指标。业务场景
+误报 / 漏报数据仅描述六个已知真值模型，不代表其他 API 的检测效果。
+
+### CodeQL、发行认证与尚待完成的验证
+
+- 既有 CodeQL alert #1 指向 `tests/test_report_usability.py:137` 的合成
+  literal。针对该路径的离线测试实际 **1/1 通过**：生成 HTML 不含测试中的
+  假秘密值，包含 `REDACTED`。人工核对支持其为自定义 sanitizer 未被抽象
+  数据流模型识别的误报判断；该告警继续保留 open，未 dismiss。此局部证据
+  不替代本轮远端 CodeQL；发布前仍须确认无新增阻断性告警。
+- PyPI `granttrace` JSON 查询返回 404，仅表示当时未查询到公开项目，
+  不保证名称可以注册。当前未发现可安全使用的 PyPI 发布认证，按授权边界
+  跳过 PyPI 上传，不要求聊天提供明文 token。
+- 本段记录发布前已实际完成的本地验收。正式 wheel / sdist 与指定 wheel
+  独立安装已验收；Release PR、远端 Python
+  3.9 / 3.12 / 3.14 CI、合并后 `main` CI / CodeQL、tag / GitHub Release、
+  分支清理及保护设置仍需分别记录实际结果；本段不宣称这些操作已完成。
+
+下方所有历史版本与开发版验收保留原文，各段“当前”均指该轮记录时的状态。
+
+---
+
 ## 2026-10-03 工程化收尾：2.4.0.dev0
 
 本轮从最新 `main`（`9732a68`）创建 `codex/repository-hardening`，开发版本仍为 **2.4.0.dev0**。GitHub 只读查询确认最新正式 Release 为 **v2.3.1**，`main` 的 `protected` 为 `false`。未修改检测标准、身份规则、写允许清单、独立读回或恢复限制；未访问生产 API、使用真实凭据、修改仓库设置、删除远程分支、合并、建 tag 或发布 Release。

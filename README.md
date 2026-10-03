@@ -4,13 +4,19 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**Stable:** [v2.3.1](https://github.com/ysc070528/granttrace/releases/tag/v2.3.1) · **Development:** v2.4.0.dev0
+**Stable:** [v2.4.0](https://github.com/ysc070528/granttrace/releases/tag/v2.4.0)
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
 [五分钟体验](#五分钟体验) · [完整示例报告](examples/sample_report.html) · [配置指南](docs/configuration.md) · [命令行与迁移](docs/advanced.md) · [验收记录](VERIFICATION.md) · [发布自检](docs/release-checklist.md)
+
+## 为什么是 GrantTrace / Why GrantTrace
+
+- **Compare identities**：比较 Owner / Visitor / Anonymous 等身份访问同一资源的结果。
+- **Verify real side effects**：通过独立读回验证状态是否真正持久化，不只看 HTTP 状态码。
+- **Restore safely**：主动 PATCH 测试使用显式 allowlist、原始状态快照、恢复与恢复验证。
 
 <img src="docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
 

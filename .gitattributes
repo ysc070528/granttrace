@@ -1,0 +1,3 @@
+# Existing source files use both LF and CRLF. Check real trailing whitespace
+# without rewriting historical line endings during a release-only change.
+* whitespace=trailing-space,space-before-tab,cr-at-eol
