@@ -28,7 +28,7 @@ coverage 只测量单元测试父进程中的产品代码 `api_sentinel.py` 与 
 
 ### CI 状态与保留问题
 
-- 保留 Python **3.9 / 3.12 / 3.14** 矩阵、unittest、业务/示例/独立安装验收。固定 Node 环境防止报告交互测试因缺 Node 跳过；`coverage[toml]` 支持 Python 3.9 读取本仓库配置。每个解释器生成 text/XML/JSON，显示 missing lines 和分支，并上传 14 天证据与 Actions 摘要。
+- 保留 Python **3.9 / 3.12 / 3.14** 矩阵、unittest、业务/示例/独立安装验收。固定 Node 环境防止报告交互测试因缺 Node 跳过；`coverage[toml]` 支持 Python 3.9 读取本仓库配置。每个解释器生成 text/XML/JSON，显示 missing lines 和分支，并上传 14 天证据与 Actions 摘要。GitHub 日志发现旧 Actions 的 Node 20 运行时弃用警告后，改用已核实为 Node 24 的官方 checkout/setup-python/setup-node/upload-artifact v7，并关闭 checkout 的凭据持久化。
 - Ruff 为正式门禁；修复限未使用导入/变量、等价局部函数和验收脚本导入位置。mypy 现有问题涉及动态 JSON/Optional 推断、集合类型和返回类型；本轮不批量改变核心实现或加忽略，CI 明确显示 advisory outcome 与诊断。后续可分模块处理再升级门禁。
 - pip-audit 独立用 Python 3.12，避免其 Python >=3.10 要求影响产品的 Python 3.9 支持；直接读取项目运行依赖，`--strict`，不忽略漏洞、不自动修复、服务失败也不会被当作通过。只访问包索引和公开漏洞服务。[工具范围与限制](https://github.com/pypa/pip-audit/blob/main/README.md)
 - CodeQL 独立 workflow 使用 Python 静态分析、`build-mode: none`、默认查询集和最小权限；触发为 PR/main push/每周/手动，不运行扫描器或访问目标 API。[官方配置说明](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configuring-advanced-setup-for-code-scanning) CodeQL 及跨解释器的实际远端结果以本轮 PR checks 为准，本地 actionlint 通过不能替代它们。
@@ -53,6 +53,8 @@ python -m pip_audit --strict --progress-spinner off --format json --output dist/
 ```
 
 生成的证据、wheel、缓存均在 ignore 范围，不作为源码提交。工作区的 CRLF 历史文件以 `git -c core.whitespace=cr-at-eol diff --check` 检查；没有修改仓库 Git 配置。
+
+远端首次真实执行（PR #11，提交 `a3afd17`）：[GrantTrace CI](https://github.com/ysc070528/granttrace/actions/runs/37109356278) 与 [CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37109356295) 均成功。Python 3.9/3.12/3.14 各 268 项无跳过，coverage 各为 79.66%，三份完整业务/示例/独立安装证据已上传；Ruff 与运行依赖审计通过。mypy 仍为 20 个问题，step 实际退出 1、Actions 摘要为 `advisory: failure`，job 按设计非阻断；CodeQL 已完成真实分析和结果上传，此结果不等同于通用安全保证。Actions 运行时升级后的最终提交须另看 PR 最新 checks。
 
 ---
 
