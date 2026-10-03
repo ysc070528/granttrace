@@ -1,14 +1,14 @@
 # 发布自检清单
 
-包版本与运行时版本统一为 **2.3.1**，对应已有的 [GitHub Release v2.3.1](https://github.com/ysc070528/granttrace/releases/tag/v2.3.1)。`CHANGELOG.md` 的 `Unreleased` 记录本轮尚未发布的变更；已有 Release 资产不包含这些变更。以下清单只在完成对应检查后打勾，实际执行环境和结果见 [验收记录](../VERIFICATION.md)。
+当前包版本与运行时版本统一为开发版本 **2.4.0.dev0**。最新正式发布仍为 [GitHub Release v2.3.1](https://github.com/ysc070528/granttrace/releases/tag/v2.3.1)。`CHANGELOG.md` 的 `Unreleased` 记录当前尚未发布的变更；已有 Release 标签与资产保持原样，不包含这些变更。版本身份、完整回归、业务场景、示例和独立安装已在本修订重新验收；其他勾选保留此前自检结果，实际执行环境和结果见 [验收记录](../VERIFICATION.md)。
 
-- [x] `granttrace --version` 输出 `GrantTrace 2.3.1`，与 `pyproject.toml`、CHANGELOG 的已发布版本、GitHub Release 一致。
+- [x] `granttrace --version` 输出 `GrantTrace 2.4.0.dev0`，与 `pyproject.toml`、运行时、报告和 CHANGELOG 的 `Unreleased` 开发版本一致；最新正式 Release 保持 `v2.3.1`。
 - [x] 不传 `-o` / `--output`，默认生成 `granttrace_report.html`。
 - [x] README 五分钟体验的只读结果为 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，确定性覆盖率 60%。
 - [x] README 五分钟体验加 `--allow-write-tests` 后为 2 CONFIRMED、1 PUBLIC、2 SECURE，确定性覆盖率 100%，Mass Assignment 的 `rollback_verified` 为 `true`。
 - [x] `python -m unittest discover -s tests` 全部通过，依赖齐全时无跳过。
 - [x] `python scripts/verify_business_scenarios.py` 通过，合法共享 / 管理员场景与跨租户拒绝符合预先声明的真值。
-- [x] `python scripts/verify_install.py` 通过，新环境安装本轮构建的 wheel，并从源码目录外验证命令入口、版本、JSON / YAML 预检与只读计划导出。
+- [x] `python scripts/verify_install.py` 通过，新环境安装本修订的 `granttrace-2.4.0.dev0-py3-none-any.whl`，并从源码目录外验证命令入口、开发版本、JSON / YAML 预检与只读计划导出。
 - [x] `SECURITY.md` 有可点击的私密报告入口，仓库的 private vulnerability reporting 设置已实际确认。
 - [x] Git 跟踪列表不含 `config.json`；`.gitignore` 覆盖本地配置、草稿 checklist、HTML / JSON 报告和计划，保留示例与 schema。
 - [x] GitHub Topics 包含 `mass-assignment`。

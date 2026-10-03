@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "granttrace"
-version = "2.3.1"
+version = "2.4.0.dev0"
 description = "Safety-first OpenAPI authorization and mass-assignment audit prototype"
 readme = "README.md"
 requires-python = ">=3.9"

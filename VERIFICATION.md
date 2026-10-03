@@ -1,8 +1,25 @@
 # GrantTrace 验收记录
 
-## 2026-10-03 发布自检修订
+## 2026-10-03 当前 PR：2.4.0.dev0 开发版本身份
 
-本轮对应截图自检清单，逐项结果见 [发布自检](docs/release-checklist.md)。本轮代码与既有 Release 的版本号同为 **2.3.1**；运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据使用一致版本。没有修改历史 `v2.3.1` 标签或重新发布其 ZIP，历史资产不包含本轮改动。
+当前 PR #10 的开发版本身份统一为 **2.4.0.dev0**，适用于运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据。最新正式 Release 仍为 **v2.3.1**，其标签与历史资产保持原样，尚未包含当前 `Unreleased` 变更。本次仅修正开发版本身份，不合并 PR、不发布 Release、不删除分支。
+
+本次版本身份修正后，在 Windows Python **3.14.5**、PyYAML **6.0.3** 下重新执行：
+
+- `python -m unittest discover -s tests`：**268/268 通过，0 失败、0 错误、0 跳过**。现有真实 HTTP 版本回归同时核对 Banner、User-Agent、HTML 和 JSON 均读取 `core.__version__`。
+- `python scripts/verify_business_scenarios.py`：六个业务真值场景全部通过，样本误报、漏报、不确定各为 0。
+- `python scripts/verify_examples.py --update-examples`：重新生成示例 HTML/JSON；只读与主动 JSON/YAML 的状态计数、60%/100% 覆盖率和完整数据库恢复均符合原有预期。
+- `python scripts/verify_install.py`：本轮构建 **`granttrace-2.4.0.dev0-py3-none-any.whl`**，在全新虚拟环境由 pip 解析并安装声明依赖，从源码目录外验证已安装 CLI、实际默认 HTML/JSON、JSON/YAML 预检和计划导出、未完成草稿阻断，全部通过。首次运行因沙箱禁止访问 PyPI 失败，允许网络访问后原命令重跑通过。
+- 版本一致性：`pyproject.toml`、`core.__version__`、`granttrace --version`、User-Agent（`GrantTrace/2.4.0.dev0`）、HTML（`v2.4.0.dev0`）、JSON `tool_version`、wheel 及已安装 metadata 全部对应 **2.4.0.dev0**。
+- 用现有截图脚本从重新生成的示例报告导出两张 PNG，Edge 页面版本为 `v2.4.0.dev0`。仓库内剩余 `2.3.1` 仅用于历史事实、正式 Release 链接和既有配置 schema 标识；schema 语义未改变，沿用原 `$id`。
+
+下方 268 项、265 项测试与 2.3.1 wheel 等结果均是此前修订的真实历史记录，与本段当前开发构建的重新验收分别记录。
+
+---
+
+## 2026-10-03 发布自检修订（版本身份修正前的历史记录）
+
+本段记录此前发布自检修订，当时开发代码仍标为 **2.3.1**；运行时、CLI、HTTP User-Agent、HTML、JSON、项目和 wheel 元数据使用该版本。这一历史标识已在当前修订改为 **2.4.0.dev0**。以下保留当时实际验收结果，没有修改历史 `v2.3.1` 标签或重新发布其 ZIP，历史 Release 资产不包含这些开发变更。
 
 - **完整回归：268/268 通过，0 失败、0 错误、0 跳过**，分别在 Windows Python 3.12.11 和 3.14.5、真实 PyYAML 6.0.3 下执行。新增三项回归验证项目版本、实际 CLI 默认报告以及直接 Reporter 默认输出。
 - 实际不传 `-o` 的扫描生成 **`granttrace_report.html`**。只读结果为 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，确定性覆盖率 60%；JSON/YAML 主动结果均为 2 CONFIRMED、1 PUBLIC、2 SECURE，确定性覆盖率 100%。三个模式的完整数据库均与运行前一致，主动 Mass Assignment 的恢复核验成功。
@@ -18,9 +35,9 @@
 
 ---
 
-## 2026-10-03 开发分支：首次体验、报告与参数编码
+## 2026-10-03 开发分支：首次体验、报告与参数编码（此前修订的历史记录）
 
-本记录对应本次拉取请求代码；包元数据仍为 GrantTrace 2.3.1，尚未发布新的版本。历史发布验收在下方独立保留。
+本段对应此前首次体验、报告与参数编码修订；当时包元数据为 GrantTrace **2.3.1**，未发布新的版本。以下 265 项测试和 `granttrace-2.3.1-py3-none-any.whl` 等结果保留原始执行事实，当前开发版本为 **2.4.0.dev0**。更早的发布验收在下方独立保留。
 
 - **完整回归：265/265 通过，0 失败、0 错误、0 跳过**。Windows 下分别运行 Python 3.12.11 与 3.14.5，真实 PyYAML 6.0.3 已安装。新增 42 项覆盖配置草稿、参数序列化、报告交互及业务授权；测试无需未追踪的 `config.json`。
 - 产品、验收脚本和测试共 34 个 Python 文件通过 Python 3.9 语法模式解析；本机未实际运行 Python 3.9。CI 配置覆盖 3.9、3.12、3.14，远程执行结果以本次 PR 检查为准。

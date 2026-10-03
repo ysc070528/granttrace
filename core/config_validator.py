@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Authoritative configuration validation engine for GrantTrace (v2.3.1-final).
+"""Authoritative configuration validation engine for GrantTrace.
 
 Provides offline, comprehensive semantic validation for GrantTrace configuration
 files. Reuses the exact security rules and constraints enforced by the auditor

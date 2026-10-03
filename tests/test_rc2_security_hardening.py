@@ -380,7 +380,7 @@ class StrictTypeAndStructureTests(unittest.TestCase):
 
 
 class VersionConsistencyTests(unittest.TestCase):
-    """Ensure the command line and core package declare the release version."""
+    """Ensure the command line and core package declare the development version."""
 
     def test_version_cli_flag(self):
         stdout_buf = io.StringIO()
@@ -393,7 +393,7 @@ class VersionConsistencyTests(unittest.TestCase):
 
     def test_core_package_version(self):
         import core
-        self.assertEqual(core.__version__, "2.3.1")
+        self.assertEqual(core.__version__, "2.4.0.dev0")
 
 
 if __name__ == "__main__":

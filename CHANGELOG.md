@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased - Onboarding, actionable reports and parameter contracts
+## Unreleased (2.4.0.dev0) - Onboarding, actionable reports and parameter contracts
 
-- Align the runtime version with package metadata and the existing v2.3.1 release;
-  use granttrace_report.html when no output path is supplied. These unreleased
-  changes are not included in the historical v2.3.1 release assets.
+- Identify the current development build as 2.4.0.dev0 across runtime, package
+  metadata and reports. The latest published release remains v2.3.1; its
+  historical assets do not include the unreleased changes below.
+- Use granttrace_report.html when no output path is supplied.
 - Add a visible README report preview, private vulnerability reporting link,
   local-output ignore rules and a reproducible release checklist.
 - Keep one five-minute README walkthrough and link detailed configuration,
