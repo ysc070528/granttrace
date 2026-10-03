@@ -1,5 +1,32 @@
 # GrantTrace 验收记录
 
+## 2026-10-03 开发分支：首次体验、报告与参数编码
+
+本记录对应本次拉取请求代码；包元数据仍为 GrantTrace 2.3.1，尚未发布新的版本。历史发布验收在下方独立保留。
+
+- **完整回归：265/265 通过，0 失败、0 错误、0 跳过**。Windows 下分别运行 Python 3.12.11 与 3.14.5，真实 PyYAML 6.0.3 已安装。新增 42 项覆盖配置草稿、参数序列化、报告交互及业务授权；测试无需未追踪的 `config.json`。
+- 产品、验收脚本和测试共 34 个 Python 文件通过 Python 3.9 语法模式解析；本机未实际运行 Python 3.9。CI 配置覆盖 3.9、3.12、3.14，远程执行结果以本次 PR 检查为准。
+- `scripts/verify_examples.py` 经真实 HTTP 靶场验证：只读模式确认 1 个故意漏洞，确定性覆盖率 60%；JSON/YAML 主动模式均确认 2 个故意漏洞，确定性覆盖率 100%，无错误或不确定结果。每次整份数据库与运行前完全一致，Mass Assignment 的恢复独立核验为成功；主动漏洞门槛预期返回 1。
+- `scripts/verify_business_scenarios.py` 的六个本地场景均符合预先声明的真值：共享/管理员读取为 `AUTHORIZED`；同租户未共享/跨租户隔离为 `SECURE`；两个故意泄露为 `CONFIRMED`。本地样本误报 0、漏报 0、不确定 0。额外回归保留匿名泄露、无效 Visitor 自有基线、允许访问却拒绝等不确定边界。
+- wheel **`granttrace-2.3.1-py3-none-any.whl`** 构建成功。在全新 Python 3.14 虚拟环境中，从预下载的 wheelhouse 安装本地 wheel 及声明的 PyYAML 依赖；从源码目录外执行安装后的 **`granttrace`**。检查导入来源为新环境，版本、JSON/YAML 配置预检、等价只读计划（`requests_sent: 0`）、草稿生成和未完成草稿阻断均通过。本次验证的是此分支构建的 wheel，没有验收 GitHub 历史 Release 的二进制产物。
+- 重新生成示例 HTML/JSON 与 README 预览。在 Edge 实际渲染中执行搜索、状态组合筛选及无结果状态；1440px 桌面和 390px 手机宽度检查通过，端点表格可横向滚动。High/Critical 标签高度约 23px；无 JavaScript 错误、无外部请求。已有凭据回显与 HTML 注入反例回归通过。
+
+可复现命令：
+
+```bash
+python -m pip install . setuptools wheel
+python -m unittest discover -s tests
+python scripts/verify_business_scenarios.py
+python scripts/verify_examples.py
+python scripts/verify_install.py
+```
+
+`verify_install.py --wheelhouse <目录>` 可使用含当前平台 PyYAML wheel 的目录执行离线依赖安装。默认模式让 pip 正常解析声明依赖。验收结果写入 `dist/`，CI 上传对应证据；示例更新需显式使用 `verify_examples.py --update-examples`。
+
+本次未连接真实业务 API、未使用生产身份、未部署或发布。`expected_visitor_access: allow` 必须来自业务方对当前身份/资源关系的确认；它不自动推断权限，也不是通用端点豁免。本地六个模型的误报/漏报数字不能代表真实业务效果。
+
+---
+
 ## v2.3.1-final 修复版验收记录
 
 日期：2026-10-02。环境：Windows、Python 3.12.11、PyYAML 6.0.3。

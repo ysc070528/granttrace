@@ -23,7 +23,7 @@ class AuditorIntegrationTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.target = f"http://127.0.0.1:{self.server.server_port}"
-        with (ROOT / "config.json").open("r", encoding="utf-8") as handle:
+        with (ROOT / "config.example.json").open("r", encoding="utf-8") as handle:
             self.config = json.load(handle)
 
     def tearDown(self):
@@ -76,6 +76,13 @@ class AuditorIntegrationTests(unittest.TestCase):
         mass = [item for item in auditor.findings if item["cwe"] == "CWE-915"]
         self.assertEqual(len(mass), 1)
         self.assertTrue(mass[0]["evidence"]["rollback_verified"])
+        write_results = [item for item in auditor.results if item["check"] == "MASS_ASSIGNMENT"]
+        self.assertEqual(len(write_results), 2)
+        for result in write_results:
+            self.assertIn("/api/users/1002/", result["evidence"]["target_url"])
+            self.assertTrue(result["evidence"]["rollback_verified"])
+        safe_write = next(item for item in write_results if item["verdict"] == "SECURE")
+        self.assertFalse(safe_write["evidence"]["cases"][0]["persisted"])
 
     def test_sensitive_evidence_is_redacted(self):
         auditor = self.make_auditor(allow_write_tests=False)

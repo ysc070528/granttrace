@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased - Onboarding, actionable reports and parameter contracts
+
+- Keep one five-minute README walkthrough and link detailed configuration,
+  migration, complete sample reports and independently recorded verification.
+- Explain identity/resource access, changed fields, restoration and next steps
+  before raw evidence; add offline search/status filters and compact severity labels.
+- Generate offline OpenAPI configuration drafts and missing-input checklists;
+  reject unresolved drafts and refuse to overwrite existing files.
+- Share strict OpenAPI style/explode and Swagger collectionFormat encoding across
+  scans/readbacks; preserve arrays and lowercase booleans, and decline unsupported
+  or ambiguous parameter formats before sending requests.
+- Add explicit per-pair expected_visitor_access for legitimate sharing/admin
+  reads, recorded as AUTHORIZED. JSON report schema becomes version 2.
+- Add six local authorization truth fixtures with false-positive/false-negative
+  accounting; retain denial, anonymous-leak and invalid-baseline boundaries.
+- Remove tests' dependence on untracked config.json; automate JSON/YAML mock
+  restoration and clean wheel installation outside the checkout in CI.
+
 ## 2.3.1 (v2.3.1-final) - Verified authorization, snapshot and credential fixes
 
 - Require trustworthy, clean anonymous rejection before a visitor-denial branch

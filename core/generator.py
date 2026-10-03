@@ -397,7 +397,18 @@ class SmartDataGenerator:
     def generate_value_for_param(
         cls, param_meta: Dict[str, Any], candidate_id: Optional[str] = None
     ) -> str:
-        """Generate one valid primitive parameter value.
+        """Return the historical string representation for existing callers.
+
+        Request builders should use ``generate_raw_value_for_param`` so arrays,
+        objects and booleans retain their types until style-aware serialization.
+        """
+        return cls._serialize_parameter_value(cls.generate_raw_value_for_param(param_meta, candidate_id))
+
+    @classmethod
+    def generate_raw_value_for_param(
+        cls, param_meta: Dict[str, Any], candidate_id: Optional[str] = None
+    ) -> Any:
+        """Generate a schema-valid parameter value without serializing it.
 
         ``candidate_id`` is applied only to parameters whose names identify a
         resource (for example ``user_id`` or ``documentUuid``). Paging, search,
@@ -408,19 +419,19 @@ class SmartDataGenerator:
         if candidate_id is not None and cls._is_resource_identifier(param_meta):
             candidate = cls._coerce_for_schema(candidate_id, schema)
             if cls._value_satisfies_schema(candidate, schema):
-                return cls._serialize_parameter_value(candidate)
+                return candidate
 
         for documented in cls._documented_values(param_meta, schema):
             value = cls._coerce_for_schema(documented, schema)
             if cls._value_satisfies_schema(value, schema):
-                return cls._serialize_parameter_value(value)
+                return value
 
         if not schema:
             parameter_name = str(param_meta.get("name", "")).lower()
             return "test_user_id" if ("user" in parameter_name or "name" in parameter_name) else "sample_param"
 
         value = cls._generate_schema_sample(schema, include_optional=True, field_name=param_meta.get("name"))
-        return cls._serialize_parameter_value(value)
+        return value
 
     @classmethod
     def _numeric_bounds(cls, schema: Dict[str, Any]) -> Tuple[Any, bool, Any, bool]:

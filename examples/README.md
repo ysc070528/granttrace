@@ -1,9 +1,15 @@
 # Verified loopback example
 
-Regenerated for v2.3.1-final on 2026-10-02 with Python 3.12.11 and PyYAML 6.0.3. The complete mock
+Regenerated from this development branch on 2026-10-03 with Python 3.14.5 and PyYAML 6.0.3. Package metadata remains 2.3.1; this is not a newly published release. The complete mock
 database was compared before/after and was unchanged. With vulnerability gates
 enabled the CLI exits 1, as expected for this deliberately vulnerable fixture.
 See ../VERIFICATION.md for full test scope and historical runtime boundaries.
+
+The HTML includes identity/resource and field/restoration summaries before raw
+evidence, remediation/retest guidance, and offline endpoint search/status filters.
+The JSON uses report_schema_version 2, including the optional AUTHORIZED result
+for an explicitly permitted identity/resource pair (not present in this fixture).
+Reproduce both artifacts with `python scripts/verify_examples.py --update-examples`.
 
 `sample_report.html` and `sample_result.json` were generated against the bundled
 loopback mock with active PATCH checks enabled. The fixture intentionally

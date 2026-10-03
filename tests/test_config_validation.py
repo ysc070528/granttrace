@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ConfigValidatorTests(unittest.TestCase):
     def test_full_production_config_is_valid(self):
-        with (ROOT / "config.json").open("r", encoding="utf-8") as handle:
+        with (ROOT / "config.example.json").open("r", encoding="utf-8") as handle:
             config = json.load(handle)
         result = ConfigValidator.validate(config)
         self.assertTrue(result.is_valid)
@@ -228,7 +228,7 @@ class ValidateConfigCLITests(unittest.TestCase):
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            code = main(["--validate-config", "--config", str(ROOT / "config.json")])
+            code = main(["--validate-config", "--config", str(ROOT / "config.example.json")])
         self.assertEqual(code, 0)
         self.assertIn("[OK] Configuration is valid", stdout_buf.getvalue())
         self.assertEqual(stderr_buf.getvalue().strip(), "")
@@ -278,7 +278,7 @@ class ValidateConfigCLITests(unittest.TestCase):
             stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()
             with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                code = main(["--validate-config", "--config", str(ROOT / "config.json")])
+                code = main(["--validate-config", "--config", str(ROOT / "config.example.json")])
             self.assertEqual(code, 0)
             self.assertIn("[OK] Configuration is valid", stdout_buf.getvalue())
 

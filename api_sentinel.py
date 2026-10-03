@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 from core.auditor import APISentinelAuditor
+from core.config_scaffold import config_needs_input, write_config_scaffold
 from core.config_validator import ConfigValidator
 from core.evidence import sanitize_log_text, sanitize_text
 from core.models import parse_operation_key
@@ -39,6 +40,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--target", "-t", default="http://127.0.0.1:8080", help="Target API base URL"
     )
     parser.add_argument("--config", "-c", default=None, help="Identity and readback JSON config")
+    parser.add_argument(
+        "--init-config", metavar="CONFIG.json", default=None,
+        help="Create an incomplete offline config and companion checklist from --spec; never overwrite files",
+    )
     parser.add_argument("--workers", "-w", type=int, default=4, help="Concurrent read-only checks")
     parser.add_argument(
         "--delay",
@@ -130,6 +135,15 @@ def _load_spec(path: str) -> Dict[str, Any]:
         raise ValueError(f"Cannot load specification '{path}': {exc}") from exc
 
 
+def _reject_incomplete_draft(config: Any) -> None:
+    if config_needs_input(config):
+        raise ValueError(
+            "Configuration draft needs user input. Complete the companion checklist, replace all "
+            "__GRANTTRACE_INPUT__: placeholders, and remove _granttrace_draft after reviewing identities, "
+            "resources, authorization policy, and any write/readback mappings. No requests were sent."
+        )
+
+
 def run_config_validation(config_path_str: str, spec_path: Optional[str] = None) -> int:
     config_file = Path(config_path_str)
     safe_path_str = sanitize_log_text(config_path_str)
@@ -154,6 +168,12 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
     except Exception as exc:
         safe_err = sanitize_log_text(f"{type(exc).__name__}: {exc}")
         print(f"[ERROR] Unexpected error inspecting configuration: {safe_err}", file=sys.stderr)
+        return 2
+
+    try:
+        _reject_incomplete_draft(raw_data)
+    except ValueError as exc:
+        print("[ERROR] " + str(exc), file=sys.stderr)
         return 2
 
     # Config-only validation remains available without a default specification.
@@ -210,6 +230,7 @@ def _load_config(path: Optional[str]) -> Dict[str, Any]:
         raise ValueError(f"cannot read configuration '{path}': {exc}") from exc
     if not isinstance(config, dict):
         raise ValueError("configuration root must be a JSON object")
+    _reject_incomplete_draft(config)
     return config
 
 
@@ -221,6 +242,24 @@ def _ensure_parent(path: str) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_argument_parser().parse_args(argv)
     print(BANNER)
+    if args.init_config is not None:
+        if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint:
+            print("[ERROR] --init-config cannot be combined with --config, --validate-config, "
+                  "--dry-run, --allow-write-tests, or --write-endpoint", file=sys.stderr)
+            return 2
+        try:
+            output, checklist = write_config_scaffold(
+                args.spec if args.spec is not None else "openapi.json", args.init_config
+            )
+        except Exception as exc:
+            print("[ERROR] Cannot create configuration draft: " +
+                  sanitize_log_text(sanitize_text(str(exc))), file=sys.stderr)
+            return 2
+        print("[OK] Offline configuration draft: " + sanitize_log_text(str(output)))
+        print("[OK] Review checklist: " + sanitize_log_text(str(checklist)))
+        print("[REVIEW] Needs user input; validation and scans remain blocked until review is complete. "
+              "Write tests are disabled.")
+        return 0
     if args.validate_config:
         config_path = args.config or "config.json"
         return run_config_validation(config_path, args.spec)
@@ -322,7 +361,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 json.dump(
                     {
                         "tool_version": "2.3.1-final",
-                        "report_schema_version": 1,
+                        "report_schema_version": 2,
                         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "elapsed_seconds": round(elapsed, 3),
                         "target": args.target,
