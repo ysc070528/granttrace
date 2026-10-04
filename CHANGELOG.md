@@ -1,5 +1,61 @@
 # Changelog
 
+## 2.5.0 - 2026-10-04
+
+### Added
+
+- Export SARIF 2.1.0 with `--export-sarif`, alongside HTML and JSON reports.
+  Only existing CONFIRMED findings produce results: BOLA / IDOR maps to
+  `GT-BOLA-001` / `CWE-639`, and Mass Assignment to `GT-MASS-001` / `CWE-915`.
+  A safely represented OpenAPI file inside the workspace supplies the artifact
+  location for GitHub Code Scanning; no source lines or endpoint files are invented.
+- Add safe cURL reproduction templates and copy buttons to confirmed HTML finding
+  cards. Use the actual tested URL and confirmed injected payload where safe,
+  Visitor credential placeholders, POSIX shell quoting and `curl --globoff`.
+  Clipboard fallback supports offline reports; manual selection works without
+  JavaScript. Real credentials never enter the templates, including when sensitive
+  report evidence is enabled.
+- Guide configuration onboarding from draft generation and manual review through
+  validation, a local dry-run and a read-only first real scan. Distinguish
+  config-only from spec-aware validation, summarize dry-run counts, and format
+  next-step commands safely for POSIX shells or PowerShell.
+
+### Changed
+
+- Align README, configuration and advanced guidance with the first API onboarding
+  flow and the SARIF / cURL outputs, without changing configuration formats.
+- Explain validation scope, warnings and dry-run write eligibility more clearly.
+  An active PATCH configuration is separate from enabling active execution;
+  the recommended first real scan remains read-only.
+- Promote the release source to `2.5.0` across package metadata, runtime version
+  and generated examples; prepare the release checklist and OIDC workflow for
+  the new tag without publishing it during release preparation.
+
+### Security / Safety
+
+- Preserve BOLA / IDOR verdicts and Mass Assignment detection criteria, default
+  read-only auditing, and the existing TLS / HTTP / redirect / proxy boundaries.
+- Active PATCH still requires explicit `--allow-write-tests`, an explicit write
+  allowlist, independent GET readback, original-state snapshots, rollback and
+  rollback verification. Failed recovery still halts further writes.
+- SARIF, cURL templates and onboarding output do not expose real credentials;
+  onboarding also omits configured resource values. Workspace-external specs
+  never expose absolute local paths in SARIF.
+- Validation and dry-run remain offline; dry-run sends zero requests. No active
+  POST / PUT testing or automated OAuth / login is added.
+
+### Quality
+
+- Retain the 486-test baseline, Python 3.9 / 3.12 / 3.14 CI, blocking mypy and Ruff,
+  Runtime dependency audit, CodeQL and the branch-aware coverage gate of 80%.
+- Fresh release-prep acceptance passes all 486 tests with **82.78%** branch-aware
+  local coverage, mypy reporting no issues in 18 source files, Ruff and the runtime
+  dependency audit. All six bundled business scenarios match their expected
+  outcomes; JSON / YAML scans restore the full mock database. A fresh wheel
+  installed outside the checkout passes both demo modes and verifies version
+  `2.5.0`, read-only 0 PATCH, active rollback and local server shutdown. See
+  [VERIFICATION.md](VERIFICATION.md) for the exact scope and remote check results.
+
 ## 2.4.1 - 2026-10-03
 
 ### Added

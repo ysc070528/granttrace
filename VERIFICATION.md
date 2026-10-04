@@ -1,5 +1,78 @@
 # GrantTrace 验收记录
 
+## 2026-10-04 v2.5.0 发布前验收
+
+这是 **发布前验收**，不表示 v2.5.0 已在 GitHub Release 或 PyPI 发布。
+Base main commit 为
+[`7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec`](https://github.com/ysc070528/granttrace/commit/7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec)，
+Release Prep 分支为 `codex/v2.5.0-release`，源码版本统一为 `2.5.0`。
+v2.5.0 功能已经冻结；本轮只提升正式版本、同步文档与生成示例、扩展历史保留的
+manual release option，并重新执行验收，不新增功能或重构检测代码。
+
+### 已合并的功能与安全范围
+
+- SARIF 2.1.0：`--export-sarif` 只导出 CONFIRMED，BOLA / IDOR 对应
+  `GT-BOLA-001` / `CWE-639`，Mass Assignment 对应 `GT-MASS-001` / `CWE-915`。
+  workspace 内的 OpenAPI spec 提供安全相对 artifact location，不虚构源码行号；
+  外部 spec 不泄漏绝对路径。保留凭据脱敏及 dry-run 禁止 SARIF 的边界。
+- 安全 cURL：confirmed finding 卡片保留凭据占位符、POSIX 引用、`curl --globoff`、
+  已确认的安全 URL / payload / Content-Type，以及离线复制 fallback。
+  `--include-sensitive-evidence` 不解除 cURL 凭据限制。
+- 配置引导：保留草稿阻断、人工核对、config-only / spec-aware 范围区分、离线计划
+  和首次只读扫描建议；allowlist 存在不等于启用 PATCH，引导不展示凭据或资源值。
+- BOLA / IDOR / Mass Assignment 的判定、ConfigValidator、默认只读、显式 write
+  allowlist、独立 GET readback、snapshot、rollback verification、恢复失败停写、
+  TLS / HTTP / redirect / proxy 和 loopback demo 安全边界均未修改。
+  没有新增 POST / PUT 主动测试、自动 OAuth / login 或其他检测能力。
+
+### 本轮实际本地执行
+
+本地 Windows / Python 3.14.5 重新执行，未引用旧功能 PR 的绿灯作为本轮结果：
+
+| 检查 | 实际结果 |
+|---|---|
+| `python -m unittest discover -s tests` | **486 passed**，0 failures / errors / skipped；未删除或跳过测试，仅同步一处当前版本断言 |
+| mypy | `Success: no issues found in 18 source files`，**0 errors** |
+| Ruff | `All checks passed!` |
+| coverage erase / run / report / xml / json | 总覆盖率 **82.78%**；保留 branch-aware source 范围和 `fail_under = 80` |
+| 业务场景 | **6/6** 本机模型符合预期：团队共享、租户管理员为 AUTHORIZED；未共享、跨租户隔离为 SECURE；两种泄漏为 CONFIRMED |
+| 官方 examples 脚本 | 先 `--update-examples`，再不带更新参数复验；JSON / YAML 和完整数据库恢复通过 |
+| read-only example | 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED，conclusive coverage 60% |
+| active JSON / YAML | 2 CONFIRMED、1 PUBLIC、2 SECURE，conclusive coverage 100%，Mass Assignment rollback_verified=true |
+| `verify_install.py` | fresh 2.5.0 wheel 在源码目录外的新虚拟环境安装通过；CLI、metadata、JSON/YAML plan、草稿阻断与安装资源通过 |
+| 安装后版本链 | CLI 为 `GrantTrace 2.5.0`；project / runtime / wheel / installed metadata / JSON 均为 `2.5.0`；HTML 为 `v2.5.0`；实际 HTTP User-Agent 为 `GrantTrace/2.5.0` |
+| installed read-only demo | **0 PATCH**，database_restored=true、server_stopped=true |
+| installed active demo | 1 BOLA、1 Mass Assignment CONFIRMED；rollback_verified=true、database_restored=true、server_stopped=true；动态 127.0.0.1 端口正常关闭 |
+| 安装后用户扫描 / 本地计划 | 默认扫描 **0 PATCH**；主动扫描独立读回和完整恢复通过；offline plan requests_sent=0 |
+| pip check / 本地 strict pip-audit | 无依赖冲突；`No known vulnerabilities found`，未忽略漏洞或降低审计要求 |
+| build / twine | 清理已核对的旧构建范围后执行 `python -m build`；2.5.0 wheel / sdist 生成，`twine check --strict` 均 PASSED |
+| wheel / sdist 内容 | Name=granttrace、Version=2.5.0、Python>=3.9、Apache-2.0、PyYAML>=6.0 与 CLI entry point 正确；demo assets、SARIF / cURL / onboarding 模块以及 sdist 的 docs / examples / scripts 完整 |
+| 发行物卫生 | 检查包内文件名与实际主机路径变体，未发现缓存、私有配置、临时报告、.git、真实主机用户名或本机路径；原有虚构 mock 凭据和隐私回归路径 fixture 保留，不将通用 secret scanner 宣称为绝对保证 |
+| 安装后 SARIF 本机扫描 | SARIF 2.1.0 / driver 2.5.0；只读 1 result、主动 2 results，仅 CONFIRMED，两个 rule/CWE 正确；location 为 openapi.json，无伪造行号、凭据或绝对路径；两个输出通过官方 OASIS SARIF 2.1.0 schema |
+| 安装后 cURL 报告 | 2 份 confirmed 模板，BOLA GET / Mass Assignment PATCH；真实测试 URL、application/json、已确认 role=admin payload 与自定义 Visitor 凭据占位符正确，无 demo 原始认证值 |
+| 安装后离线引导 | 实际 init/validate/dry-run：socket / DNS / HTTP 调用计数均为 0；生成空 allowlist 草稿和 checklist、spec-aware 说明及只读下一步，plan requests_sent=0 |
+| 报告复制 fallback | 实际生成的 JavaScript 在 Node 离线 DOM harness 中通过无 Clipboard API 成功/失败与 API reject fallback 三种模式；此验证不是浏览器 UI 验收 |
+
+两个生成示例只由 `scripts/verify_examples.py --update-examples` 更新；版本、时间和
+动态 loopback 端口更新不改变业务结果。构建 SHA-256 只用于 PR branch pre-release
+资产检查；最终 Release 资产必须基于最终合并 / tagged commit 重新构建或核实，不能
+把本轮分支的 hash 当作最终发布 hash。
+
+### 发布工作流与证据边界
+
+release.yml 仅修改 manual default、choices、allowlist 和对应错误说明，支持 v2.5.0
+并保留 v2.4.0 / v2.4.1。YAML 解析、4 段内嵌 Python 编译及 **35 组隔离校验**通过；
+外部 HTTP / git 输出均 mock，0 真实网络调用、0 发布动作。本机没有 actionlint，未下载 binary。
+官方 stable Release、tag/source commit、project/runtime/distribution metadata、SHA256、
+build/publish 分离、`pypi` environment、OIDC 和 v2.4.0 固定 commit 校验保持原样。
+
+PowerShell 引用的本轮单元测试通过；此记录不宣称 PowerShell 7 真实命令执行通过。
+六个业务模型与 demo 只证明所列本机 fixture 结果，不代表生产 API 检测率或零误报。
+所有目标为隔离本机 mock，凭据为虚构数据，不使用真实生产 API 或凭据。
+最终合并后的 main commit 与 CI / CodeQL 仍须由维护者在正式发布前复核。
+本轮 Release Prep PR 保持开放，未合并，未创建 tag / GitHub Release，未发布 PyPI。
+下方 v2.4.1 及更早版本的验收原文完整保留。
+
 ## 2026-10-04 v2.4.1 正式发布验收
 
 发布时 final main commit 为

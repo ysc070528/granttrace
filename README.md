@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**Stable:** [v2.4.1](https://github.com/ysc070528/granttrace/releases/tag/v2.4.1)
+**Release source:** v2.5.0 · [GitHub Releases](https://github.com/ysc070528/granttrace/releases) · [PyPI](https://pypi.org/project/granttrace/)
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -22,7 +22,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## 五分钟体验
 
-需要 Python 3.9+。当前稳定版 **v2.4.1** 已发布到 [PyPI](https://pypi.org/project/granttrace/2.4.1/)，包含内置 `granttrace demo`。首次体验只需：
+需要 Python 3.9+。最新发布与可安装版本以 [GitHub Releases](https://github.com/ysc070528/granttrace/releases) 和 [PyPI](https://pypi.org/project/granttrace/) 为准。安装包包含内置 `granttrace demo`，首次体验只需：
 
 ```bash
 python -m pip install --upgrade granttrace
@@ -73,7 +73,7 @@ OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测
 
 ## SARIF 导出
 
-源码中的 `--export-sarif PATH` 可与 HTML / JSON 同时使用；本功能尚未包含在已发布的 v2.4.1 中，不表示 v2.5 已发布。
+`--export-sarif PATH` 可与 HTML / JSON 同时使用：
 
 ```bash
 granttrace --spec your-openapi.yaml --config config.local.json \
@@ -84,7 +84,7 @@ SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPIC
 
 ## cURL 复现模板
 
-当前源码的 HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮；本功能尚未包含在已发布的 v2.4.1 中，不表示 v2.5 已发布。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](docs/advanced.md#curl-复现模板)。
+HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](docs/advanced.md#curl-复现模板)。
 
 ## 从源码开发 / 运行仓库 mock
 
