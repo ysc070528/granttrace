@@ -6,14 +6,14 @@
       "id": "1001",
       "token": "Bearer TOKEN_ALICE_OWNER_1001",
       "parameters": {
-        "user_id": "1001"
+        "user_id": 1001
       }
     },
     "visitor": {
       "id": "1002",
       "token": "Bearer TOKEN_BOB_VISITOR_1002",
       "parameters": {
-        "user_id": "1002"
+        "user_id": 1002
       }
     },
     "anonymous": {

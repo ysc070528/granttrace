@@ -399,7 +399,39 @@ class ResponseDiffEngine:
             return 0.0
 
     @classmethod
+    def _meaningful_record_value(cls, obj: Any) -> Any:
+        """Build a typed business value without encoding nested arrays twice."""
+        def canonical_key(value: Any) -> str:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if isinstance(obj, dict):
+            fields = []
+            for raw_key, value in obj.items():
+                key = cls._normalise_key(raw_key)
+                if cls._is_request_metadata_key(key):
+                    continue
+                if not isinstance(value, (dict, list)) and (
+                    key in cls.NON_RESOURCE_VALUE_KEYS or cls._looks_like_identifier_key(key)
+                ):
+                    continue
+                meaningful = cls._meaningful_record_value(value)
+                if meaningful is not None:
+                    fields.append((key, meaningful))
+            return {"object": sorted(fields, key=canonical_key)} if fields else None
+        if isinstance(obj, list):
+            records = [cls._meaningful_record_value(value) for value in obj]
+            records = [record for record in records if record is not None]
+            return {"array": sorted(records, key=canonical_key)} if records else None
+        return obj
+
+    @classmethod
     def _meaningful_leaf_pairs(cls, obj: Any, path: str = "") -> Set[Tuple[str, str]]:
+        """Keep object fields and unordered array records associated.
+
+        An array is one comparison unit: its canonical value contains every
+        record's meaningful fields, including repeated records. Flattening
+        records to ``items[].field`` sets loses which values occurred together
+        and can mistake unrelated records for an exact business-data match.
+        """
         pairs: Set[Tuple[str, str]] = set()
         if isinstance(obj, dict):
             for raw_key, value in obj.items():
@@ -417,13 +449,10 @@ class ResponseDiffEngine:
                     canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                     pairs.add((child_path, canonical))
         elif isinstance(obj, list):
-            for value in obj:
-                child_path = f"{path}[]" if path else "[]"
-                if isinstance(value, (dict, list)):
-                    pairs.update(cls._meaningful_leaf_pairs(value, child_path))
-                elif value is not None:
-                    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-                    pairs.add((child_path, canonical))
+            records = cls._meaningful_record_value(obj)
+            if records is not None:
+                canonical = json.dumps(records, ensure_ascii=False, separators=(",", ":"))
+                pairs.add((f"{path}[]" if path else "[]", canonical))
         elif obj is not None:
             canonical = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             pairs.add((path or "$", canonical))

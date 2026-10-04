@@ -125,6 +125,11 @@ def _safe_url(value: object, secrets: tuple[str, ...]) -> Optional[tuple[str, bo
     authority = urlsplit(value).netloc.rsplit("@", 1)[-1]
     if sanitize_text(authority, secret_values=secrets) != authority:
         return None
+    # Preserve the existing omission boundary for an encoded private path.
+    # Sanitizing it first would erase the reason the original cannot be used
+    # as a reproduction target, especially across literal '/' segments.
+    if not _encoded_text_is_safe(urlsplit(value).path, secrets):
+        return None
     # The URL-aware boundary decodes path segments before known-secret matching.
     # Nested percent encoding is rejected above rather than risking another
     # encoded echo beyond the existing sanitizer's supported decoding depth.

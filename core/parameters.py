@@ -16,6 +16,8 @@ import math
 from typing import Any, Dict, List, NoReturn, Tuple
 from urllib.parse import quote
 
+from core.generator import SmartDataGenerator
+
 
 class ParameterSerializationError(ValueError):
     """A parameter cannot be represented safely using its declared contract."""
@@ -88,7 +90,7 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
     kind = _kind(value)
     if location == "path" and kind == "primitive" and _scalar(value) == "":
         _fail("Empty path parameter values are unsupported because they can select a different resource")
-    schema = metadata.get("schema", metadata if swagger2 else {})
+    schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
     if isinstance(schema, dict):
         declared = schema.get("type")
         if isinstance(declared, list):
@@ -99,6 +101,8 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
             _fail("Configured parameter value conflicts with its declared scalar type")
         if declared == "file":
             _fail("File parameter serialization is unsupported")
+    if not SmartDataGenerator.validate_schema_value(value, schema, request=False):
+        _fail("Parameter value does not satisfy its declared schema or the schema is unsupported")
     if swagger2:
         if "style" in metadata or "explode" in metadata:
             _fail("Swagger 2 parameters use collectionFormat; style/explode are unsupported")

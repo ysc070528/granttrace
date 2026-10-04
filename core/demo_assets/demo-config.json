@@ -5,7 +5,7 @@
       "id": "1001",
       "token": null,
       "parameters": {
-        "user_id": "1001"
+        "user_id": 1001
       },
       "headers": {
         "X-GrantTrace-Demo-Identity": "granttrace-demo-owner-1001"
@@ -18,7 +18,7 @@
       "id": "1002",
       "token": null,
       "parameters": {
-        "user_id": "1002"
+        "user_id": 1002
       },
       "headers": {
         "X-GrantTrace-Demo-Identity": "granttrace-demo-visitor-1002"

@@ -399,16 +399,29 @@ class CliHardeningTests(unittest.TestCase):
 
     def test_cli_allowlist_replaces_configured_scope(self):
         with tempfile.TemporaryDirectory() as folder:
+            spec = Path(folder) / "spec.json"
+            spec.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/narrow": {"patch": {
+                        "requestBody": {"content": {"application/json": {"schema": {
+                            "type": "object", "properties": {"role": {"type": "string"}},
+                        }}}},
+                        "responses": {"200": {"description": "Updated"}},
+                    }},
+                    "/narrow-readback": {"get": {"responses": {"200": {"description": "State"}}}},
+                },
+            }), encoding="utf-8")
             config = Path(folder) / "config.json"
             config.write_text(json.dumps({
                 "write_allowlist": ["PATCH /broad"],
                 "readbacks": {"PATCH /narrow": {
-                    "method": "GET", "path": "/narrow", "field_map": {"role": "role"},
+                    "method": "GET", "path": "/narrow-readback", "field_map": {"role": "role"},
                 }},
             }), encoding="utf-8")
             with patch("api_sentinel.APISentinelAuditor") as auditor, redirect_stdout(io.StringIO()):
                 auditor.return_value.build_plan.return_value = {"mode": "DRY_RUN"}
-                code = main(["--spec", str(ROOT / "openapi.json"), "--config", str(config),
+                code = main(["--spec", str(spec), "--config", str(config),
                              "--dry-run", "--write-endpoint", "PATCH /narrow"])
                 self.assertEqual(code, 0)
                 self.assertEqual(auditor.call_args.kwargs["write_allowlist"], ["PATCH /narrow"])

@@ -51,6 +51,10 @@ granttrace --config config.local.json --validate-config
 
 spec-aware 成功提示说明配置和选定规范共同参与检查；config-only 成功提示明确没有执行 operation/spec 交叉检查，下一步只要求显式提供 `--spec` 重新验证，不直接推荐扫描。两者都不发送请求。成功输出仍保留 Identities、Write allowlist、Readbacks、Parameter values、BOLA policies 的原有数量；新增 scope 和模式说明只描述当前检查范围与配置状态。
 
+spec-aware 检查允许清单、BOLA、operation-level 参数值和 readback 关联的 PATCH 操作是否存在于选定规范；拼错或不存在的操作返回错误。它使用规范中的认证头声明，并按已有 schema 校验子集检查实际生效的显式 path / query 参数值，包括原生 JSON 类型、enum、范围及结构约束。身份参数与 operation-level 参数沿用实际覆盖顺序；生成值及运行时读回参数仍须通过请求前检查。这不是完整的 OpenAPI / JSON Schema 验证器。
+
+独立 GET readback 可来自规范外的专用接口，未在选定规范声明时给出 warning，要求人工确认路径与参数，不因未声明而禁止使用。已声明的读回参数及显式配置的读回参数元数据参与支持的 schema 检查；离线检查仍无法证明该接口存在、读回独立性、实际一致性或恢复能力。
+
 ```text
 [OK] Offline configuration validation passed.
 [SCOPE] Configuration + selected OpenAPI specification were checked together: your-openapi.yaml
@@ -165,7 +169,7 @@ HTML 的确认漏洞卡片可提供 **cURL 复现模板（请填入授权测试�
 granttrace --spec openapi.json --config config.json --dry-run --export-json plan.json
 ```
 
-- 显式 CLI `--write-endpoint` **替换**配置允许清单，不会扩大它；操作路径区分大小写。干跑退出码 0 只代表本地计划生成成功，不是扫描通过。
+- 显式 CLI `--write-endpoint` **替换**配置允许清单，可选择原清单之外的操作；配置清单不是 CLI 选择的上限，也不会与 CLI 选择合并。每个选定 PATCH 仍须有独立读回映射，并经人工核对和 dry-run 审阅；操作路径区分大小写。干跑退出码 0 只代表本地计划生成成功，不是扫描通过。
 - CI 可同时使用 `--fail-on-error --fail-on-vuln --fail-on-suspicious --min-coverage 80`；阈值按期望检查范围设置。错误门槛优先返回 2，漏洞门槛返回 1。空规范、全部不支持的检查不能通过错误门槛。
 - 身份比较基于最终发送的认证头，头名称忽略大小写；token 覆盖 Authorization。trace 头不算认证。自定义认证头需用 `auth_header_names: ["X-Session"]`，或在规范 header API Key 安全方案中声明。
 - `consistency: "strong"` 是操作者对读回接口的约定，不是工具自动证明的属性；确认读回绕过缓存并反映已提交状态后才能设置。未设置时，未观察到修改归为 INCONCLUSIVE，不能为了通过 CI 随意声明。

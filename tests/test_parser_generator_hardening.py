@@ -106,7 +106,18 @@ class ParserHardeningTests(unittest.TestCase):
             self._write_json(root / "models" / "models.json", models)
             self._write_json(root / "openapi.json", spec)
 
-            endpoint = OpenAPIParser(str(root / "openapi.json")).get_endpoints()[0]
+            parser = OpenAPIParser(str(root / "openapi.json"))
+            initial_sources = parser.source_files
+            self.assertEqual((root / "openapi.json",), initial_sources)
+            endpoint = parser.get_endpoints()[0]
+            self.assertEqual(
+                {root / "openapi.json", root / "models" / "models.json"},
+                set(parser.source_files),
+            )
+            self.assertIsInstance(parser.source_files, tuple)
+            self.assertEqual((root / "openapi.json",), initial_sources)
+            with self.assertRaises(AttributeError):
+                parser.source_files = ()
 
             self.assertEqual(endpoint["request_content_type"], "application/vnd.sentinel+json")
             params = {(item["name"], item["in"]): item for item in endpoint["parameters"]}

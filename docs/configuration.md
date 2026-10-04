@@ -24,6 +24,8 @@ granttrace --spec your-openapi.yaml --config config.local.json --validate-config
 
 检查成功输出中的数量、scope、模式和警告。允许清单有条目时，只表示主动 PATCH 配置存在；这一步没有启用写测试。没有选定规范的 config-only 检查不执行 operation/spec 交叉检查，须再显式提供 `--spec`，详见 [验证模式](advanced.md#离线验证的两种范围)。
 
+指定规范后，检查配置操作是否声明于规范，以及实际生效的显式 path / query 参数值是否满足支持的 schema 约束。不存在的允许清单、BOLA、operation-level 参数或 readback 关联 PATCH 操作会报错。独立 GET readback 不在规范中时保留支持并给出 warning，须人工确认其路径与参数；这项 warning 不能证明接口存在或可恢复。
+
 4. **生成并审阅本地计划**：
 
 ```bash
@@ -59,6 +61,8 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 保留参数的 JSON 类型；数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
 
+显式参数不会通过类型转换绕过 schema 检查：`integer` 参数使用 `1001`，不能填写字符串 `"1001"` 或布尔值。检查还包括支持的 enum、数值范围、字符串及容器约束；复杂或不支持的 schema 不能建立参数有效性。身份的 `id` 是身份标识，不代替 `parameters` 中参数自身的类型约定。
+
 ## 配置结构
 
 `config.json` 支持以下信息：
@@ -77,12 +81,12 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
     "owner": {
       "id": "1001",
       "token": "Bearer OWNER_TOKEN",
-      "parameters": {"user_id": "1001"}
+      "parameters": {"user_id": 1001}
     },
     "visitor": {
       "id": "1002",
       "token": "Bearer VISITOR_TOKEN",
-      "parameters": {"user_id": "1002"}
+      "parameters": {"user_id": 1002}
     },
     "anonymous": {"id": null, "token": null, "parameters": {}}
   },

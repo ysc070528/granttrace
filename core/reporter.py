@@ -6,7 +6,7 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from core import __version__
 from core.evidence import sanitize_url
@@ -168,9 +168,10 @@ class SecurityReportGenerator:
         output_path: str = "granttrace_report.html",
         results: Optional[List[Dict[str, Any]]] = None,
         reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
+        secret_values: Iterable[str] = (),
     ) -> None:
         results = results or []
-        target_url = sanitize_url(target_url)
+        target_url = sanitize_url(target_url, secret_values=secret_values)
         generated_at = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
         cards = [

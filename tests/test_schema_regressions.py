@@ -125,6 +125,44 @@ class SchemaRegressionTests(unittest.TestCase):
         for invalid in ([1, 1], [1, "5"], [1, 2]):
             self.assertFalse(Generator.validate_schema_value(invalid, schema))
 
+    def test_unsupported_children_cannot_be_negated_or_select_an_else_branch(self):
+        for unsupported in (
+            {"$ref": "#/unresolved"},
+            {"$dynamicRef": "#node"},
+            {"unevaluatedProperties": False},
+            {"type": "unsupported"},
+            {"type": None},
+            {"type": "string", "pattern": "["},
+            {"enum": "admin"},
+            {"required": "field"},
+            {"minimum": "one"},
+            {"uniqueItems": "false"},
+        ):
+            schemas = (
+                {"not": unsupported},
+                {"if": unsupported, "then": False, "else": True},
+                {"anyOf": [True, unsupported]},
+                {"oneOf": [True, unsupported]},
+                {"type": "object", "properties": {"optional": unsupported}},
+            )
+            for schema in schemas:
+                with self.subTest(schema=schema):
+                    self.assertFalse(Generator.validate_schema_value({}, schema))
+                    with self.assertRaises(SchemaGenerationError):
+                        Generator.build_baseline_body(schema)
+
+    def test_supported_negation_and_conditionals_keep_their_semantics(self):
+        self.assertTrue(Generator.validate_schema_value("member", {"not": {"const": "admin"}}))
+        self.assertFalse(Generator.validate_schema_value("admin", {"not": {"const": "admin"}}))
+        schema = {"type": "object", "if": {"properties": {"kind": {"const": "admin"}},
+                                             "required": ["kind"]},
+                  "then": {"required": ["approval"]},
+                  "else": {"required": ["note"]}}
+        self.assertTrue(Generator.validate_schema_value({"kind": "admin", "approval": True}, schema))
+        self.assertFalse(Generator.validate_schema_value({"kind": "admin"}, schema))
+        self.assertTrue(Generator.validate_schema_value({"kind": "member", "note": "ok"}, schema))
+        self.assertFalse(Generator.validate_schema_value({"kind": "member"}, schema))
+
 
 class ReferenceRegressionTests(unittest.TestCase):
     def write(self, path, value):
@@ -204,6 +242,65 @@ class ReferenceRegressionTests(unittest.TestCase):
             private = OpenAPIParser(str(path)).get_endpoints()[0]
             self.assertTrue(private["security_declared"])
             self.assertEqual(private["security"], [{"bearer": []}])
+
+    def test_local_conditional_refs_are_resolved_and_required_branch_is_enforced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "openapi.json"
+            schema = {"type": "object", "required": ["kind"], "properties": {
+                "kind": {"type": "string", "enum": ["admin"]},
+                "approval": {"type": "string", "const": "approved"},
+                "role": {"type": "string", "enum": ["member", "admin"], "readOnly": True},
+            }, "if": {"$ref": "#/components/schemas/Admin"},
+                "then": {"$ref": "#/components/schemas/Approved"},
+                "else": {"$ref": "#/components/schemas/Member"}}
+            spec = self.endpoint_spec(schema)
+            spec["components"] = {"schemas": {
+                "Admin": {"properties": {"kind": {"const": "admin"}}, "required": ["kind"]},
+                "Approved": {"required": ["approval"]},
+                "Member": {"not": {"required": ["approval"]}},
+            }}
+            self.write(path, spec)
+            resolved = OpenAPIParser(str(path)).get_endpoints()[0]["request_schema"]
+            for keyword in ("if", "then", "else"):
+                self.assertNotIn("$ref", resolved[keyword])
+            self.assertFalse(Generator.validate_schema_value({"kind": "admin"}, resolved))
+            with self.assertRaises(SchemaGenerationError):
+                Generator.build_baseline_body(resolved)
+            resolved["example"] = {"kind": "admin", "approval": "approved"}
+            self.assertEqual(resolved["example"], Generator.build_baseline_body(resolved))
+            self.assertTrue(Generator.validate_schema_value(
+                Generator.build_mass_assignment_cases(resolved)[0]["payload"], resolved))
+
+    def test_conditional_keywords_do_not_interact_across_allof_branches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "openapi.json"
+            schema = {"type": "integer", "allOf": [
+                {"if": {"type": "integer"}}, {"then": {"minimum": 10}},
+            ]}
+            self.write(path, self.endpoint_spec(schema))
+            resolved = OpenAPIParser(str(path)).get_endpoints()[0]["request_schema"]
+            self.assertNotIn("if", resolved)
+            self.assertNotIn("then", resolved)
+            self.assertTrue(Generator.validate_schema_value(2, resolved))
+
+    def test_external_conditional_and_supported_child_refs_keep_source_context(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.write(root / "models.json", {
+                "Body": {"type": "object", "if": {"$ref": "#/Flag"},
+                         "then": {"$ref": "#/Required"}, "else": {"$ref": "#/Forbidden"},
+                         "dependentSchemas": {"flag": {"$ref": "#/Required"}},
+                         "patternProperties": {"^flag$": {"$ref": "#/FlagValue"}},
+                         "properties": {"tuple": {"type": "array", "prefixItems": [{"$ref": "#/FlagValue"}]}}},
+                "Flag": {"required": ["flag"]}, "Required": {"required": ["approval"]},
+                "Forbidden": {"not": {"required": ["approval"]}}, "FlagValue": {"type": "boolean"},
+            })
+            self.write(root / "openapi.json", self.endpoint_spec({"$ref": "models.json#/Body"}))
+            resolved = OpenAPIParser(str(root / "openapi.json")).get_endpoints()[0]["request_schema"]
+            self.assertEqual({"required": ["approval"]}, resolved["then"])
+            self.assertEqual({"type": "boolean"}, resolved["properties"]["tuple"]["prefixItems"][0])
+            self.assertTrue(Generator.validate_schema_value({"flag": True, "approval": True}, resolved))
+            self.assertFalse(Generator.validate_schema_value({"flag": True}, resolved))
 
 
 if __name__ == "__main__":

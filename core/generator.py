@@ -162,6 +162,97 @@ class SmartDataGenerator:
         return value
 
     @classmethod
+    def _assert_supported_schema(cls, schema: Any) -> None:
+        """Reject unknown evaluations before boolean/conditional composition.
+
+        Unsupported is not equivalent to a schema mismatch: negating an
+        unresolved reference, or using it as ``if``, must never make a request
+        value valid. Inspect even inactive/absent child schemas so these cases
+        cannot be hidden behind ``not``, alternatives or optional properties.
+        """
+        if isinstance(schema, bool):
+            return
+        if not isinstance(schema, dict):
+            raise SchemaGenerationError("A schema must be an object or boolean")
+        if any(key in schema for key in (
+            "$ref", "$dynamicRef", "$recursiveRef", "unevaluatedProperties", "unevaluatedItems"
+        )):
+            raise SchemaGenerationError("A schema contains unresolved or unsupported evaluation constraints")
+        schema_type = schema.get("type")
+        if "type" in schema:
+            types = schema_type if isinstance(schema_type, list) else [schema_type]
+            if not types or any(not isinstance(kind, str) or kind not in {
+                "null", "integer", "number", "boolean", "string", "array", "object"
+            } for kind in types):
+                raise SchemaGenerationError("A schema contains an unsupported type")
+        for keyword in ("uniqueItems", "nullable", "readOnly", "writeOnly"):
+            if keyword in schema and not isinstance(schema[keyword], bool):
+                raise SchemaGenerationError("Schema boolean constraints/annotations must be booleans")
+        if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
+            raise SchemaGenerationError("A schema enum must be a non-empty array")
+        for keyword in ("required", "dependentRequired"):
+            if keyword not in schema:
+                continue
+            groups = [schema[keyword]] if keyword == "required" else schema[keyword]
+            if keyword == "dependentRequired":
+                if not isinstance(groups, dict):
+                    raise SchemaGenerationError("dependentRequired must be an object")
+                groups = list(groups.values())
+            if any(not isinstance(group, list) or any(not isinstance(name, str) for name in group)
+                   for group in groups):
+                raise SchemaGenerationError("Required/dependent fields must be arrays of names")
+        for keyword in ("minimum", "maximum", "multipleOf"):
+            if keyword in schema:
+                bound = schema[keyword]
+                if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):
+                    raise SchemaGenerationError("Numeric schema constraints must be finite numbers")
+                if keyword == "multipleOf" and bound <= 0:
+                    raise SchemaGenerationError("multipleOf must be positive")
+        for keyword in ("exclusiveMinimum", "exclusiveMaximum"):
+            if keyword in schema and not isinstance(schema[keyword], bool):
+                bound = schema[keyword]
+                if not isinstance(bound, (int, float)) or not math.isfinite(bound):
+                    raise SchemaGenerationError("Exclusive bounds must be booleans or finite numbers")
+        for keyword in ("minLength", "maxLength", "minItems", "maxItems", "minProperties",
+                        "maxProperties", "minContains", "maxContains"):
+            if keyword in schema:
+                count = schema[keyword]
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    raise SchemaGenerationError("Schema length/count constraints must be non-negative integers")
+        if "pattern" in schema:
+            re.compile(schema["pattern"])
+        for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            if keyword not in schema:
+                continue
+            children = schema[keyword]
+            if not isinstance(children, list) or (keyword != "prefixItems" and not children):
+                raise SchemaGenerationError("Schema composition must contain an array of schemas")
+            for child in children:
+                cls._assert_supported_schema(child)
+        for keyword in ("not", "if", "then", "else", "contains", "propertyNames",
+                        "additionalProperties", "additionalItems"):
+            if keyword in schema:
+                cls._assert_supported_schema(schema[keyword])
+        if "items" in schema:
+            children = schema["items"]
+            for child in children if isinstance(children, list) else [children]:
+                cls._assert_supported_schema(child)
+        for keyword in ("properties", "patternProperties", "dependentSchemas", "dependencies"):
+            if keyword not in schema:
+                continue
+            children = schema[keyword]
+            if not isinstance(children, dict):
+                raise SchemaGenerationError("Schema property/dependency definitions must be objects")
+            for name, child in children.items():
+                if keyword == "patternProperties":
+                    re.compile(name)
+                if keyword == "dependencies" and isinstance(child, list):
+                    if any(not isinstance(item, str) for item in child):
+                        raise SchemaGenerationError("Property dependencies must contain field names")
+                else:
+                    cls._assert_supported_schema(child)
+
+    @classmethod
     def validate_schema_value(cls, value: Any, schema: Any, *, request: bool = True) -> bool:
         """Validate the supported schema subset recursively, failing closed.
 
@@ -172,6 +263,7 @@ class SmartDataGenerator:
         return False. This is not a complete JSON Schema implementation.
         """
         try:
+            cls._assert_supported_schema(schema)
             return cls._validate_schema_value(value, schema, request=request)
         except (TypeError, ValueError, OverflowError, RecursionError, re.error):
             return False

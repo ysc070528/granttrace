@@ -33,6 +33,11 @@ class OpenAPIParser:
         self.raw_spec: Dict[str, Any] = self._read_file(str(self._spec_file))
         self.version = self._detect_version()
 
+    @property
+    def source_files(self) -> Tuple[Path, ...]:
+        """Return an immutable snapshot of specification files actually read."""
+        return tuple(self._document_cache)
+
     def _read_file(self, path: str) -> Dict[str, Any]:
         """Read a JSON or YAML mapping and cache it by canonical path."""
         file_path = Path(path).expanduser().resolve()
@@ -218,7 +223,9 @@ class OpenAPIParser:
                 required = list(merged.get("required", []))
                 required.extend(item for item in value if item not in required)
                 merged["required"] = required
-            elif key not in {"allOf", "oneOf", "anyOf"}:
+            elif key not in {"allOf", "oneOf", "anyOf", "if", "then", "else"}:
+                # Conditional keywords interact only within their own schema;
+                # copying them out of separate allOf branches changes meaning.
                 merged.setdefault(key, value)
         return merged
 
@@ -316,12 +323,28 @@ class OpenAPIParser:
                     if isinstance(branch, dict):
                         resolved = self._merge_all_of(resolved, branch)
 
-        for keyword in ("not", "contains", "propertyNames"):
+        for keyword in ("not", "contains", "propertyNames", "if", "then", "else", "additionalItems"):
             child = working.get(keyword)
             if isinstance(child, dict):
                 resolved[keyword] = self._deep_resolve_schema(
                     child, depth - 1, _base_file=base_file, _seen=seen
                 )
+
+        prefix_items = working.get("prefixItems")
+        if isinstance(prefix_items, list):
+            resolved["prefixItems"] = [
+                self._deep_resolve_schema(child, depth - 1, _base_file=base_file, _seen=seen)
+                if isinstance(child, dict) else copy.deepcopy(child)
+                for child in prefix_items
+            ]
+        for keyword in ("patternProperties", "dependentSchemas", "dependencies"):
+            children = working.get(keyword)
+            if isinstance(children, dict):
+                resolved[keyword] = {
+                    name: self._deep_resolve_schema(child, depth - 1, _base_file=base_file, _seen=seen)
+                    if isinstance(child, dict) else copy.deepcopy(child)
+                    for name, child in children.items()
+                }
 
         return resolved
 

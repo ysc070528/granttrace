@@ -174,5 +174,59 @@ class ReflectedIdentifierRegressionTests(unittest.TestCase):
         self.assertEqual("BOLA_CONFIRMED", result["verdict"])
 
 
+class ArrayRecordAssociationTests(unittest.TestCase):
+    def setUp(self):
+        self.denied = response(401, {"error": "Authentication required"})
+        self.owner = {"rows": [
+            {"id": "owner-1", "color": "red", "amount": 10},
+            {"id": "owner-2", "color": "blue", "amount": 20},
+        ]}
+        self.visitor_self = {"rows": [
+            {"id": "visitor-1", "color": "green", "amount": 30},
+            {"id": "visitor-2", "color": "orange", "amount": 40},
+        ]}
+
+    def evaluate(self, cross):
+        return ResponseDiffEngine.evaluate_bola(
+            response(200, self.owner), response(200, cross), self.denied,
+            visitor_self=response(200, self.visitor_self),
+        )
+
+    def test_reassociated_fields_from_unrelated_records_do_not_confirm(self):
+        unrelated = {"rows": [
+            {"id": "other-1", "color": "red", "amount": 20},
+            {"id": "other-2", "color": "blue", "amount": 10},
+        ]}
+        result = self.evaluate(unrelated)
+        self.assertEqual("LOW_SUSPICION", result["verdict"])
+        self.assertFalse(result["evidence"]["exact_value_match"])
+        self.assertEqual([], result["evidence"]["confirmation_signals"])
+
+    def test_reordered_complete_records_retain_confirmation(self):
+        result = self.evaluate({"rows": list(reversed(self.owner["rows"]))})
+        self.assertEqual("BOLA_CONFIRMED", result["verdict"])
+        self.assertTrue(result["evidence"]["exact_value_match"])
+
+    def test_duplicate_records_are_not_discarded(self):
+        cross = {"rows": self.owner["rows"] + [self.owner["rows"][0]]}
+        result = self.evaluate(cross)
+        self.assertFalse(result["evidence"]["exact_value_match"])
+        self.assertEqual("LOW_SUSPICION", result["verdict"])
+
+    def test_nested_arrays_preserve_record_association_and_counts(self):
+        owner = {"groups": [{"entries": self.owner["rows"]}]}
+        reordered = {"groups": [{"entries": list(reversed(self.owner["rows"]))}]}
+        duplicated = {"groups": [{"entries": self.owner["rows"] * 2}]}
+        self.assertEqual(1.0, ResponseDiffEngine.calculate_value_similarity(
+            json.dumps(owner), json.dumps(reordered)))
+        self.assertEqual(0.0, ResponseDiffEngine.calculate_value_similarity(
+            json.dumps(owner), json.dumps(duplicated)))
+
+    def test_primitive_array_multiplicity_is_preserved(self):
+        similarity = ResponseDiffEngine.calculate_value_similarity
+        self.assertEqual(1.0, similarity('{"values":[1,2,1]}', '{"values":[1,1,2]}'))
+        self.assertEqual(0.0, similarity('{"values":[1,2,1]}', '{"values":[1,2]}'))
+
+
 if __name__ == "__main__":
     unittest.main()

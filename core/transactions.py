@@ -102,6 +102,27 @@ class PatchSnapshot:
                                       self._comparison_document(self.document)))
 
 
+def ensure_reversible_merge_patch(snapshot: PatchSnapshot) -> None:
+    """Reject probes whose existing restore body cannot undo RFC 7396 merging."""
+    def merge_patch(target: Any, patch: Any) -> Any:
+        if not isinstance(patch, dict):
+            return copy.deepcopy(patch)
+        result = copy.deepcopy(target) if isinstance(target, dict) else {}
+        for key, value in patch.items():
+            if value is None:
+                result.pop(key, None)
+            else:
+                result[key] = merge_patch(result.get(key), value)
+        return result
+
+    # Omitted object members survive a merge: copying the old object alone
+    # cannot remove a new privilege member introduced by an object probe.
+    mutated = merge_patch(snapshot.restore, snapshot.mutation)
+    restored = merge_patch(mutated, snapshot.restore)
+    if not json_values_equal(restored, snapshot.restore):
+        raise ValueError("Merge Patch probe cannot be reversed by the original snapshot")
+
+
 def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[str, Any]) -> PatchSnapshot:
     if not isinstance(before, dict) or not json_values_equal(before, before):
         raise ValueError("original snapshot must be a finite, JSON-serializable object")

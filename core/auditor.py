@@ -25,7 +25,7 @@ from core import __version__
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
 from core.evidence import body_sha256, sanitize_body, sanitize_evidence
-from core.transactions import PatchSnapshot, get_path, prepare_patch
+from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
@@ -118,12 +118,12 @@ class APISentinelAuditor:
             "owner": {
                 "id": "1001",
                 "token": "Bearer TOKEN_ALICE_OWNER_1001",
-                "parameters": {"user_id": "1001"},
+                "parameters": {},
             },
             "visitor": {
                 "id": "1002",
                 "token": "Bearer TOKEN_BOB_VISITOR_1002",
-                "parameters": {"user_id": "1002"},
+                "parameters": {},
             },
             "anonymous": {"id": None, "token": None, "parameters": {}},
         }
@@ -358,7 +358,7 @@ class APISentinelAuditor:
                     for item in parameters
                     if item.get("name") == param_name and item.get("in", "path") == "path"
                 ),
-                {"name": param_name, "in": "path", "schema": {"type": "string"}},
+                {"name": param_name, "in": "path", "schema": {}},
             )
             value = values.get(param_name) if param_name in values else SmartDataGenerator.generate_raw_value_for_param(metadata, candidate_id=candidate_id)
             test_path = test_path.replace("{" + param_name + "}", serialize_path_parameter(metadata, value, swagger2=swagger2))
@@ -921,6 +921,8 @@ class APISentinelAuditor:
                         return False  # Arrays replace as complete values.
                     if content_type == "application/merge-patch+json" and has_null_member(snapshot.restore):
                         raise ValueError("Merge Patch cannot restore present null object members")
+                    if content_type == "application/merge-patch+json":
+                        ensure_reversible_merge_patch(snapshot)
                 except (ValueError, KeyError, TypeError) as exc:
                     unverified.append(f"{field_path}: {exc}; no write was sent")
                     continue
