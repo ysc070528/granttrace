@@ -58,6 +58,26 @@ manual release option，并重新执行验收，不新增功能或重构检测�
 资产检查；最终 Release 资产必须基于最终合并 / tagged commit 重新构建或核实，不能
 把本轮分支的 hash 当作最终发布 hash。
 
+### 本轮首次远程发布准备验收
+
+[PR #23](https://github.com/ysc070528/granttrace/pull/23) 的 release-prep commit
+`ce84a0b11a5e1450aea7fb6698a5cdaa46e6e86f` 已实际通过
+[GrantTrace CI](https://github.com/ysc070528/granttrace/actions/runs/37192301259) 与
+[CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37192301260)：
+
+| Python job | unittest | branch-aware coverage | business / examples / install |
+|---|---|---|---|
+| 3.9 | 486 passed | 82.77% | 全部成功 |
+| 3.12 | 486 passed | 82.78% | 全部成功 |
+| 3.14 | 486 passed | 82.78% | 全部成功 |
+
+远程 Mypy 为 0 errors（18 个源码文件），Ruff、Runtime dependency audit、
+Analyze Python 和 CodeQL 全部成功；审计未发现已知漏洞。
+三个版本的安装验收均确认 2.5.0 metadata、read-only demo 0 PATCH，以及主动 demo
+rollback_verified / database_restored / server_stopped 均为 true。
+这是上述 commit 的真实执行记录。补入证据后最终 PR HEAD 仍须重新通过门禁，
+最新结果以 PR #23 的 Checks 为准，不将本记录当作合并后的 main 验收。
+
 ### 发布工作流与证据边界
 
 release.yml 仅修改 manual default、choices、allowlist 和对应错误说明，支持 v2.5.0

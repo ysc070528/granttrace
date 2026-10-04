@@ -6,6 +6,7 @@
 
 - Base main commit：[`7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec`](https://github.com/ysc070528/granttrace/commit/7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec)。
 - Release branch：`codex/v2.5.0-release`。
+- Release Prep：[PR #23](https://github.com/ysc070528/granttrace/pull/23)，保持开放，未合并。
 - 版本：`2.5.0`，不使用 `.dev0`、`rc1` 或 `-final`。
 - 已合并功能：[SARIF PR #20](https://github.com/ysc070528/granttrace/pull/20)、[安全 cURL PR #21](https://github.com/ysc070528/granttrace/pull/21)、[配置引导 PR #22](https://github.com/ysc070528/granttrace/pull/22)。
 - 最终发布 commit：以 Release Prep PR 最终合并后的 main commit 为准，**合并后必须记录 exact 40-char SHA**；当前不能把分支 HEAD 当作最终发布 commit。
@@ -65,14 +66,14 @@
 本轮本地实测为 **486 项通过、coverage 82.78%、mypy 0 errors、Ruff 与 runtime dependency audit 通过**。远程 PR 检查与最终合并后 main 检查须分别确认，不能用旧功能 PR 的绿灯替代。
 
 - [x] 本轮 unittest 486 项，0 failures / errors / skipped。
-- [ ] Python 3.9 远程测试通过。
-- [ ] Python 3.12 远程测试通过。
-- [ ] Python 3.14 远程测试通过。
+- [x] Python 3.9 远程测试通过：486 项，coverage 82.77%。
+- [x] Python 3.12 远程测试通过：486 项，coverage 82.78%。
+- [x] Python 3.14 远程测试通过：486 项，coverage 82.78%。
 - [x] blocking Mypy 为 0 errors；没有降低配置或增加 suppressions。
 - [x] Ruff 通过。
 - [x] Runtime dependency audit 通过。
-- [ ] Release Prep PR 的 Mypy / Ruff / Runtime dependency audit 远程正式门禁均通过。
-- [ ] Analyze Python / CodeQL 通过。
+- [x] Release Prep PR 的 Mypy / Ruff / Runtime dependency audit 远程正式门禁均通过。
+- [x] Analyze Python / CodeQL 通过。
 - [x] branch-aware coverage >=80%，保留现有 source、`branch = true`、`fail_under = 80`。
 - [x] 业务场景 6/6 匹配本机 fixture 真值。
 - [x] JSON / YAML examples、只读与主动扫描结果及完整数据库恢复通过。
@@ -98,6 +99,13 @@
 - [x] 只提交预期发布准备文件；不跟踪 dist / build / egg-info / coverage / 虚拟环境或临时报告。
 
 ## 本轮复验命令
+
+上述首次远程记录来自 release-prep commit `ce84a0b11a5e1450aea7fb6698a5cdaa46e6e86f`
+的 [CI](https://github.com/ysc070528/granttrace/actions/runs/37192301259) 与
+[CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37192301260)。
+三个 Python job 的 business scenarios、examples、installed-wheel 验证也均成功。
+补入这些记录后，最终 PR HEAD 仍须重新通过全部门禁；最新结果以 PR #23 的 Checks 为准。
+合并后的 main / tag / Release / PyPI 尚未执行，下面对应项目继续保持 unchecked。
 
 ```bash
 python -m unittest discover -s tests
