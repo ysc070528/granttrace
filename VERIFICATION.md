@@ -79,11 +79,30 @@ manual 情况；draft、prerelease、edited、非 main、dev tag、缺少正式 
 
 ### 本轮远程门禁与发布状态
 
-本轮 Release Prep PR 尚未创建，GrantTrace CI / CodeQL 尚未执行；
-不将 maintenance PR #26 或 base main 的成功记录作为本轮结果。
-创建 PR 后须实际等待 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、
-Runtime dependency audit 和 CodeQL 全部完成，并核对最新 HEAD。
-补入远程证据后，最终文档 commit 仍须重新通过门禁；合并后的 main 也须另行复核。
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 的首次提交
+`ec440b58939ed99153138c39755551282cf14ff3` 已实际通过
+[GrantTrace CI](https://github.com/ysc070528/granttrace/actions/runs/37219626327) 与
+[CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37219626326)，
+两次运行均为 `completed / success`。
+
+| Python job | unittest | branch-aware coverage |
+|---|---|---|
+| 3.9 | 552 passed | 84.90% |
+| 3.12 | 552 passed | 84.91% |
+| 3.14 | 552 passed | 84.91% |
+
+CI 的三个 Python job、Mypy、Ruff 和 Runtime dependency audit 六个 job 均成功；
+实际运行日志确认上述测试数量与覆盖率，runtime audit 报告没有已知漏洞。
+CodeQL analysis ID 为 `1889266959`，实际分析的 PR merge commit 为
+`428cce1caaef4f64cdaddab18baf7e036a3282af`；
+analysis 的 error / warning 数量为 0、结果为空，PR ref 查询的 open alerts 为空。
+这些结果只记录本次分析，不构成通用安全保证。
+
+上述证据精确对应首次 release-prep HEAD，不将 maintenance PR #26 或 base main 绿灯代用。
+最终文档 HEAD 须独立通过全部门禁，最新结果以
+[PR #27 Checks](https://github.com/ysc070528/granttrace/pull/27/checks) 为准，
+最终 HEAD 的 exact SHA 与对应运行记录见 PR 正文。
+不能用首次提交成功推断最终 HEAD 成功。合并后的 main 也须另行复核。
 
 本轮所有 API 目标为隔离本机 fixture，凭据为虚构数据；
 通过所列验收不证明生产 API 零误报、完整授权覆盖或完全安全。

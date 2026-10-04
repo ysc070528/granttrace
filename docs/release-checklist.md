@@ -60,12 +60,20 @@ README 的 `Stable: v2.5.1` 及相关 Release / PyPI 链接是本轮发布准备
 
 ## v2.5.1 远程门禁与后续动作
 
-Release Prep PR 尚未创建，本轮远程 CI / CodeQL 尚未运行；
-以下项目必须以本轮 PR 最新 HEAD 的实际检查为依据，不能用旧 maintenance PR 或 main 绿灯替代。
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 的首次 HEAD
+`ec440b58939ed99153138c39755551282cf14ff3` 已实际通过
+[CI 37219626327](https://github.com/ysc070528/granttrace/actions/runs/37219626327) 和
+[CodeQL 37219626326](https://github.com/ysc070528/granttrace/actions/runs/37219626326)。
+三个 Python job 各 552 项通过，branch-aware coverage 为 3.9：84.90%，
+3.12 / 3.14：84.91%；Mypy、Ruff、runtime audit 成功，审计没有已知漏洞。
+CodeQL analysis `1889266959` 实际分析 PR merge commit
+`428cce1caaef4f64cdaddab18baf7e036a3282af`，error / warning 为 0、结果为空。
+这是首次提交的证据；最终文档 HEAD 须独立通过全部门禁，
+最新状态以 [PR #27 Checks](https://github.com/ysc070528/granttrace/pull/27/checks) 为准。
+最终 HEAD 的 exact SHA 与对应运行记录见 PR 正文；首次提交成功不能代替该验证。
 
-- [ ] 创建 Release Prep PR，保留开放并等待人工 review。
-- [ ] PR 最新 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit、CodeQL 全部通过。
-- [ ] 补入首次远程证据后，最终文档 commit 的全部远程门禁再次通过。
+- [x] 创建 Release Prep PR，保留开放并等待人工 review。
+- [x] 首次 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit、CodeQL 全部通过。
 - [ ] 人工审查并合并 Release Prep PR。
 - [ ] 核对最终 main exact 40-char SHA，以及 main CI / CodeQL。
 - [ ] 基于最终 main / tagged source 核实正式 wheel / sdist / SHA256SUMS；本轮分支构建 hash 不能当作最终 Release hash。
