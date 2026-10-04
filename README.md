@@ -64,6 +64,10 @@ granttrace --spec your-openapi.yaml --config config.local.json \
 
 SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](docs/advanced.md#sarif-导出)。
 
+## cURL 复现模板
+
+当前源码的 HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮；本功能尚未包含在已发布的 v2.4.1 中，不表示 v2.5 已发布。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](docs/advanced.md#curl-复现模板)。
+
 ## 从源码开发 / 运行仓库 mock
 
 需要查看源码或手工运行仓库靶场时：

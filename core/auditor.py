@@ -935,6 +935,11 @@ class APISentinelAuditor:
                     "field": field_path, "readback_field": field_map[field_path],
                     "target_url": mutation_url,
                     "readback_url": read_url,
+                    "request_content_type": (
+                        "application/json"
+                        if str(ep.get("request_content_type") or "application/json").lower() == "application/json"
+                        else str(ep.get("request_content_type") or "application/json")
+                    ),
                     "snapshot_fields": list(snapshot.restore),
                     "verification_scope": "Full readback document except explicitly ignored volatile paths",
                     "ignored_readback_paths": readback.get("ignore_readback_paths", []),
