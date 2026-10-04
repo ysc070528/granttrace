@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "granttrace"
-version = "2.5.1.dev0"
+version = "2.5.1"
 description = "Safety-first OpenAPI authorization auditing tool for BOLA, IDOR and Mass Assignment testing"
 readme = "README.md"
 requires-python = ">=3.9"

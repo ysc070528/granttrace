@@ -8,9 +8,9 @@ on:
       tag:
         description: Existing official release to publish
         required: true
-        default: v2.5.0
+        default: v2.5.1
         type: choice
-        options: [v2.4.0, v2.4.1, v2.5.0]
+        options: [v2.4.0, v2.4.1, v2.5.0, v2.5.1]
 
 permissions:
   contents: read
@@ -56,8 +56,8 @@ jobs:
               require(os.environ["GITHUB_REF"] == "refs/heads/main",
                       "Manual publishing must run the reviewed workflow from main")
               tag = event.get("inputs", {}).get("tag")
-              require(tag in ("v2.4.0", "v2.4.1", "v2.5.0"),
-                      "Manual publishing only supports v2.4.0, v2.4.1 or v2.5.0")
+              require(tag in ("v2.4.0", "v2.4.1", "v2.5.0", "v2.5.1"),
+                      "Manual publishing only supports v2.4.0, v2.4.1, v2.5.0 or v2.5.1")
           elif os.environ["GITHUB_EVENT_NAME"] == "release":
               release = event["release"]
               require(event["action"] == "published"

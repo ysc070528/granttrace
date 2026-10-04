@@ -1,5 +1,115 @@
 # GrantTrace 验收记录
 
+## 2026-10-05 v2.5.1 发布前验收
+
+这是 **发布前验收**，不表示 v2.5.1 已创建 tag、GitHub Release 或发布到 PyPI。
+Base main commit 为
+[`c950432c2696c9fcd442591db82ed2cb0393351a`](https://github.com/ysc070528/granttrace/commit/c950432c2696c9fcd442591db82ed2cb0393351a)，
+Release Prep 分支为 `codex/v2.5.1-release`，源码版本统一为 `2.5.1`。
+本轮准备发布已合并的 [maintenance PR #26](https://github.com/ysc070528/granttrace/pull/26)；
+只同步正式版本、发布说明、示例和验收记录，不新增检测能力。
+当前已发布的稳定版仍为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)。
+
+README 的 `Stable: v2.5.1` 及相关 Release / PyPI 链接是本轮发布准备的前置展示；正式发布完成前，实际已发布稳定版仍为 v2.5.0。
+
+### 已合并的维护修复与保留边界
+
+- Merge Patch 在写入前检查现有恢复方案是否能精确恢复原状态，不能恢复的探测不发送写入。
+- BOLA 数组比较保留记录内部字段关联和重复记录数量，避免拼接无关联字段而夸大 CONFIRMED。
+- 报告目标与元数据对已知 credential 脱敏；输出不能覆盖规范、配置或已加载的本地 `$ref` 输入。
+- 本地与 conditional schema 解析、配置 operation/spec 交叉检查及参数 schema 校验得到修复。
+  保留规范外独立 GET readback 并准确警告；兼容规范标量字符串，不猜测容器值。
+- 默认只读、主动 PATCH 的显式开关与 allowlist、独立 GET readback、snapshot、
+  rollback verification、恢复失败停写及现有网络边界继续保留。
+  没有新增 POST / PUT 主动测试、自动登录、OAuth 或其他检测功能。
+
+### 本轮实际本地执行
+
+本轮使用 Windows / Python 3.14.5，在隔离源码 snapshot 中重新执行；
+下表没有引用旧 PR 或旧 release 的绿灯作为本轮验收。
+
+| 检查 | 本轮实际结果 |
+|---|---|
+| `python -m unittest discover -s tests` | **552 passed**，0 failures / errors / skipped |
+| coverage erase / run / report / xml / json | coverage 下同为 **552 passed**；总覆盖率 **84.91%**；XML / JSON 已生成，保留 `branch = true`、原 source 范围与 `fail_under = 80` |
+| `python -m mypy` | **0 errors**，`Success: no issues found in 18 source files` |
+| `python -m ruff check .` | `All checks passed!` |
+| `verify_business_scenarios.py` | **6/6** 本机 fixture 符合预期；团队共享、租户管理员为 AUTHORIZED，未共享、跨租户隔离为 SECURE，两种泄漏为 CONFIRMED；这六个模型的 FP / FN / inconclusive 均为 0 |
+| `verify_examples.py` | 先 `--update-examples`，再不带更新参数复验；JSON / YAML 通过，三个模式均完整恢复 mock 数据库 |
+| read-only example | 1 CONFIRMED、1 PUBLIC、1 SECURE、2 SKIPPED；conclusive coverage 60% |
+| active JSON / YAML examples | 各 2 CONFIRMED、1 PUBLIC、2 SECURE；conclusive coverage 100%，Mass Assignment `rollback_verified = true` |
+| `python -m build` / `python -m twine check --strict dist/*` | 隔离构建生成 `granttrace-2.5.1-py3-none-any.whl` 与 `granttrace-2.5.1.tar.gz`；两种 distribution 均 PASS，未上传 |
+| wheel / sdist metadata | 两者均为 Name=granttrace、Version=2.5.1、Python>=3.9、License-Expression=Apache-2.0、PyYAML>=6.0；long description 为 Markdown 且等于本轮 README |
+| 包内容与完整性 | wheel 29 个文件，23 项 runtime / demo assets / LICENSE 内容及全部 RECORD size / hash 核对通过；sdist 86 个 regular files，所需源码、docs、scripts、tests、规范/配置与 curated examples 齐全，无 symlink |
+| 发行物卫生 | 在本轮文件名与内容检查范围内，没有发现私有配置、日志、临时报告、缓存、venv、.git、coverage、嵌套 dist/build、实际主机用户名/绝对路径或已检查的 provider credential pattern；命中的公开 synthetic 隐私测试 fixture 经上下文核对保留，不能据此宣称通用秘密扫描绝对保证 |
+| `verify_install.py --wheel ... --wheelhouse ...` | 使用本轮实际构建 wheel，在源码目录外的 fresh virtual environment 离线安装与验收通过；未从 PyPI 安装不存在的 2.5.1 release |
+| 安装后版本链 | project / runtime / wheel / installed metadata / JSON 均为 `2.5.1`；CLI 为 `GrantTrace 2.5.1`，HTML 为 `v2.5.1`，实际 HTTP User-Agent 为 `GrantTrace/2.5.1` |
+| installed read-only demo | **0 PATCH**；数据库恢复、local server stopped 通过，rollback 为不适用 |
+| installed active demo | 1 BOLA、1 Mass Assignment CONFIRMED；`rollback_verified`、`database_restored`、`server_stopped` 均为 true |
+| 安装后扫描 / 本地计划 | 默认扫描 **0 PATCH**；主动扫描独立读回、rollback 与完整数据库恢复通过；JSON / YAML plan 等价，`requests_sent = 0`，未完成的配置草稿被阻断 |
+| 安装环境 `pip check` | `No broken requirements found.`；安装版本为 granttrace 2.5.1、PyYAML 6.0.3 |
+| strict runtime dependency audit | 已解析的运行时依赖 PyYAML 6.0.3 没有已知漏洞；未忽略漏洞，未降低 strict 审计要求 |
+| README 报告图片 | 保留原 `report-preview.png`；固定 v2.5.0 raw HTTPS URL 实际返回 200、`image/png`、99428 bytes，PNG signature 正确 |
+
+### 报告与离线验收的范围
+
+本轮完整 unittest 包含 SARIF 2.1.0 / CONFIRMED-only / driver version、凭据脱敏、
+cURL 凭据占位符、HTML / JavaScript 与离线配置引导的现有回归。
+本轮独立安装脚本实际验证的是 CLI、metadata、HTML / JSON、HTTP User-Agent、
+内置 demo、扫描与配置/plan 流程；不将这些结果写成独立安装后执行官方 SARIF schema、
+cURL 模板或 clipboard 浏览器验收。单元测试及 Node DOM harness 也不等同于浏览器 UI 实测。
+
+官方两个示例仅由 `verify_examples.py --update-examples` 更新；版本、时间及动态
+loopback 端口更新不改变业务真值。发布前构建及其 SHA-256 只标记
+**PR branch pre-release build**；最终 Release 资产须来自最终合并 / tagged source，
+不能把本轮分支构建当作正式发布资产。
+已发布 PyPI 2.5.0 的 long description 不可变，README 源修复没有回写该 metadata。
+
+### 发布工作流静态验收
+
+`release.yml` 仅更新 manual default、choices、版本 allowlist 和对应错误说明，
+加入 v2.5.1 并保留历史选项。4 段内嵌 Python AST 解析通过，3 段下游校验 AST 与
+base 一致；**43 组完全离线校验**通过（28 组 event / tag / release，
+15 组 source / distribution / hash 校验）。
+mock 验证接受正式 stable v2.5.1 published event，以及 main 上已存在正式 Release 的
+manual 情况；draft、prerelease、edited、非 main、dev tag、缺少正式 Release、
+版本不一致及篡改资产等情况被阻断。
+这些结果属于静态及模拟验收，不是实际发布测试；没有执行 `workflow_dispatch`，
+没有取得 OIDC 发布身份或运行上传。
+
+### 本轮远程门禁与发布状态
+
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 的首次提交
+`ec440b58939ed99153138c39755551282cf14ff3` 已实际通过
+[GrantTrace CI](https://github.com/ysc070528/granttrace/actions/runs/37219626327) 与
+[CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37219626326)，
+两次运行均为 `completed / success`。
+
+| Python job | unittest | branch-aware coverage |
+|---|---|---|
+| 3.9 | 552 passed | 84.90% |
+| 3.12 | 552 passed | 84.91% |
+| 3.14 | 552 passed | 84.91% |
+
+CI 的三个 Python job、Mypy、Ruff 和 Runtime dependency audit 六个 job 均成功；
+实际运行日志确认上述测试数量与覆盖率，runtime audit 报告没有已知漏洞。
+CodeQL analysis ID 为 `1889266959`，实际分析的 PR merge commit 为
+`428cce1caaef4f64cdaddab18baf7e036a3282af`；
+analysis 的 error / warning 数量为 0、结果为空，PR ref 查询的 open alerts 为空。
+这些结果只记录本次分析，不构成通用安全保证。
+
+上述证据精确对应首次 release-prep HEAD，不将 maintenance PR #26 或 base main 绿灯代用。
+最终文档 HEAD 须独立通过全部门禁，最新结果以
+[PR #27 Checks](https://github.com/ysc070528/granttrace/pull/27/checks) 为准，
+最终 HEAD 的 exact SHA 与对应运行记录见 PR 正文。
+不能用首次提交成功推断最终 HEAD 成功。合并后的 main 也须另行复核。
+
+本轮所有 API 目标为隔离本机 fixture，凭据为虚构数据；
+通过所列验收不证明生产 API 零误报、完整授权覆盖或完全安全。
+Release Prep PR 等待人工 review，不自动合并。
+未创建新 tag / GitHub Release，未发布或重新发布 PyPI。
+下方 v2.5.0 和更早验收保留原文；其中“当前”“未发布”“待复核”均指各轮历史状态。
+
 ## 2026-10-04 v2.5.0 正式发布验收
 
 ### 正式发布完成
