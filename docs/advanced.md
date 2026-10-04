@@ -7,7 +7,7 @@
 | 参数 | 含义 |
 |---|---|
 | `--init-config FILE` | 离线生成待填写配置和相邻 checklist；未完成草稿不能扫描 |
-| `--validate-config` | 离线执行配置语义校验并退出（合法退出码 0，非法退出码 2），不发送网络请求 |
+| `--validate-config` | 离线检查配置并退出（检查通过含 warning 返回 0，错误返回 2），不发送网络请求 |
 | `--allow-write-tests` | 开启允许清单内的 PATCH 写入、读回和回滚检查 |
 | `--write-endpoint "PATCH /path"` | 将主动检查限制到指定 PATCH 端点，可重复使用 |
 | `--insecure` | 关闭 TLS 证书校验，仅用于隔离测试环境 |
@@ -21,6 +21,97 @@
 | `--dry-run` | 只展示本地计划，不向目标发送请求；可用 `--export-json` 导出 |
 | `--export-sarif PATH` | 导出 SARIF 2.1.0，仅包含 CONFIRMED 漏洞；不能与 dry-run 同用 |
 | `--include-sensitive-evidence` | 在报告中保留敏感字段；默认关闭 |
+
+## 首次接入与终端引导
+
+沿用现有 `--init-config`、`--validate-config`、`--dry-run`，完整填写流程见 [配置指南](configuration.md#推荐首次接入流程)。生成草稿后，终端保留配置与 checklist 成功路径，并补充人工核对、默认空允许清单和离线下一步提示。草稿仍有 `_granttrace_draft` 或 `__GRANTTRACE_INPUT__:` 时不能用于验证、计划或扫描。以下节选展示 POSIX 平台的引导输出；路径随实际输入变化：
+
+```text
+[SAFE DEFAULT] write_allowlist is empty. No active PATCH test has been authorized.
+[NOTE] Local-only preparation: no requests were sent.
+[NEXT] Validate offline:
+       granttrace --spec your-openapi.yaml --config config.local.json --validate-config # POSIX shell
+[NEXT] After validation, inspect the local plan:
+       granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json # POSIX shell
+```
+
+OpenAPI 中的候选 PATCH 字段与 GET 路径只是合同提示。工具不推断身份、资源归属、允许访问策略、readback 一致性或写入权限；验证成功也不能证明这些业务事实或目标上的恢复能力。
+
+### 离线验证的两种范围
+
+显式指定 `--spec` 时，检查配置与选定 OpenAPI 规范；指定文件无法加载则失败。未指定 `--spec` 而当前目录有默认 `openapi.json` 时，仍使用该默认规范。只有未选择规范且不存在默认文件时，才保留 config-only validation：
+
+```bash
+# Spec-aware：同时检查配置与规范
+granttrace --spec your-openapi.yaml --config config.local.json --validate-config
+
+# Config-only：在没有默认 openapi.json 的目录中运行
+granttrace --config config.local.json --validate-config
+```
+
+spec-aware 成功提示说明配置和选定规范共同参与检查；config-only 成功提示明确没有执行 operation/spec 交叉检查，下一步只要求显式提供 `--spec` 重新验证，不直接推荐扫描。两者都不发送请求。成功输出仍保留 Identities、Write allowlist、Readbacks、Parameter values、BOLA policies 的原有数量；新增 scope 和模式说明只描述当前检查范围与配置状态。
+
+```text
+[OK] Offline configuration validation passed.
+[SCOPE] Configuration + selected OpenAPI specification were checked together: your-openapi.yaml
+
+[OK] Configuration-only validation passed.
+[NOTE] No OpenAPI specification was selected; operation/spec cross-checking was not performed.
+```
+
+`write_allowlist` 为空时，模式提示推荐只读首次接入；非空时显示允许清单和读回数量，明确主动 PATCH 配置仍不生效，直到真实扫描单独提供 `--allow-write-tests`。离线检查不证明资源归属、预期授权策略、合法测试权限、生产 readback 一致性或真实回滚安全。
+
+warning 仍逐项显示；没有 error 时，即使有 warning 也返回 0，并提示 warning 数量。失败时继续显示具体 `Path`、`Reason`、`Expected`、`Actual`、`Tip`，随后汇总 error / warning 数量，下一步只建议修复并重新验证，不推荐直接扫描。
+
+### 本地计划与首次真实扫描
+
+```bash
+granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json
+```
+
+dry-run 根据本地规范和配置生成现有计划 JSON，发送 **0 请求**；不会进行 DNS/连接探测、登录、凭据刷新、GET 或 PATCH。新增 stderr 摘要由 `operations` 统计，示意如下：
+
+```text
+[PLAN] Local-only dry run complete.
+[PLAN] Requests sent: 0 (no GET, PATCH, login, DNS or connectivity probe).
+[PLAN] Operations: 5
+[PLAN] BOLA checks: 3
+[PLAN] Mass Assignment checks: 2
+[PLAN] Write-enabled operations in this plan: 0
+[MODE] Read-only plan: no active PATCH testing is enabled.
+```
+
+同时存在允许清单与 `--allow-write-tests`，且计划条目的 `writes_enabled` 为 true 时，stderr 显示 `[CAUTION]`：dry-run 本身仍发送 0 请求，但对应 PATCH 在真实扫描中会获得主动测试资格。必须继续人工核对专用可丢弃资源、独立 GET readback、`field_map`、一致性和恢复预期；计划不证明运行时条件满足。
+
+无论允许清单是否为空、当前 dry-run 是否带写开关，下一步始终推荐不带 `--allow-write-tests` 的首次只读真实扫描：
+
+```bash
+granttrace --spec your-openapi.yaml --target https://authorized-test.example \
+  --config config.local.json --export-json result.local.json
+```
+
+终端使用 `<AUTHORIZED_TARGET_URL>` 提醒人工填入已授权目标，不从配置猜测地址。真实扫描会发送读取请求；写模式仍是之后需要显式选择的独立决定。
+
+### 输出与自动化兼容性
+
+原有 flag 和退出码保持不变，不新增 onboarding 子命令。新增 NEXT / NOTE / SAFETY / CAUTION / PLAN 引导优先写入 **stderr**；原有 banner、成功结果与 dry-run stdout 行为保留，stdout 并非保证只有 JSON。自动化读取计划应继续使用 `--export-json`，导出文件只含原有计划 JSON，不混入终端提示，不改变 JSON 结构。
+
+| 结果 | 退出码 |
+|---|---|
+| 配置检查通过，含只有 warning 的情况 | `0` |
+| 配置检查失败 | `2` |
+| dry-run 计划生成成功 | `0` |
+| CLI 参数使用无效 | `2` |
+
+成功退出码只说明当前离线检查或计划生成完成。现有扫描自动化仍可组合 `--fail-on-error`、`--fail-on-vuln`、`--fail-on-suspicious`、`--min-coverage`，其含义不变。
+
+引导只展示数量、状态、固定提示和文件路径，不展示 token、Cookie、API key、自定义认证值、资源 ID、payload 或原始 readback 对象。NEXT 命令用于显示，POSIX 使用 `shlex.join`；Windows 使用 **PowerShell 7** 的 `&` 调用运算符和单引号字面量，重复转义 ASCII 单引号及智能单引号，不使用 cmd.exe 格式。每条可复制命令末尾的 `# POSIX shell` / `# PowerShell 7` 是 shell 注释，标明对应终端。例如 Windows 输出：
+
+```powershell
+& 'granttrace' '--spec' 'API specs/中文.yaml' '--config' 'config.local.json' '--validate-config' # PowerShell 7
+```
+
+路径显示继续脱敏并转义控制字符，避免文件名伪造日志行。NEXT 命令遇到控制字符时用 `<PATH_WITH_CONTROL_CHARACTERS>` 替代该参数；路径包含被识别为凭据、需要脱敏的片段时，用 `<PATH_REQUIRING_MANUAL_INPUT>` 替代。占位路径和 `<AUTHORIZED_TARGET_URL>` 都需先按实际位置与授权范围手工补全；不能直接当作真实路径或目标执行。
 
 ## SARIF 导出
 

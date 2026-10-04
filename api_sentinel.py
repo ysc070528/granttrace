@@ -14,9 +14,12 @@ from typing import Any, Dict, Optional, Sequence
 from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_scaffold import config_needs_input, write_config_scaffold
-from core.config_validator import ConfigValidator
-from core.evidence import sanitize_log_text, sanitize_text
+from core.config_validator import ConfigIssue, ConfigValidator
+from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text
 from core.models import parse_operation_key
+from core.onboarding import (
+    display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
+)
 from core.parser import OpenAPIParser
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
@@ -36,7 +39,14 @@ BANNER = rf"""
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Safety-first OpenAPI authorization and mass-assignment auditor",
-        epilog="Built-in local demo: granttrace demo (no spec, config or credentials needed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=("Built-in local demo: granttrace demo (no spec, config or credentials needed)\n\n"
+                "Recommended onboarding (local preparation before any target requests):\n"
+                "  1. granttrace --spec API.yaml --init-config config.local.json\n"
+                "  2. Review and fill the config + checklist manually.\n"
+                "  3. granttrace --spec API.yaml --config config.local.json --validate-config\n"
+                "  4. granttrace --spec API.yaml --config config.local.json --dry-run\n"
+                "  5. Start with a read-only real scan; active PATCH is a separate explicit decision."),
     )
     parser.add_argument("--spec", "-s", default=None,
                         help="OpenAPI/Swagger JSON or YAML (default: openapi.json)")
@@ -140,11 +150,94 @@ _MISSING_FILE_GUIDANCE = (
 )
 
 
-def _print_config_next_steps() -> None:
-    print("[NEXT] Review identities, resource IDs in parameter_values, and independent GET readback mappings. "
-          "Access expectations must come from your API's business rules.", file=sys.stderr)
-    print("[NEXT] After editing, run --validate-config, then --dry-run with the same --spec and --config. "
-          "Both checks are offline.", file=sys.stderr)
+def _print_onboarding(lines: Sequence[str]) -> None:
+    for line in lines:
+        print(line, file=sys.stderr)
+
+
+def _onboarding_private_values(config: Any) -> tuple[str, ...]:
+    """Collect local privacy values for output only, including malformed branches.
+
+    Never pass these values or configuration objects into the onboarding helper.
+    The existing evidence sanitizer handles schemes, cookies and encoded echoes.
+    """
+    if not isinstance(config, dict):
+        pending = [config]
+    else:
+        pending = [config.get("parameter_values")]
+        identities = config.get("identities")
+        if isinstance(identities, dict):
+            for identity in identities.values():
+                if isinstance(identity, dict):
+                    pending.extend(identity.get(key) for key in ("id", "token", "headers", "parameters"))
+                else:
+                    pending.append(identity)
+        else:
+            pending.append(identities)
+        readbacks = config.get("readbacks")
+        if isinstance(readbacks, dict):
+            for readback in readbacks.values():
+                if isinstance(readback, dict):
+                    pending.extend(readback.get(key) for key in ("parameters", "parameter_values", "baseline_payload"))
+                else:
+                    pending.append(readback)
+        else:
+            pending.append(readbacks)
+    values = set()
+    seen = set()
+    while pending:
+        item = pending.pop()
+        if isinstance(item, (dict, list)):
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            pending.extend(item.values() if isinstance(item, dict) else item)
+        elif isinstance(item, str) and item:
+            values.add(item)
+            # Diagnostics may quote, escape or truncate a private string before
+            # output. Include the existing formatter's exact representation so
+            # a prefix cannot bypass full-value substitution at this boundary.
+            values.add(safe_diagnostic_value(item))
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            values.add(str(item))
+    return tuple(values)
+
+
+def _next_path(path: Optional[str], private_values: Sequence[str] = ()) -> Optional[str]:
+    if path is None:
+        return None
+    if sanitize_text(path, secret_values=private_values) != path:
+        return "<PATH_REQUIRING_MANUAL_INPUT>"
+    if any(not character.isprintable() for character in path):
+        return "<PATH_WITH_CONTROL_CHARACTERS>"
+    return path
+
+
+def _format_private_issue(issue: ConfigIssue, private_values: Sequence[str]) -> str:
+    # Keep trusted diagnostic labels readable even when a private value is a
+    # single character. Only the formatted field contents are untrusted.
+    prefixes = ("  - Path: ", "  [WARN] ", "    Reason:   ", "    Expected: ",
+                "    Actual:   ", "    Tip:      ")
+    lines = []
+    for line in issue.format().split("\n"):
+        prefix = next((value for value in prefixes if line.startswith(value)), "")
+        contents = line[len(prefix):]
+        lines.append(prefix + display_path(sanitize_text(contents, secret_values=private_values)))
+    return "\n".join(lines)
+
+
+def _print_issues(issues: Sequence[ConfigIssue], private_values: Sequence[str]) -> None:
+    for issue in issues:
+        print(_format_private_issue(issue, private_values), file=sys.stderr)
+
+
+def _print_validation_failure(
+    spec_path: Optional[str], config_path: Optional[str], errors: int = 1, warnings: int = 0,
+    private_values: Sequence[str] = (),
+) -> None:
+    _print_onboarding(validation_failure_guidance(
+        _next_path(spec_path, private_values), _next_path(config_path, private_values), errors, warnings,
+    ))
 
 
 def _load_spec(path: str) -> Dict[str, Any]:
@@ -168,35 +261,43 @@ def _reject_incomplete_draft(config: Any) -> None:
 
 def run_config_validation(config_path_str: str, spec_path: Optional[str] = None) -> int:
     config_file = Path(config_path_str)
-    safe_path_str = sanitize_log_text(sanitize_text(config_path_str))
+    safe_path_str = display_path(config_path_str)
     if not config_file.is_file():
         print(f"[ERROR] Configuration file does not exist: {safe_path_str}", file=sys.stderr)
         print("[NEXT] " + _MISSING_FILE_GUIDANCE, file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str)
         return 2
     try:
         with config_file.open("r", encoding="utf-8") as handle:
             raw_data = json.load(handle, parse_constant=_reject_constant)
     except (json.JSONDecodeError, ValueError) as exc:
-        safe_err = sanitize_log_text(sanitize_text(str(exc)))
+        safe_err = display_path(str(exc))
         print(f"[ERROR] Failed to parse JSON configuration '{safe_path_str}': {safe_err}", file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str)
         return 2
     except UnicodeDecodeError as exc:
-        safe_err = sanitize_log_text(str(exc))
+        safe_err = display_path(str(exc))
         print(f"[ERROR] Configuration file must be valid UTF-8: {safe_err}", file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str)
         return 2
     except OSError as exc:
-        safe_err = sanitize_log_text(str(exc))
+        safe_err = display_path(str(exc))
         print(f"[ERROR] Cannot read configuration file '{safe_path_str}': {safe_err}", file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str)
         return 2
     except Exception as exc:
-        safe_err = sanitize_log_text(f"{type(exc).__name__}: {exc}")
+        safe_err = display_path(f"{type(exc).__name__}: {exc}")
         print(f"[ERROR] Unexpected error inspecting configuration: {safe_err}", file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str)
         return 2
 
+    private_values = _onboarding_private_values(raw_data)
+    safe_path_str = display_path(sanitize_text(config_path_str, secret_values=private_values))
     try:
         _reject_incomplete_draft(raw_data)
     except ValueError as exc:
         print("[ERROR] " + str(exc), file=sys.stderr)
+        _print_validation_failure(spec_path, config_path_str, private_values=private_values)
         return 2
 
     # Config-only validation remains available without a default specification.
@@ -207,7 +308,8 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
     try:
         raw_spec = _load_spec(selected_spec) if selected_spec is not None else None
     except ValueError as exc:
-        print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc))), file=sys.stderr)
+        print("[ERROR] " + display_path(sanitize_text(str(exc), secret_values=private_values)), file=sys.stderr)
+        _print_validation_failure(selected_spec, config_path_str, private_values=private_values)
         return 2
 
     result = ConfigValidator.validate(raw_data, raw_spec=raw_spec)
@@ -218,13 +320,12 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
             f"({result.summary.errors_count} {error_word} found):",
             file=sys.stderr,
         )
-        for issue in result.errors:
-            print(issue.format(), file=sys.stderr)
+        _print_issues(result.errors, private_values)
         if result.warnings:
             print(f"[WARN] In addition, {result.summary.warnings_count} warning(s) observed:", file=sys.stderr)
-            for warning in result.warnings:
-                print(warning.format(), file=sys.stderr)
-        _print_config_next_steps()
+            _print_issues(result.warnings, private_values)
+        _print_validation_failure(selected_spec, config_path_str, result.summary.errors_count,
+                                  result.summary.warnings_count, private_values)
         return 2
 
     print(f"[OK] Configuration is valid: {safe_path_str}")
@@ -235,7 +336,11 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
     print(f"     - BOLA policies:     {result.summary.bola_policies_count} operation(s)")
     if result.warnings:
         for warning in result.warnings:
-            print(warning.format())
+            print(_format_private_issue(warning, private_values))
+    _print_onboarding(validation_guidance(
+        _next_path(selected_spec, private_values), _next_path(config_path_str, private_values) or "<CONFIG_FILE>",
+        result.summary,
+    ))
     return 0
 
 
@@ -315,12 +420,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         except Exception as exc:
             print("[ERROR] Cannot create configuration draft: " +
-                  sanitize_log_text(sanitize_text(str(exc))), file=sys.stderr)
+                  display_path(str(exc)), file=sys.stderr)
             return 2
-        print("[OK] Offline configuration draft: " + sanitize_log_text(str(output)))
-        print("[OK] Review checklist: " + sanitize_log_text(str(checklist)))
+        print("[OK] Offline configuration draft: " + display_path(str(output)))
+        print("[OK] Review checklist: " + display_path(str(checklist)))
         print("[REVIEW] Needs user input; validation and scans remain blocked until review is complete. "
               "Write tests are disabled.")
+        _print_onboarding(init_guidance(
+            _next_path(args.spec if args.spec is not None else "openapi.json") or "<OPENAPI_FILE>",
+            _next_path(str(output)) or "<CONFIG_FILE>", _next_path(str(checklist)) or "<CHECKLIST_FILE>",
+        ))
         return 0
     if args.validate_config:
         config_path = args.config or "config.json"
@@ -333,11 +442,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("[ERROR] Invalid worker, delay, timeout, or response-size option", file=sys.stderr)
         return 2
 
+    config: Dict[str, Any] = {}
     try:
         config = _load_config(args.config)
         raw_spec = _load_spec(spec_path)
     except ValueError as exc:
-        safe_err = sanitize_log_text(sanitize_text(str(exc)))
+        safe_err = display_path(sanitize_text(str(exc), secret_values=_onboarding_private_values(config)))
         print(f"[ERROR] {safe_err}", file=sys.stderr)
         return 2
 
@@ -361,16 +471,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec)
         if not val_result.is_valid:
-            safe_cfg_path = sanitize_log_text(args.config or "CLI configuration")
+            private_values = _onboarding_private_values(config)
+            safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
             error_word = "error" if val_result.summary.errors_count == 1 else "errors"
             print(
                 f"[ERROR] Configuration validation failed for '{safe_cfg_path}' "
                 f"({val_result.summary.errors_count} {error_word} found):",
                 file=sys.stderr,
             )
-            for issue in val_result.errors:
-                print(issue.format(), file=sys.stderr)
-            _print_config_next_steps()
+            _print_issues(val_result.errors, private_values)
+            _print_issues(val_result.warnings, private_values)
+            _print_validation_failure(spec_path, args.config, val_result.summary.errors_count,
+                                      val_result.summary.warnings_count, private_values)
             return 2
 
     try:
@@ -408,6 +520,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 _ensure_parent(args.export_json)
                 with open(args.export_json, "w", encoding="utf-8") as handle:
                     json.dump(plan, handle, indent=2, ensure_ascii=False)
+            private_values = _onboarding_private_values(config)
+            _print_onboarding(plan_guidance(
+                _next_path(spec_path, private_values) or "<OPENAPI_FILE>",
+                _next_path(args.config, private_values), plan,
+            ))
             return 0
         started = time.time()
         auditor.run()

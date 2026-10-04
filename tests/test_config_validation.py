@@ -229,7 +229,9 @@ class ValidateConfigCLITests(unittest.TestCase):
             code = main(["--validate-config", "--config", str(ROOT / "config.example.json")])
         self.assertEqual(code, 0)
         self.assertIn("[OK] Configuration is valid", stdout_buf.getvalue())
-        self.assertEqual(stderr_buf.getvalue().strip(), "")
+        self.assertIn("[SCOPE]", stderr_buf.getvalue())
+        self.assertIn("no requests were sent", stderr_buf.getvalue())
+        self.assertIn("Recommended first real scan (read-only", stderr_buf.getvalue())
 
     def test_validate_config_cli_failure_on_corrupt_file(self):
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as temp:

@@ -38,20 +38,38 @@ HTML / JSON 报告保留在当前目录的 `granttrace-demo/` 唯一子目录，
 
 ## 接入自己的 API
 
-先从规范生成配置草稿和待填清单：
+推荐按以下顺序首次接入；前四步只处理本地文件：
+
+1. **生成草稿和清单**：
 
 ```bash
 granttrace --spec your-openapi.yaml --init-config config.local.json
 ```
 
-填写不同的测试账户、各自资源、授权预期和必要读回信息，再按清单移除草稿标记与全部占位值。草稿未完成时会阻止预检、计划与扫描；写允许清单默认为空。
+2. **人工填写并核对**：打开配置和 checklist，填写不同的 Owner / Visitor 测试账户、可丢弃资源与业务授权预期。候选 PATCH 字段和 GET 路径只是接口合同提示；确认所需读回映射，删除不用的读回草稿，替换全部 `__GRANTTRACE_INPUT__:` 占位值，最后移除 `_granttrace_draft`。草稿未完成时会阻止验证、计划与扫描；`write_allowlist` 默认为空。
+
+3. **离线验证配置与规范**，检查终端中的 scope、模式、警告和下一步：
 
 ```bash
 granttrace --spec your-openapi.yaml --config config.local.json --validate-config
+```
+
+4. **生成并人工检查本地计划**；dry-run 发送 **0 请求**：
+
+```bash
 granttrace --spec your-openapi.yaml --config config.local.json --dry-run --export-json plan.local.json
 ```
 
-接入自己的 API 时仍默认只读，主动 PATCH 测试必须显式开启并满足 allowlist、独立 readback 和恢复条件。账户、API Key / Cookie、合法共享和管理员访问配置见 [配置指南](docs/configuration.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
+5. **第一次真实扫描保持只读**：确认计划后，将下例地址替换为已授权的测试目标；这一步会发送读取请求，默认 **0 PATCH**。
+
+```bash
+granttrace --spec your-openapi.yaml --target https://authorized-test.example \
+  --config config.local.json --export-json result.local.json
+```
+
+6. **以后需要时再考虑主动 PATCH**：只有在专用可丢弃资源、独立 GET readback、字段映射、一致性和恢复路径均经人工确认后，才配置明确的 `write_allowlist` 并在真实扫描中单独添加 `--allow-write-tests`。允许清单存在不表示写测试已开启，运行时仍须满足写入与恢复条件。
+
+OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测试权限、生产读回一致性或实际恢复能力；检查通过只代表配置结构及支持的语义通过当前检查。账户、API Key / Cookie、合法共享和管理员访问见 [配置指南](docs/configuration.md)，输出与自动化兼容性见 [命令行说明](docs/advanced.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
 
 ## SARIF 导出
 
