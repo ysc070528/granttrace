@@ -1,5 +1,55 @@
 # GrantTrace 验收记录
 
+## 2026-10-04 v2.5.0 正式发布验收
+
+### 正式发布完成
+
+- Final main commit：[`151bab4a613edee1b3ff8c86b68575038f769b00`](https://github.com/ysc070528/granttrace/commit/151bab4a613edee1b3ff8c86b68575038f769b00)。
+  [Release Prep PR #23](https://github.com/ysc070528/granttrace/pull/23) 已合并，
+  annotated tag `v2.5.0` 精确解析到该 commit。
+- [GitHub Release “GrantTrace v2.5.0”](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)
+  已正式发布，Release ID 为 `402957160`，`draft = false`、`prerelease = false`，
+  发布时间为 `2026-10-04T10:30:40Z`。
+- 发布 commit 的 [main CI](https://github.com/ysc070528/granttrace/actions/runs/37193226878)
+  与 [CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37193226876) 均成功。
+- [Publish to PyPI 工作流 37195596802](https://github.com/ysc070528/granttrace/actions/runs/37195596802)
+  为 `completed / success`，event 为 `release`，head SHA 为上述 final main commit。
+  `Build and validate distributions` 与 `Publish distributions with OIDC` 均成功，
+  OIDC Trusted Publishing 成功。
+- [PyPI granttrace 2.5.0](https://pypi.org/project/granttrace/2.5.0/) 已可见、可安装。
+
+### 正式 GitHub Release 资产
+
+| 资产 | 大小（bytes） | SHA-256（GitHub digest） |
+|---|---:|---|
+| `granttrace-2.5.0-py3-none-any.whl` | 109901 | `8cd2fb7715727503585cefa9f83147dc81e1a19941bf454836b379a400f64805` |
+| `granttrace-2.5.0.tar.gz` | 342818 | `d05d08b3f66e05741867b587781510d93da312778676fca11a07adc29e7b24e2` |
+| `SHA256SUMS` | 190 | `f03073a8800790cd53d72a4aba1412fcbf28dc0f788cff512cfce13118950f9b` |
+
+上表标识 GitHub Release 的正式资产；PyPI 发布工作流独立构建发行物，
+不将上表哈希作为 PyPI 下载文件的哈希。下方安装与 demo 验收使用 PyPI 正式包。
+
+### Fresh PyPI install 与 bundled local demo
+
+以下为用户提供的实际 Windows 验收记录，使用 fresh Windows virtual environment，
+直接调用环境内的 `python.exe` / `granttrace.exe`，未修改系统 ExecutionPolicy。
+本次文档同步没有重新运行安装或 demo。
+
+| 检查 | 实际结果 |
+|---|---|
+| `python -m pip install granttrace==2.5.0` | 成功安装 `PyYAML-6.0.3 granttrace-2.5.0` |
+| `granttrace --version` | `GrantTrace 2.5.0` |
+| `python -c "import importlib.metadata as m; print(m.version('granttrace'))"` | `2.5.0` |
+| `granttrace demo --read-only` | BOLA / IDOR **1 confirmed**；Mass Assignment **0 confirmed**；PATCH tests **disabled (read-only)**；rollback **not applicable (read-only)**；mock database restored **yes**；local server stopped **yes**；成功完成 |
+| `granttrace demo` | BOLA / IDOR **1 confirmed**；Mass Assignment **1 confirmed**；rollback verified **yes**；mock database restored **yes**；local server stopped **yes**；成功完成 |
+
+临时隔离虚拟环境已清理，存在性检查为 `False`。
+这些结果仅证明 PyPI 安装和 bundled local demo / isolated local acceptance，
+不证明生产 API 零误报、完整授权覆盖或完全安全。
+
+下方 v2.5.0 发布前验收及更早章节保留原文；其中“未发布”“PR 保持开放”与
+“仍须复核”均指对应验收当时的历史状态，不表示当前正式发布状态。
+
 ## 2026-10-04 v2.5.0 发布前验收
 
 这是 **发布前验收**，不表示 v2.5.0 已在 GitHub Release 或 PyPI 发布。

@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**Release source:** v2.5.0 · [GitHub Releases](https://github.com/ysc070528/granttrace/releases) · [PyPI](https://pypi.org/project/granttrace/)
+**Stable:** [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0) · [PyPI 2.5.0](https://pypi.org/project/granttrace/2.5.0/)
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -22,7 +22,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## 五分钟体验
 
-需要 Python 3.9+。最新发布与可安装版本以 [GitHub Releases](https://github.com/ysc070528/granttrace/releases) 和 [PyPI](https://pypi.org/project/granttrace/) 为准。安装包包含内置 `granttrace demo`，首次体验只需：
+需要 Python 3.9+。当前稳定版 **v2.5.0** 已发布到 [PyPI](https://pypi.org/project/granttrace/2.5.0/)。安装包包含内置 `granttrace demo`，首次体验只需：
 
 ```bash
 python -m pip install --upgrade granttrace
