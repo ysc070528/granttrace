@@ -121,6 +121,43 @@ class ParameterSerializationTests(unittest.TestCase):
         parameter["example"] = False
         self.assertIs(SmartDataGenerator.generate_raw_value_for_param(parameter), False)
 
+    def test_explicit_values_must_satisfy_native_schema_types_and_constraints(self):
+        cases = [
+            ({"type": "boolean"}, "SYNTHETIC_PRIVATE_VALUE"),
+            ({"type": "integer", "minimum": 1}, -999),
+            ({"type": "integer"}, "01"),
+            ({"type": "integer"}, True),
+            ({"type": "string", "enum": ["open"]}, "closed"),
+            ({"type": "string", "pattern": "^[A-Z]+$"}, "lowercase"),
+            ({"type": "array", "items": {"type": "integer"}}, [1, "2"]),
+            ({"type": "object", "required": ["active"],
+              "properties": {"active": {"type": "boolean"}}}, {"active": "true"}),
+            (False, 1),
+            ({"if": {"$ref": "#/unknown"}, "then": False}, 1),
+        ]
+        for schema, value in cases:
+            for location in ("path", "query"):
+                with self.subTest(schema=schema, location=location):
+                    parameter = {"name": "value", "in": location, "schema": schema}
+                    serializer = serialize_path_parameter if location == "path" else serialize_query_parameter
+                    with self.assertRaises(ParameterSerializationError) as caught:
+                        serializer(parameter, value)
+                    self.assertNotIn("SYNTHETIC_PRIVATE_VALUE", str(caught.exception))
+                    self.assertIn("no request was sent", str(caught.exception))
+
+    def test_swagger2_explicit_values_obey_scalar_and_item_constraints(self):
+        for parameter, value in (({"type": "integer", "minimum": 1}, -999),
+                                 ({"type": "boolean"}, "banana"),
+                                 ({"type": "array", "items": {"type": "integer"}}, [1, "2"])):
+            with self.subTest(parameter=parameter):
+                with self.assertRaises(ParameterSerializationError):
+                    serialize_query_parameter({"name": "value", "in": "query", **parameter},
+                                              value, swagger2=True)
+        self.assertEqual(serialize_path_parameter({"name": "value", "in": "path", "required": True,
+                         "type": "integer", "minimum": 1}, 1001, swagger2=True), "1001")
+        self.assertEqual(serialize_path_parameter({"name": "value", "in": "path", "required": True,
+                         "type": "integer", "minimum": 1}, "1001", swagger2=True), "1001")
+
     def test_parser_preserves_serialization_metadata_from_reference_override(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = {"openapi": "3.0.3", "components": {"parameters": {"Ids": metadata(style="form", explode=True)}}, "paths": {"/items": {"parameters": [{"$ref": "#/components/parameters/Ids"}], "get": {"parameters": [metadata(style="pipeDelimited", explode=False, description="preserved", example=[10, 20])], "responses": {"200": {"description": "ok"}}}}}}
@@ -181,6 +218,23 @@ class WireParameterTests(unittest.TestCase):
         self.assertEqual(auditor._http_request("GET", url).status, 200)
         self.assertEqual(self.requests[0][0], "/items?ids=10&ids=20&flags=true%7Cfalse")
 
+    def test_canonical_legacy_and_native_scalars_send_identical_urls(self):
+        auditor = self.make_auditor()
+        endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [
+            {"name": "user_id", "in": "path", "schema": {"type": "integer"}},
+            {"name": "active", "in": "query", "schema": {"type": "boolean"}},
+            {"name": "amount", "in": "query", "schema": {"type": "number"}},
+        ]}
+        for values in ({"user_id": "1001", "active": "false", "amount": "1e+20"},
+                       {"user_id": 1001, "active": False, "amount": 1e20}):
+            url = auditor._build_url(endpoint, "owner", values)
+            self.assertEqual(200, auditor._http_request("GET", url, identity_name="owner").status)
+        self.assertEqual(2, len(self.requests))
+        self.assertEqual(["/items/1001?active=false&amount=1e%2B20"] * 2,
+                         [path for path, _ in self.requests])
+        self.assertEqual(["Bearer TOKEN_ALICE_OWNER_1001"] * 2,
+                         [headers["Authorization"] for _, headers in self.requests])
+
     def test_readback_uses_declared_get_metadata_and_shared_serializer(self):
         with tempfile.TemporaryDirectory() as directory:
             read_parameters = [metadata(style="pipeDelimited", explode=False), {"name": "active", "in": "query", "schema": {"type": "boolean", "default": True}}]
@@ -204,6 +258,50 @@ class WireParameterTests(unittest.TestCase):
                 self.assertEqual(auditor.results[0]["verdict"], "INCONCLUSIVE")
                 self.assertIn("no request was sent", auditor.results[0]["reason"])
                 self.assertEqual(self.requests, [])
+
+    def test_invalid_explicit_parameter_values_send_zero_requests(self):
+        for parameter, value in (({"name": "user_id", "in": "path",
+                                  "schema": {"type": "integer", "minimum": 1}}, -999),
+                                 ({"name": "active", "in": "query",
+                                  "schema": {"type": "boolean"}}, "banana")):
+            with self.subTest(parameter=parameter):
+                auditor = self.make_auditor(parameter_values={
+                    "GET /items/{user_id}": {"common": {parameter["name"]: value}},
+                }, identities_config={
+                    "owner": {"id": "1001", "token": "Bearer SYNTHETIC_OWNER"},
+                    "visitor": {"id": "1002", "token": "Bearer SYNTHETIC_VISITOR"},
+                    "anonymous": {"id": None, "token": None},
+                })
+                endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [parameter]}
+                auditor.audit_endpoint_bola(endpoint)
+                self.assertEqual(auditor.results[0]["verdict"], "INCONCLUSIVE")
+                self.assertEqual(self.requests, [])
+
+    def test_default_identity_id_follows_declared_schema_type(self):
+        auditor = self.make_auditor()
+        for schema in ({"type": "integer"}, {"type": "string"}, {}):
+            with self.subTest(schema=schema):
+                endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [
+                    {"name": "user_id", "in": "path", "schema": schema},
+                ]}
+                self.assertEqual(auditor._build_url(endpoint, "owner"), self.target + "/items/1001")
+                self.assertEqual(auditor._build_url(endpoint, "visitor"), self.target + "/items/1002")
+
+    def test_invalid_readback_parameter_prevents_patch(self):
+        auditor = self.make_auditor(allow_write_tests=True, write_allowlist=["PATCH /items/{user_id}"],
+            readback_config={"PATCH /items/{user_id}": {
+                "path": "/profile/{user_id}",
+                "parameters": [{"name": "active", "in": "query", "schema": {"type": "boolean"}}],
+                "parameter_values": {"active": "banana"}, "field_map": {"role": "role"},
+            }})
+        endpoint = {"method": "PATCH", "path": "/items/{user_id}", "parameters": [],
+                    "request_content_type": "application/json", "request_schema": {
+                        "type": "object", "properties": {"role": {"type": "string", "readOnly": True}},
+                    }}
+        with patch.object(auditor, "_http_request") as transport:
+            auditor.audit_endpoint_mass_assignment(endpoint, [endpoint])
+        transport.assert_not_called()
+        self.assertEqual(auditor.results[0]["verdict"], "INCONCLUSIVE")
 
     def test_auth_headers_are_owned_by_requester_never_resource_parameters(self):
         identities = {"owner": {"id": "1001", "headers": {"X-Api-Key": "OWNER_KEY"}}, "visitor": {"id": "1002", "headers": {"X-Api-Key": "VISITOR_KEY"}}, "anonymous": {"id": None, "headers": {}}}

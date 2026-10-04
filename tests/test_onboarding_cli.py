@@ -15,6 +15,7 @@ from api_sentinel import main
 from core.auditor import APISentinelAuditor
 from core.config_scaffold import DRAFT_KEY, INPUT_PREFIX, build_config_scaffold
 from core.config_validator import ConfigIssue, ConfigValidator
+from core.parser import OpenAPIParser
 
 
 class OnboardingCLITests(unittest.TestCase):
@@ -487,7 +488,8 @@ class OnboardingCLITests(unittest.TestCase):
 
     def test_validation_control_paths_cannot_forge_logs_or_next_commands(self):
         hostile = "config\r\n[OK] FORGED\t\x00\x1f\x7f.json"
-        with patch("api_sentinel.Path") as path_class, patch("api_sentinel._load_spec", return_value=self.spec_data):
+        with patch("api_sentinel.Path") as path_class, patch("api_sentinel._load_spec", return_value=self.spec_data), \
+             patch("core.config_validator.OpenAPIParser", return_value=OpenAPIParser(str(self.spec))):
             path_class.return_value.is_file.return_value = True
             path_class.return_value.open.return_value = io.StringIO(json.dumps(self.config_data))
             code, stdout, stderr = self.call_cli(

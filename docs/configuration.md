@@ -24,6 +24,8 @@ granttrace --spec your-openapi.yaml --config config.local.json --validate-config
 
 检查成功输出中的数量、scope、模式和警告。允许清单有条目时，只表示主动 PATCH 配置存在；这一步没有启用写测试。没有选定规范的 config-only 检查不执行 operation/spec 交叉检查，须再显式提供 `--spec`，详见 [验证模式](advanced.md#离线验证的两种范围)。
 
+指定规范后，检查配置操作是否声明于规范，以及实际生效的显式 path / query 参数值是否满足支持的 schema 约束。不存在的允许清单、BOLA、operation-level 参数或 readback 关联 PATCH 操作会报错。独立 GET readback 不在规范中时保留支持并给出 warning，须人工确认其路径与参数；这项 warning 不能证明接口存在或可恢复。
+
 4. **生成并审阅本地计划**：
 
 ```bash
@@ -57,7 +59,11 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 ## 参数值与编码
 
-保留参数的 JSON 类型；数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
+优先使用参数声明对应的原生 JSON 类型；历史标量字符串仅按下述规则兼容。数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
+
+`integer` 参数同时支持 `1001` 和历史字符串 `"1001"`；字符串必须是规范 ASCII 十进制整数，例如 `"0"`、`"-1"`。拒绝 `"01"`、`"+1"`、`"-0"`、带空白的值、`"1001x"`、`"1.5"`，布尔值也不能冒充整数。`number` 的历史字符串必须是合法 JSON 数字、解析后有限，且 `str(parsed) == input`，从而保持请求中的数值文本不变；不会将 `"1e2"` 改写成 `100.0`。`boolean` 除原生布尔值外，仅兼容精确的 `"true"` / `"false"`，不接受 `"True"`、`"1"` 等别名。
+
+不会把数组或对象字符串解析为容器。兼容标量经规范化后仍须满足支持的 enum、数值范围、字符串及容器约束；复杂或不支持的 schema 不能建立参数有效性。身份的 `id` 是身份标识，不代替 `parameters` 中参数自身的类型约定。
 
 ## 配置结构
 

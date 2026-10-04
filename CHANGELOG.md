@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.1 - Unreleased
+
+### Fixed
+
+- Reject unsafe Merge Patch probes before writes when the original state cannot be restored exactly.
+- Preserve array record associations during BOLA comparison to avoid overstating confirmed authorization bypasses.
+- Harden report target/metadata redaction for known credentials and prevent report outputs from overwriting specification, configuration, or loaded local `$ref` inputs.
+- Improve local and conditional schema resolution plus configuration-to-spec operation validation.
+- Preserve legacy v2.5.0 scalar parameter configurations while applying strict schema-aware normalization and validation for canonical integer, number, and boolean values.
+
 ## 2.5.0 - 2026-10-04
 
 ### Added

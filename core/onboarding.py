@@ -111,6 +111,9 @@ def validation_guidance(
         lines = [
             "[OK] Offline configuration validation passed.",
             "[SCOPE] Configuration + selected OpenAPI specification were checked together: " + display_path(spec_path),
+            "[SCOPE] Checked configured operation keys, specification authentication headers, and explicit path/query "
+            "parameter values against supported schemas.",
+            "[NOTE] Independent GET readbacks absent from the specification produce a warning and require manual verification.",
         ]
     lines.append("[NOTE] Validation is offline: no requests were sent, including no PATCH.")
     if summary.warnings_count:

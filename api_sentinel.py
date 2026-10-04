@@ -15,7 +15,7 @@ from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_scaffold import config_needs_input, write_config_scaffold
 from core.config_validator import ConfigIssue, ConfigValidator
-from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text
+from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text, sanitize_url
 from core.models import parse_operation_key
 from core.onboarding import (
     display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
@@ -312,7 +312,7 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
         _print_validation_failure(selected_spec, config_path_str, private_values=private_values)
         return 2
 
-    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec)
+    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec, spec_path=selected_spec)
     if not result.is_valid:
         error_word = "error" if result.summary.errors_count == 1 else "errors"
         print(
@@ -372,6 +372,39 @@ def _paths_alias(left: Path, right: Path) -> bool:
     return left == right or (left.exists() and right.exists() and left.samefile(right))
 
 
+def _validate_report_paths(args: argparse.Namespace, source_files: Sequence[Path] = ()) -> None:
+    """Reject aliases before a scan, directory creation, or output truncation."""
+    if args.init_config is not None or args.validate_config:
+        return
+    outputs = []
+    if not args.dry_run:
+        outputs.append(("--output", args.output))
+    if args.export_json is not None:
+        outputs.append(("--export-json", args.export_json))
+    if args.export_sarif is not None:
+        outputs.append(("--export-sarif", args.export_sarif))
+    resolved: list[Path] = []
+    normalized: list[tuple[str, str]] = []
+    inputs = [Path(args.spec if args.spec is not None else "openapi.json").expanduser().resolve()]
+    inputs.extend(source_files)
+    if args.config is not None:
+        # Match _load_config's literal Path semantics; the spec loader expands ~.
+        inputs.append(Path(args.config).resolve())
+    for option, path in outputs:
+        if not path.strip() or any(ord(char) < 32 or ord(char) == 127 for char in path):
+            raise ValueError(f"{option} requires a non-empty output path without control characters")
+        output = Path(path).expanduser().resolve()
+        if any(_paths_alias(output, other) for other in resolved):
+            raise ValueError("HTML, JSON and SARIF outputs must use separate paths")
+        if any(_paths_alias(output, other) for other in inputs):
+            raise ValueError(f"{option} must use a separate path from spec/config inputs")
+        resolved.append(output)
+        normalized.append((option[2:].replace("-", "_"), str(output)))
+    # Writers must open the exact paths checked above, including ~/ outputs.
+    for attribute, path in normalized:
+        setattr(args, attribute, path)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     selected = list(sys.argv[1:] if argv is None else argv)
     if selected and selected[0] == "demo":
@@ -388,26 +421,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("[ERROR] --export-sarif requires audit results and cannot be combined with "
                   "--dry-run, --init-config, or --validate-config", file=sys.stderr)
             return 2
-        try:
-            sarif_path = Path(args.export_sarif).expanduser().resolve()
-            report_paths = [Path(args.output).expanduser().resolve(), sarif_path]
-            if args.export_json is not None:
-                report_paths.append(Path(args.export_json).expanduser().resolve())
-            if any(_paths_alias(left, right) for index, left in enumerate(report_paths)
-                   for right in report_paths[:index]):
-                print("[ERROR] HTML, JSON and SARIF outputs must use separate paths", file=sys.stderr)
-                return 2
-            input_paths = [args.spec if args.spec is not None else "openapi.json"]
-            if args.config is not None:
-                input_paths.append(args.config)
-            for other_path in input_paths:
-                other = Path(other_path).expanduser().resolve()
-                if _paths_alias(sarif_path, other):
-                    print("[ERROR] --export-sarif must use a separate path from spec/config inputs", file=sys.stderr)
-                    return 2
-        except (ValueError, OSError, RuntimeError):
-            print("[ERROR] Invalid --export-sarif output path", file=sys.stderr)
-            return 2
+    try:
+        _validate_report_paths(args)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError):
+        print("[ERROR] Invalid report output path", file=sys.stderr)
+        return 2
     print(BANNER)
     if args.init_config is not None:
         if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint:
@@ -465,11 +486,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # If configuration is loaded, run full ConfigValidator semantic validation
     if args.config or args.write_endpoint:
         val_config = dict(config)
-        # Explicit CLI selection narrows/replaces, never silently unions scope
+        # Explicit CLI selection replaces the configuration; scopes are not merged.
         if args.write_endpoint:
             val_config["write_allowlist"] = list(args.write_endpoint)
 
-        val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec)
+        val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec, spec_path=spec_path)
         if not val_result.is_valid:
             private_values = _onboarding_private_values(config)
             safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
@@ -484,9 +505,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _print_validation_failure(spec_path, args.config, val_result.summary.errors_count,
                                       val_result.summary.warnings_count, private_values)
             return 2
+        _print_issues(val_result.warnings, _onboarding_private_values(config))
 
     try:
-        # Explicit CLI selection narrows/replaces, never silently unions scope.
+        # Explicit CLI selection replaces the configuration; scopes are not merged.
         write_allowlist = list(args.write_endpoint) if args.write_endpoint else config.get("write_allowlist", [])
         if not isinstance(write_allowlist, list):
             raise ValueError("write_allowlist must be a list")
@@ -513,6 +535,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             include_sensitive_evidence=args.include_sensitive_evidence,
             bola_config=config.get("bola"),
         )
+        # Local $ref documents become inputs when endpoint schemas resolve.
+        # Protect them before running the audit or writing an offline plan.
+        auditor.parser.get_endpoints()
+        _validate_report_paths(args, auditor.parser.source_files)
         if args.dry_run:
             plan = auditor.build_plan()
             print(json.dumps(plan, indent=2, ensure_ascii=False))
@@ -537,13 +563,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reproduction_templates = build_reproduction_templates(
             auditor.findings, auditor._identity_headers("visitor"), reproduction_secrets,
         )
+        report_target = sanitize_url(args.target, secret_values=auditor._secret_values)
         SecurityReportGenerator.generate(
             stats=auditor.stats,
             findings=auditor.findings,
             results=auditor.results,
-            target_url=args.target,
+            target_url=report_target,
             output_path=args.output,
             reproduction_templates=reproduction_templates,
+            secret_values=auditor._secret_values,
         )
         print(f"[OK] HTML report: {args.output}")
 
@@ -556,7 +584,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "report_schema_version": 2,
                         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "elapsed_seconds": round(elapsed, 3),
-                        "target": args.target,
+                        "target": report_target,
                         "stats": auditor.stats,
                         "results": auditor.results,
                         "findings": auditor.findings,

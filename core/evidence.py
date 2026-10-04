@@ -171,13 +171,24 @@ class _Sanitizer:
                 if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}", safe_name):
                     safe_name = "param"
                 pairs.append((safe_name, REDACTED))
-            path_segments = []
-            for segment in parts.path.split("/"):
-                decoded = unquote(segment)
-                scrubbed = self._scrub_inline(decoded)
-                path_segments.append(quote(scrubbed, safe="[]_-.~{}") if scrubbed != decoded else segment)
-            path = "/".join(path_segments)
-            return urlunsplit((parts.scheme, netloc, path, urlencode(pairs), ""))
+            # Match the complete decoded path too: a credential can contain
+            # '/' and be partially percent-encoded across multiple segments.
+            # This changes display metadata only, never the wire request URL.
+            decoded_path = unquote(parts.path)
+            scrubbed_path = self._replace_known_secrets(decoded_path)
+            if scrubbed_path != decoded_path:
+                path = "/".join(quote(self._scrub_inline(segment), safe="[]_-.~{}")
+                                for segment in scrubbed_path.split("/"))
+            else:
+                path_segments = []
+                for segment in parts.path.split("/"):
+                    decoded = unquote(segment)
+                    scrubbed = self._scrub_inline(decoded)
+                    path_segments.append(quote(scrubbed, safe="[]_-.~{}") if scrubbed != decoded else segment)
+                path = "/".join(path_segments)
+            # A configured credential can span path segments (for example a
+            # token containing '/'). Segment decoding alone cannot match it.
+            return self._replace_known_secrets(urlunsplit((parts.scheme, netloc, path, urlencode(pairs), "")))
         except (ValueError, UnicodeError):
             return "[URL OMITTED]"
 
@@ -265,8 +276,9 @@ class _Sanitizer:
         return "[UNSUPPORTED VALUE OMITTED]"
 
 
-def sanitize_url(url: str, include_sensitive: bool = False) -> str:
-    sanitizer = _Sanitizer(include_sensitive, ())
+def sanitize_url(url: str, include_sensitive: bool = False,
+                 secret_values: Iterable[str] = ()) -> str:
+    sanitizer = _Sanitizer(include_sensitive, secret_values)
     return sanitizer._limit_text(sanitizer.url(url))
 
 

@@ -134,16 +134,18 @@ class ReportUsabilityTests(unittest.TestCase):
         self.assertNotIn(hostile, parser.scripts[0])
 
     def test_page_target_and_sanitized_evidence_do_not_disclose_credentials(self):
-        secret = "REPORT-SECRET-CREDENTIAL"
+        # Public, fixed synthetic data: never taken from an account, environment,
+        # or credential store. The fixture exercises credential redaction.
+        example_marker = "REPORT-SECRET-CREDENTIAL"
         finding = sanitize_evidence({
             "cwe": "CWE-639", "endpoint": "GET /items/{id}",
             "evidence": {
-                "target_url": "https://example.test/items/10?api_key=" + secret,
-                "visitor_cross": {"body": json.dumps({"Authorization": "Bearer " + secret})},
+                "target_url": "https://example.test/items/10?api_key=" + example_marker,
+                "visitor_cross": {"body": json.dumps({"Authorization": "Bearer " + example_marker})},
             },
-        }, secret_values=[secret])
-        report = self.render(findings=[finding], target="https://user:" + secret + "@example.test?token=" + secret)
-        self.assertNotIn(secret, report)
+        }, secret_values=[example_marker])
+        report = self.render(findings=[finding], target="https://user:" + example_marker + "@example.test?token=" + example_marker)
+        self.assertNotIn(example_marker, report)
         self.assertNotIn("user:", report)
         self.assertIn("[REDACTED]", report)
 
