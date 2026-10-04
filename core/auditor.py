@@ -118,12 +118,12 @@ class APISentinelAuditor:
             "owner": {
                 "id": "1001",
                 "token": "Bearer TOKEN_ALICE_OWNER_1001",
-                "parameters": {},
+                "parameters": {"user_id": "1001"},
             },
             "visitor": {
                 "id": "1002",
                 "token": "Bearer TOKEN_BOB_VISITOR_1002",
-                "parameters": {},
+                "parameters": {"user_id": "1002"},
             },
             "anonymous": {"id": None, "token": None, "parameters": {}},
         }

@@ -68,7 +68,7 @@ class ReadbackParameterTests(unittest.TestCase):
                 {"name": "view", "in": "query", "deprecated": False,
                  "schema": {"type": "string", "default": "full"}},
             ],
-            parameter_values={"id": 7, "view": "summary"},
+            parameter_values={"id": "7", "view": "summary"},
         )
         self.assertTrue(ConfigValidator.validate(config).is_valid)
         auditor = APISentinelAuditor(str(ROOT / "openapi.json"), "https://example.invalid")

@@ -15,6 +15,9 @@ from api_sentinel import main
 from core.config_validator import ConfigValidator
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class SpecConfigCrossCheckTests(unittest.TestCase):
     def setUp(self):
         self.spec = {
@@ -75,7 +78,8 @@ class SpecConfigCrossCheckTests(unittest.TestCase):
         self.assertTrue(result.is_valid)
 
     def test_internal_parameter_reference_accepts_native_value_and_rejects_type_and_bounds(self):
-        for value, expected in ((1, True), (9, True), ("1", False), (True, False), (0, False), (10, False)):
+        for value, expected in ((1, True), (9, True), ("1", True), ("9", True),
+                                ("01", False), (True, False), (0, False), ("0", False), (10, False), ("10", False)):
             with self.subTest(value=value):
                 result = ConfigValidator.validate({"parameter_values": {"GET /items/{id}": {"id": value}}}, self.spec)
                 self.assertEqual(result.is_valid, expected)
@@ -158,6 +162,8 @@ class SpecConfigCrossCheckTests(unittest.TestCase):
             "name": "id", "in": "path", "required": True, "schema": {"type": "integer", "minimum": 1},
         }], parameter_values={"id": "1"})
         config = {"readbacks": {"PATCH /items/{id}": mapping}}
+        self.assertTrue(ConfigValidator.validate(config).is_valid)
+        mapping["parameter_values"]["id"] = "01"
         self.assertFalse(ConfigValidator.validate(config).is_valid)
         mapping["parameter_values"]["id"] = 1
         self.assertTrue(ConfigValidator.validate(config).is_valid)
@@ -168,7 +174,8 @@ class SpecConfigCrossCheckTests(unittest.TestCase):
                             "type": "integer", "minimum": 1, "enum": [1, 2]}],
             "responses": {"200": {"description": "Item"}},
         }}}}
-        for value, expected in ((1, True), (3, False), ("1", False)):
+        for value, expected in ((1, True), ("1", True), ("2", True), (3, False), ("3", False),
+                                ("01", False), (True, False)):
             with self.subTest(value=value):
                 result = ConfigValidator.validate({"parameter_values": {"GET /items/{id}": {"id": value}}}, spec)
                 self.assertEqual(result.is_valid, expected)
@@ -187,6 +194,125 @@ class SpecConfigCrossCheckTests(unittest.TestCase):
             without_source = ConfigValidator.validate(config, spec)
             self.assertFalse(without_source.is_valid)
             self.assertIn("original spec_path", without_source.errors[0].suggestion)
+
+    def test_legacy_scalar_strings_validate_from_common_role_and_identity_sources_without_mutation(self):
+        configs = (
+            {"parameter_values": {"GET /items/{id}": {"common": {"id": "1"}}}},
+            {"parameter_values": {"GET /items/{id}": {
+                "common": {"id": "unused-invalid"}, "owner": {"id": "1"}, "visitor": {"id": "2"},
+            }}},
+            {"identities": {
+                "owner": {"token": "Bearer SYNTHETIC_OWNER", "parameters": {"id": "1"}},
+                "visitor": {"token": "Bearer SYNTHETIC_VISITOR", "parameters": {"id": "2"}},
+                "anonymous": {},
+            }},
+        )
+        for config in configs:
+            before = copy.deepcopy(config)
+            with self.subTest(config=config):
+                self.assertTrue(ConfigValidator.validate(config, self.spec).is_valid)
+                self.assertEqual(before, config)
+
+    def test_canonical_readback_strings_obey_documented_and_explicit_schema_bounds(self):
+        for path in ("/status/{id}", "/independent/{id}"):
+            for value, expected in (("1", True), ("9", True), ("0", False), ("10", False), ("01", False)):
+                mapping = self.readback(path, parameter_values={"id": value})
+                if path.startswith("/independent"):
+                    mapping["parameters"] = [copy.deepcopy(self.spec["components"]["parameters"]["item_id"])]
+                with self.subTest(path=path, value=value):
+                    self.assertEqual(expected, ConfigValidator.validate({
+                        "readbacks": {"PATCH /items/{id}": mapping},
+                    }, self.spec).is_valid)
+
+    def test_integer_enum_is_checked_after_normalization(self):
+        spec = copy.deepcopy(self.spec)
+        spec["components"]["parameters"]["item_id"]["schema"]["enum"] = [1, 3]
+        for value, expected in (("1", True), ("3", True), ("2", False), ("01", False), (True, False)):
+            with self.subTest(value=value):
+                result = ConfigValidator.validate({"parameter_values": {
+                    "GET /items/{id}": {"id": value},
+                }}, spec)
+                self.assertEqual(expected, result.is_valid)
+
+    def test_number_boolean_and_container_values_share_runtime_normalization_rules(self):
+        spec = copy.deepcopy(self.spec)
+        spec["paths"]["/search"]["get"]["parameters"] = [
+            {"name": "amount", "in": "query", "schema": {"type": "number", "minimum": 0, "maximum": 2}},
+            {"name": "active", "in": "query", "schema": {"type": "boolean", "enum": [False]}},
+            {"name": "ids", "in": "query", "schema": {"type": "array", "items": {"type": "integer"}}},
+            {"name": "filter", "in": "query", "schema": {"type": "object", "properties": {"active": {"type": "boolean"}}}},
+        ]
+        for values, expected in (
+            ({"amount": "1.5", "active": "false", "ids": [1, 2], "filter": {"active": False}}, True),
+            ({"amount": 1.5, "active": False}, True),
+            ({"amount": "3.0"}, False), ({"amount": "1.50"}, False),
+            ({"amount": "NaN"}, False), ({"amount": "0.10000000000000001"}, False),
+            ({"active": "true"}, False), ({"active": "False"}, False), ({"active": 0}, False),
+            ({"ids": "[1,2]"}, False), ({"ids": [1, "2"]}, False),
+            ({"filter": '{"active":false}'}, False), ({"filter": {"active": "false"}}, False),
+        ):
+            with self.subTest(values=values):
+                result = ConfigValidator.validate({"parameter_values": {"GET /search": values}}, spec)
+                self.assertEqual(expected, result.is_valid)
+
+    def test_string_and_multitype_union_values_are_not_guessed(self):
+        spec = copy.deepcopy(self.spec)
+        for schema, value, expected in (
+            ({"type": "string", "enum": ["01"]}, "01", True),
+            ({"type": ["integer", "string"], "enum": ["1001"]}, "1001", True),
+            ({"type": ["integer", "number"]}, "1001", False),
+            ({"type": ["integer", "null"], "minimum": 1}, "1", True),
+        ):
+            spec["paths"]["/search"]["get"]["parameters"] = [{"name": "value", "in": "query", "schema": schema}]
+            with self.subTest(schema=schema):
+                self.assertEqual(expected, ConfigValidator.validate({"parameter_values": {
+                    "GET /search": {"value": value},
+                }}, spec).is_valid)
+
+    def test_swagger_legacy_number_boolean_and_container_values_keep_exact_rules(self):
+        spec = {"swagger": "2.0", "paths": {"/search": {"get": {"parameters": [
+            {"name": "amount", "in": "query", "type": "number", "minimum": 0, "maximum": 2},
+            {"name": "active", "in": "query", "type": "boolean"},
+            {"name": "ids", "in": "query", "type": "array", "items": {"type": "integer"}},
+        ]}}}}
+        for values, expected in (({"amount": "1.5", "active": "true", "ids": [1, 2]}, True),
+                                 ({"amount": "1.50"}, False), ({"active": "True"}, False),
+                                 ({"ids": "[1,2]"}, False), ({"ids": [1, "2"]}, False)):
+            with self.subTest(values=values):
+                self.assertEqual(expected, ConfigValidator.validate({"parameter_values": {
+                    "GET /search": values,
+                }}, spec).is_valid)
+
+    def test_normalization_failures_do_not_echo_parameter_values_in_diagnostics(self):
+        private = "SYNTHETIC_PRIVATE_PARAMETER"
+        configs = (
+            {"parameter_values": {"GET /items/{id}": {"common": {"id": private}}}},
+            {"parameter_values": {"GET /items/{id}": {"owner": {"id": private}}}},
+            {"readbacks": {"PATCH /items/{id}": self.readback(parameter_values={"id": private})}},
+        )
+        for config in configs:
+            with self.subTest(config=config):
+                result = ConfigValidator.validate(config, self.spec)
+                self.assertFalse(result.is_valid)
+                for issue in result.errors:
+                    self.assertNotIn(private, issue.format())
+
+    def test_official_legacy_example_config_validates_offline_without_mutation_or_requests(self):
+        configuration = ROOT / "config.example.json"
+        before = configuration.read_bytes()
+        identities = json.loads(before)["identities"]
+        self.assertEqual("1001", identities["owner"]["parameters"]["user_id"])
+        self.assertEqual("1002", identities["visitor"]["parameters"]["user_id"])
+        out, err = io.StringIO(), io.StringIO()
+        with patch("socket.socket", side_effect=AssertionError("Network socket opened")), \
+             patch("urllib.request.urlopen", side_effect=AssertionError("Network request sent")), \
+             redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(0, main(["--validate-config", "--spec", str(ROOT / "openapi.json"),
+                                      "--config", str(configuration)]))
+        self.assertEqual(before, configuration.read_bytes())
+        self.assertIn("valid", out.getvalue().lower())
+        self.assertIn("[OK] Offline configuration validation passed", err.getvalue())
+        self.assertNotIn("[ERROR]", out.getvalue() + err.getvalue())
 
     def test_cli_rejects_missing_policy_and_invalid_parameter_before_any_network(self):
         with tempfile.TemporaryDirectory() as directory:

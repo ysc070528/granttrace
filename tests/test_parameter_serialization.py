@@ -125,7 +125,7 @@ class ParameterSerializationTests(unittest.TestCase):
         cases = [
             ({"type": "boolean"}, "SYNTHETIC_PRIVATE_VALUE"),
             ({"type": "integer", "minimum": 1}, -999),
-            ({"type": "integer"}, "1001"),
+            ({"type": "integer"}, "01"),
             ({"type": "integer"}, True),
             ({"type": "string", "enum": ["open"]}, "closed"),
             ({"type": "string", "pattern": "^[A-Z]+$"}, "lowercase"),
@@ -155,6 +155,8 @@ class ParameterSerializationTests(unittest.TestCase):
                                               value, swagger2=True)
         self.assertEqual(serialize_path_parameter({"name": "value", "in": "path", "required": True,
                          "type": "integer", "minimum": 1}, 1001, swagger2=True), "1001")
+        self.assertEqual(serialize_path_parameter({"name": "value", "in": "path", "required": True,
+                         "type": "integer", "minimum": 1}, "1001", swagger2=True), "1001")
 
     def test_parser_preserves_serialization_metadata_from_reference_override(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -216,6 +218,23 @@ class WireParameterTests(unittest.TestCase):
         self.assertEqual(auditor._http_request("GET", url).status, 200)
         self.assertEqual(self.requests[0][0], "/items?ids=10&ids=20&flags=true%7Cfalse")
 
+    def test_canonical_legacy_and_native_scalars_send_identical_urls(self):
+        auditor = self.make_auditor()
+        endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [
+            {"name": "user_id", "in": "path", "schema": {"type": "integer"}},
+            {"name": "active", "in": "query", "schema": {"type": "boolean"}},
+            {"name": "amount", "in": "query", "schema": {"type": "number"}},
+        ]}
+        for values in ({"user_id": "1001", "active": "false", "amount": "1e+20"},
+                       {"user_id": 1001, "active": False, "amount": 1e20}):
+            url = auditor._build_url(endpoint, "owner", values)
+            self.assertEqual(200, auditor._http_request("GET", url, identity_name="owner").status)
+        self.assertEqual(2, len(self.requests))
+        self.assertEqual(["/items/1001?active=false&amount=1e%2B20"] * 2,
+                         [path for path, _ in self.requests])
+        self.assertEqual(["Bearer TOKEN_ALICE_OWNER_1001"] * 2,
+                         [headers["Authorization"] for _, headers in self.requests])
+
     def test_readback_uses_declared_get_metadata_and_shared_serializer(self):
         with tempfile.TemporaryDirectory() as directory:
             read_parameters = [metadata(style="pipeDelimited", explode=False), {"name": "active", "in": "query", "schema": {"type": "boolean", "default": True}}]
@@ -248,6 +267,10 @@ class WireParameterTests(unittest.TestCase):
             with self.subTest(parameter=parameter):
                 auditor = self.make_auditor(parameter_values={
                     "GET /items/{user_id}": {"common": {parameter["name"]: value}},
+                }, identities_config={
+                    "owner": {"id": "1001", "token": "Bearer SYNTHETIC_OWNER"},
+                    "visitor": {"id": "1002", "token": "Bearer SYNTHETIC_VISITOR"},
+                    "anonymous": {"id": None, "token": None},
                 })
                 endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [parameter]}
                 auditor.audit_endpoint_bola(endpoint)

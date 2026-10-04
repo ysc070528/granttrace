@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text
 from core.generator import SmartDataGenerator
 from core.models import parse_operation_key
+from core.parameters import ParameterSerializationError, normalize_parameter_value
 from core.parser import OpenAPIParser
 from core.transactions import path_parts, paths_collide
 
@@ -515,7 +516,12 @@ class ConfigValidator:
             if not isinstance(name, str) or name not in values:
                 continue
             schema = parameter.get("schema", SmartDataGenerator._parameter_schema(parameter))
-            if SmartDataGenerator.validate_schema_value(values[name], schema, request=False):
+            try:
+                normalized = normalize_parameter_value({**parameter, "schema": schema}, values[name])
+                valid = SmartDataGenerator.validate_schema_value(normalized, schema, request=False)
+            except ParameterSerializationError:
+                valid = False
+            if valid:
                 continue
             key = (origins[name], json.dumps(schema, default=str))
             if key in seen:
@@ -526,7 +532,7 @@ class ConfigValidator:
                 message="Configured parameter value does not satisfy its declared supported schema",
                 expected="the parameter's JSON type and supported enum, bounds and structural constraints",
                 actual="value omitted",
-                suggestion="Keep native JSON types and correct the value or schema; unsupported constraints cannot establish validity",
+                suggestion="Use native JSON types or canonical scalar strings; correct invalid values or unsupported constraints",
             ))
 
     @classmethod

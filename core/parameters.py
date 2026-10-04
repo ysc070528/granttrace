@@ -12,7 +12,9 @@ authentication headers are handled by the auditor's authentication context.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from typing import Any, Dict, List, NoReturn, Tuple
 from urllib.parse import quote
 
@@ -26,6 +28,54 @@ class ParameterSerializationError(ValueError):
 def _fail(message: str) -> NoReturn:
     # Diagnostics intentionally omit parameter values, which may be credentials.
     raise ParameterSerializationError(message + "; no request was sent")
+
+
+def normalize_parameter_value(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> Any:
+    """Normalize only unambiguous canonical scalar strings, preserving wire text.
+
+    Legacy configuration may store an integer/number/boolean parameter as a
+    string. Conversion is allowed only when its declared type is explicit and
+    the resulting native value has exactly the same serialized representation.
+    Containers, declared strings and multi-type unions are never coerced.
+    Callers must still validate the complete schema after normalization.
+    """
+    if not isinstance(metadata, dict):
+        _fail("Parameter metadata must be an object")
+    schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
+    if not isinstance(value, str) or not isinstance(schema, dict):
+        return value
+    declared = schema.get("type")
+    if isinstance(declared, list):
+        if any(not isinstance(kind, str) for kind in declared):
+            return value
+        nonnull = [kind for kind in declared if kind != "null"]
+        if len(nonnull) != 1 or len(declared) > 2 or len(set(declared)) != len(declared):
+            return value
+        declared = nonnull[0]
+    if declared == "integer":
+        if re.fullmatch(r"(?:0|-?[1-9][0-9]*)", value) is None:
+            _fail("Integer parameter strings must use canonical ASCII integer notation")
+        try:
+            return int(value)
+        except ValueError:
+            _fail("Integer parameter string cannot be represented safely")
+    if declared == "boolean":
+        if value == "true":
+            return True
+        if value == "false":
+            return False
+        _fail("Boolean parameter strings must be exactly lowercase true or false")
+    if declared == "number":
+        if re.fullmatch(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", value) is None:
+            _fail("Number parameter strings must use canonical JSON number notation")
+        try:
+            parsed = json.loads(value)
+            if not math.isfinite(parsed) or str(parsed) != value:
+                _fail("Number parameter strings must retain their native wire representation without precision loss")
+            return parsed
+        except (ValueError, OverflowError):
+            _fail("Number parameter string cannot be represented safely")
+    return value
 
 
 def _scalar(value: Any) -> str:
@@ -158,6 +208,7 @@ def _delimited(value: Any, style: str) -> str:
 
 
 def serialize_path_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> str:
+    value = normalize_parameter_value(metadata, value, swagger2=swagger2)
     location, name, style, explode = _settings(metadata, value, swagger2)
     if location != "path":
         _fail("Path serialization requires in=path")
@@ -179,6 +230,7 @@ def serialize_path_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: 
 
 def serialize_query_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> List[Tuple[str, str]]:
     """Return pairs whose names and values are already percent-encoded."""
+    value = normalize_parameter_value(metadata, value, swagger2=swagger2)
     location, name, style, explode = _settings(metadata, value, swagger2)
     if location != "query":
         _fail("Query serialization requires in=query")

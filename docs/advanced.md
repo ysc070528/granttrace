@@ -51,7 +51,7 @@ granttrace --config config.local.json --validate-config
 
 spec-aware 成功提示说明配置和选定规范共同参与检查；config-only 成功提示明确没有执行 operation/spec 交叉检查，下一步只要求显式提供 `--spec` 重新验证，不直接推荐扫描。两者都不发送请求。成功输出仍保留 Identities、Write allowlist、Readbacks、Parameter values、BOLA policies 的原有数量；新增 scope 和模式说明只描述当前检查范围与配置状态。
 
-spec-aware 检查允许清单、BOLA、operation-level 参数值和 readback 关联的 PATCH 操作是否存在于选定规范；拼错或不存在的操作返回错误。它使用规范中的认证头声明，并按已有 schema 校验子集检查实际生效的显式 path / query 参数值，包括原生 JSON 类型、enum、范围及结构约束。身份参数与 operation-level 参数沿用实际覆盖顺序；生成值及运行时读回参数仍须通过请求前检查。这不是完整的 OpenAPI / JSON Schema 验证器。
+spec-aware 检查允许清单、BOLA、operation-level 参数值和 readback 关联的 PATCH 操作是否存在于选定规范；拼错或不存在的操作返回错误。它使用规范中的认证头声明，并按已有 schema 校验子集检查实际生效的显式 path / query 参数值，包括原生 JSON 类型、enum、范围及结构约束。v2.5.0 的历史标量字符串保留兼容：整数须为规范 ASCII 十进制文本，number 须为有限的 JSON 数字且规范化前后请求文本相同，布尔值只接受精确的 `"true"` / `"false"`；不解析容器字符串，规范化后仍检查 enum 和范围，完整规则见 [参数配置](configuration.md#参数值与编码)。身份参数与 operation-level 参数沿用实际覆盖顺序；生成值及运行时读回参数仍须通过请求前检查。这不是完整的 OpenAPI / JSON Schema 验证器。
 
 独立 GET readback 可来自规范外的专用接口，未在选定规范声明时给出 warning，要求人工确认路径与参数，不因未声明而禁止使用。已声明的读回参数及显式配置的读回参数元数据参与支持的 schema 检查；离线检查仍无法证明该接口存在、读回独立性、实际一致性或恢复能力。
 

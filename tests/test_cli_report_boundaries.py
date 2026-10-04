@@ -22,14 +22,16 @@ class ReportBoundaryTests(unittest.TestCase):
         self.folder = Path(temporary.name)
         self.spec = self.folder / "spec.json"
         self.config = self.folder / "config.json"
-        self.secret = "SYNTHETIC_SESSION_A9/part+tail"
+        # Public, fixed example data: never loaded from an account, environment,
+        # or credential store. The fixture exercises auth-derived redaction.
+        self.example_marker = "SYNTHETIC_SESSION_A9/part+tail"
         self.spec.write_text(json.dumps({
             "openapi": "3.0.3", "info": {"title": "offline report probe", "version": "1"},
             "paths": {},
         }), encoding="utf-8")
         self.config.write_text(json.dumps({"identities": {
             "owner": {"id": "1", "token": "Bearer SYNTHETIC_OWNER"},
-            "visitor": {"id": "2", "token": "Bearer " + self.secret},
+            "visitor": {"id": "2", "token": "Bearer " + self.example_marker},
             "anonymous": {},
         }}), encoding="utf-8")
 
@@ -159,9 +161,9 @@ class ReportBoundaryTests(unittest.TestCase):
     def test_real_cli_redacts_raw_and_encoded_target_secrets_in_both_reports(self):
         # Empty local spec lets the complete CLI/report pipeline run with zero
         # requests; no mocked auditor/report writer can hide an output leak.
-        for path in (self.secret, quote(self.secret, safe=""),
+        for path in (self.example_marker, quote(self.example_marker, safe=""),
                      "%53YNTHETIC_SESSION_A9/part+tail", "SYNTHETIC_SESSION_A9/%70art+tail",
-                     quote(self.secret, safe="").replace("%2F", "%2f")):
+                     quote(self.example_marker, safe="").replace("%2F", "%2f")):
             for sensitive in (False, True):
                 with self.subTest(path=path, sensitive=sensitive), \
                      patch("socket.socket", side_effect=AssertionError("Network opened")):
@@ -176,28 +178,28 @@ class ReportBoundaryTests(unittest.TestCase):
                     html = (self.folder / "report.html").read_text(encoding="utf-8")
                     report = json.loads((self.folder / "report.json").read_text(encoding="utf-8"))
                     for text in (html, report["target"]):
-                        self.assertNotIn(self.secret, text)
-                        self.assertNotIn(quote(self.secret, safe=""), text)
+                        self.assertNotIn(self.example_marker, text)
+                        self.assertNotIn(quote(self.example_marker, safe=""), text)
                         self.assertNotIn(path, text)
                         self.assertIn("[REDACTED]", text)
                     self.assertEqual(report["results"], [])
                     self.assertEqual(report["stats"]["total_endpoints"], 0)
 
     def test_direct_reporter_and_url_sanitizer_accept_known_credentials(self):
-        url = "https://api.example.test/" + self.secret
-        self.assertNotIn(self.secret, sanitize_url(url, secret_values=["Bearer " + self.secret]))
+        url = "https://api.example.test/" + self.example_marker
+        self.assertNotIn(self.example_marker, sanitize_url(url, secret_values=["Bearer " + self.example_marker]))
         output = self.folder / "direct.html"
-        SecurityReportGenerator.generate({}, [], url, str(output), secret_values=[self.secret])
+        SecurityReportGenerator.generate({}, [], url, str(output), secret_values=[self.example_marker])
         text = output.read_text(encoding="utf-8")
-        self.assertNotIn(self.secret, text)
+        self.assertNotIn(self.example_marker, text)
         self.assertIn("[REDACTED]", text)
 
     def test_known_path_credentials_do_not_disable_generic_path_redaction(self):
         for suffix in ("password=EXTRA_PRIVATE_VALUE", "user@example.com", "%75ser%40example.com"):
             with self.subTest(suffix=suffix):
-                result = sanitize_url("https://api.example.test/" + self.secret + "/" + suffix,
-                                      secret_values=[self.secret])
-                self.assertNotIn(self.secret, result)
+                result = sanitize_url("https://api.example.test/" + self.example_marker + "/" + suffix,
+                                      secret_values=[self.example_marker])
+                self.assertNotIn(self.example_marker, result)
                 self.assertNotIn("EXTRA_PRIVATE_VALUE", result)
                 self.assertNotIn("user%40example.com", result)
                 self.assertNotIn("user@example.com", result)

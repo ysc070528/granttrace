@@ -59,9 +59,11 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 ## 参数值与编码
 
-保留参数的 JSON 类型；数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
+优先使用参数声明对应的原生 JSON 类型；历史标量字符串仅按下述规则兼容。数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
 
-显式参数不会通过类型转换绕过 schema 检查：`integer` 参数使用 `1001`，不能填写字符串 `"1001"` 或布尔值。检查还包括支持的 enum、数值范围、字符串及容器约束；复杂或不支持的 schema 不能建立参数有效性。身份的 `id` 是身份标识，不代替 `parameters` 中参数自身的类型约定。
+`integer` 参数同时支持 `1001` 和历史字符串 `"1001"`；字符串必须是规范 ASCII 十进制整数，例如 `"0"`、`"-1"`。拒绝 `"01"`、`"+1"`、`"-0"`、带空白的值、`"1001x"`、`"1.5"`，布尔值也不能冒充整数。`number` 的历史字符串必须是合法 JSON 数字、解析后有限，且 `str(parsed) == input`，从而保持请求中的数值文本不变；不会将 `"1e2"` 改写成 `100.0`。`boolean` 除原生布尔值外，仅兼容精确的 `"true"` / `"false"`，不接受 `"True"`、`"1"` 等别名。
+
+不会把数组或对象字符串解析为容器。兼容标量经规范化后仍须满足支持的 enum、数值范围、字符串及容器约束；复杂或不支持的 schema 不能建立参数有效性。身份的 `id` 是身份标识，不代替 `parameters` 中参数自身的类型约定。
 
 ## 配置结构
 
@@ -81,12 +83,12 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
     "owner": {
       "id": "1001",
       "token": "Bearer OWNER_TOKEN",
-      "parameters": {"user_id": 1001}
+      "parameters": {"user_id": "1001"}
     },
     "visitor": {
       "id": "1002",
       "token": "Bearer VISITOR_TOKEN",
-      "parameters": {"user_id": 1002}
+      "parameters": {"user_id": "1002"}
     },
     "anonymous": {"id": null, "token": null, "parameters": {}}
   },
