@@ -19,6 +19,7 @@ from core.evidence import sanitize_log_text, sanitize_text
 from core.models import parse_operation_key
 from core.parser import OpenAPIParser
 from core.reporter import SecurityReportGenerator
+from core.sarif import SarifReportGenerator
 
 
 BANNER = rf"""
@@ -65,6 +66,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--output", "-o", default="granttrace_report.html", help="HTML report path (default: granttrace_report.html)"
     )
     parser.add_argument("--export-json", default=None, help="Optional machine-readable JSON report")
+    parser.add_argument("--export-sarif", default=None,
+                        help="Optional SARIF 2.1.0 report containing confirmed vulnerabilities only")
     parser.add_argument(
         "--insecure",
         "-k",
@@ -259,12 +262,46 @@ def _ensure_parent(path: str) -> None:
     parent.mkdir(parents=True, exist_ok=True)
 
 
+def _paths_alias(left: Path, right: Path) -> bool:
+    return left == right or (left.exists() and right.exists() and left.samefile(right))
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     selected = list(sys.argv[1:] if argv is None else argv)
     if selected and selected[0] == "demo":
         from core.demo import demo_main
         return demo_main(selected[1:])
     args = build_argument_parser().parse_args(selected)
+    if args.export_sarif is not None:
+        if not args.export_sarif.strip() or any(ord(char) < 32 or ord(char) == 127
+                                              for char in args.export_sarif):
+            print("[ERROR] --export-sarif requires a non-empty output path without control characters",
+                  file=sys.stderr)
+            return 2
+        if args.dry_run or args.init_config is not None or args.validate_config:
+            print("[ERROR] --export-sarif requires audit results and cannot be combined with "
+                  "--dry-run, --init-config, or --validate-config", file=sys.stderr)
+            return 2
+        try:
+            sarif_path = Path(args.export_sarif).expanduser().resolve()
+            report_paths = [Path(args.output).expanduser().resolve(), sarif_path]
+            if args.export_json is not None:
+                report_paths.append(Path(args.export_json).expanduser().resolve())
+            if any(_paths_alias(left, right) for index, left in enumerate(report_paths)
+                   for right in report_paths[:index]):
+                print("[ERROR] HTML, JSON and SARIF outputs must use separate paths", file=sys.stderr)
+                return 2
+            input_paths = [args.spec if args.spec is not None else "openapi.json"]
+            if args.config is not None:
+                input_paths.append(args.config)
+            for other_path in input_paths:
+                other = Path(other_path).expanduser().resolve()
+                if _paths_alias(sarif_path, other):
+                    print("[ERROR] --export-sarif must use a separate path from spec/config inputs", file=sys.stderr)
+                    return 2
+        except (ValueError, OSError, RuntimeError):
+            print("[ERROR] Invalid --export-sarif output path", file=sys.stderr)
+            return 2
     print(BANNER)
     if args.init_config is not None:
         if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint:
@@ -404,6 +441,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     ensure_ascii=False,
                 )
             print(f"[OK] JSON report: {args.export_json}")
+        if args.export_sarif is not None:
+            _ensure_parent(args.export_sarif)
+            SarifReportGenerator.generate(
+                results=auditor.results,
+                target_url=args.target,
+                output_path=args.export_sarif,
+                secret_values=auditor._secret_values,
+                spec_path=spec_path,
+            )
+            print("[OK] SARIF report: " + sanitize_log_text(
+                sanitize_text(args.export_sarif, secret_values=auditor._secret_values)
+            ))
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc), secret_values=getattr(locals().get("auditor"), "_secret_values", ()))), file=sys.stderr)
         return 2

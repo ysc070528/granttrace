@@ -19,7 +19,26 @@
 | `--fail-on-suspicious` | 存在可疑结果时返回退出码 2 |
 | `--min-coverage 80` | 确定性端点覆盖率低于指定百分比时返回退出码 2 |
 | `--dry-run` | 只展示本地计划，不向目标发送请求；可用 `--export-json` 导出 |
+| `--export-sarif PATH` | 导出 SARIF 2.1.0，仅包含 CONFIRMED 漏洞；不能与 dry-run 同用 |
 | `--include-sensitive-evidence` | 在报告中保留敏感字段；默认关闭 |
+
+## SARIF 导出
+
+该功能用于源码开发版本，尚未包含在已发布的 v2.4.1 包中；本说明不表示 v2.5 已发布。完成审计后可同时输出 HTML、JSON 与 SARIF：
+
+```bash
+granttrace --spec openapi.json --config config.local.json \
+  --export-json result.local.json --export-sarif granttrace.sarif -o report.html
+```
+
+- 仅精确为 `CONFIRMED` 的现有 BOLA / IDOR 与 Mass Assignment 结果进入 SARIF；SECURE、PUBLIC、AUTHORIZED、SKIPPED、SUSPICIOUS、INCONCLUSIVE、ERROR 不生成漏洞 result，也不改变原判定。
+- BOLA / IDOR 映射为 `GT-BOLA-001` / `CWE-639`，Mass Assignment 映射为 `GT-MASS-001` / `CWE-915`，当前确认漏洞的 SARIF level 均为 `error`。没有确认漏洞时仍生成合法的 `results=[]`。
+- 始终使用现有脱敏能力清理已知凭据，与 `--include-sensitive-evidence` 无关。只保留固定规则信息、可安全表达的 API endpoint 和 HTTP(S) target origin；不复制原始响应、headers、请求 payload 或任意 evidence。无法证明安全的动态字段直接省略。
+- 使用 `core.models.parse_operation_key` 验证 canonical OpenAPI operation key，再用现有脱敏函数处理已知凭据。`GET /users/{id}`、`GET /sessions/{id}`、`POST /api/token/introspect`、`GET /api/credentials/{id}` 等合法路由均保留，不按路由名称猜测本机路径或凭据；query / fragment 等非法 operation key 不导出。
+- 当前工作目录作为 artifact workspace。真实 OpenAPI spec 经路径解析后仍位于 workspace 内时，CONFIRMED result 增加 `locations[].physicalLocation.artifactLocation.uri`，例如 `openapi.yaml` 或 `specs/api.yaml`；URI 使用相对路径和必要的百分号编码，不添加虚假的 `startLine` / `startColumn`，也不把 API endpoint 当成源码文件。指向 workspace 外的符号链接同样不导出 location。
+- 在 GitHub Actions 中从 checkout 的仓库根目录运行 GrantTrace，再用 `github/codeql-action/upload-sarif` 上传结果，spec 应是已提交到仓库的文件。[GitHub Code Scanning](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support) 可使用该 artifact location 关联真实 spec。workspace 外部、缺失或无法安全表示的 spec 省略 location，不泄漏绝对本机路径；该类结果仍保留在 SARIF 中，但无法展示为 GitHub Code Scanning alert。
+- `--dry-run --export-sarif` 返回退出码 2，不生成 SARIF，也不发送请求。配置草稿生成与离线配置校验同样不能导出 SARIF。
+- SARIF 输出路径不得为空、纯空白或包含 NUL 等控制字符，以上情况在创建 auditor 或发送请求前返回退出码 2。路径也不得与 HTML / JSON 输出或 spec / config 输入重合。缺失的输出父目录沿用现有逻辑创建；写入失败返回退出码 2、不打印 traceback 或成功提示，已完成的 HTML / JSON 输出保留。
 
 ## 结果解释
 
