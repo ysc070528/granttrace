@@ -1,18 +1,20 @@
-# v2.5.0 发布准备与发布验收清单
+# v2.5.0 发布完成与发布后验收清单
 
-当前上一稳定版本是 [v2.4.1](https://github.com/ysc070528/granttrace/releases/tag/v2.4.1)。本轮仅准备 **v2.5.0**；v2.4.1 / v2.4.0 / v2.3.1 的 tag、Release、PyPI 与资产历史保持不变。Release Prep PR 保持开放，不创建 tag / GitHub Release、不发布 PyPI。功能已经冻结，不新增检测能力或重构核心代码。
+**v2.5.0 已于 2026-10-04 正式发布**，当前稳定版本为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)，[PyPI 2.5.0](https://pypi.org/project/granttrace/2.5.0/) 已可安装。本轮只同步发布完成与安装验收文档；v2.4.1 / v2.4.0 / v2.3.1 的 tag、Release、PyPI 与资产历史保持不变，不新增功能、修改检测逻辑或版本，也不执行新的 tag / 发布操作。
 
 ## Release source
 
-- Base main commit：[`7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec`](https://github.com/ysc070528/granttrace/commit/7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec)。
-- Release branch：`codex/v2.5.0-release`。
-- Release Prep：[PR #23](https://github.com/ysc070528/granttrace/pull/23)，保持开放，未合并。
+- Release Prep 的 base main commit：[`7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec`](https://github.com/ysc070528/granttrace/commit/7e40de4d5c2b1ff7e2d8e01b7a36c0366a1d3bec)。
+- Release Prep branch：`codex/v2.5.0-release`。
+- Release Prep：[PR #23](https://github.com/ysc070528/granttrace/pull/23)，已人工审查并合并。
 - 版本：`2.5.0`，不使用 `.dev0`、`rc1` 或 `-final`。
 - 已合并功能：[SARIF PR #20](https://github.com/ysc070528/granttrace/pull/20)、[安全 cURL PR #21](https://github.com/ysc070528/granttrace/pull/21)、[配置引导 PR #22](https://github.com/ysc070528/granttrace/pull/22)。
-- 最终发布 commit：以 Release Prep PR 最终合并后的 main commit 为准，**合并后必须记录 exact 40-char SHA**；当前不能把分支 HEAD 当作最终发布 commit。
-- 本轮实际验收记录见 [VERIFICATION.md](../VERIFICATION.md#2026-10-04-v250-发布前验收)。以下发布前项目只在本轮实际执行通过后勾选；此前功能 PR 的结果不能代替本次验收。
+- Final main commit：[`151bab4a613edee1b3ff8c86b68575038f769b00`](https://github.com/ysc070528/granttrace/commit/151bab4a613edee1b3ff8c86b68575038f769b00)，annotated tag `v2.5.0` 精确解析到该 commit。
+- 正式发布与 PyPI 安装验收见 [VERIFICATION.md](../VERIFICATION.md#2026-10-04-v250-正式发布验收)。以下[发布前验收](../VERIFICATION.md#2026-10-04-v250-发布前验收)保留实际执行记录；此前功能 PR 的结果不能代替该轮验收。
 
-## 发布前验收
+## 发布前验收（历史）
+
+本节保留 Release Prep 阶段已完成的验收；“本轮”指发布前阶段，不表示本次文档 PR 重新执行了这些检查。
 
 ### 版本一致性
 
@@ -98,7 +100,9 @@
 - [x] `git diff --check`、本地 Markdown 链接和历史版本保留检查通过。
 - [x] 只提交预期发布准备文件；不跟踪 dist / build / egg-info / coverage / 虚拟环境或临时报告。
 
-## 本轮复验命令
+## 本轮发布前复验命令（历史）
+
+本节保留发布前复验命令与当时的待办状态；当前正式完成情况见下方“合并与发布后动作”。
 
 上述首次远程记录来自 release-prep commit `ce84a0b11a5e1450aea7fb6698a5cdaa46e6e86f`
 的 [CI](https://github.com/ysc070528/granttrace/actions/runs/37192301259) 与
@@ -133,25 +137,43 @@ git status --short
 
 ## 合并与发布后动作
 
-以下动作留给后续正式发布，**在 Release Prep PR 中全部保持 unchecked**：
+以下记录已完成的正式发布与用户提供的 fresh PyPI install 验收，不重新执行发布动作：
 
-- [ ] 人工审查并合并 Release Prep PR。
-- [ ] 等待最终 main CI / CodeQL 全部成功，且 Mypy 为 required blocking check。
-- [ ] 记录最终 main 的 exact 40-char SHA。
-- [ ] 在该 commit 创建 annotated tag `v2.5.0`，核对远程 tag 精确指向。
-- [ ] 从最终 merged / tagged source 重新构建或核实正式 wheel / sdist。
-- [ ] 准备 GitHub Release，附加 wheel、sdist 与 `SHA256SUMS`。
-- [ ] 发布非 draft、非 prerelease 的 GitHub Release。
-- [ ] `release: published` 自动触发 OIDC Trusted Publishing 成功；发布者仍为 `ysc070528/granttrace`、`release.yml`、`pypi`。
-- [ ] PyPI `2.5.0` 可见。
-- [ ] 仓库外全新环境从 PyPI 安装 `granttrace==2.5.0`，复核 CLI / metadata / demo。
-- [ ] 如有必要完成最小发布后文档同步，不顺便开发下一版本。
+- [x] 人工审查并合并 [Release Prep PR #23](https://github.com/ysc070528/granttrace/pull/23)。
+- [x] 最终 main 的 [CI](https://github.com/ysc070528/granttrace/actions/runs/37193226878) / [CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37193226876) 全部成功。
+- [x] 记录最终 main 的 exact 40-char SHA：`151bab4a613edee1b3ff8c86b68575038f769b00`。
+- [x] 已创建 annotated tag `v2.5.0`。
+- [x] 远程 tag 精确指向上述 final main commit。
+- [x] 已核实最终 merged / tagged source 的正式 wheel / sdist 资产。
+- [x] [GitHub Release “GrantTrace v2.5.0”](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0) 已发布。
+- [x] Release 已附加 wheel、sdist 与 `SHA256SUMS`。
+- [x] Release ID `402957160`，非 draft、非 prerelease，发布于 `2026-10-04T10:30:40Z`。
+- [x] `release: published` 自动触发 [Publish to PyPI 37195596802](https://github.com/ysc070528/granttrace/actions/runs/37195596802)，Build / OIDC publish jobs 与 Trusted Publishing 成功；head SHA 为 final main commit，发布者仍为 `ysc070528/granttrace`、`release.yml`、`pypi`。
+- [x] [PyPI `2.5.0`](https://pypi.org/project/granttrace/2.5.0/) 可见。
+- [x] fresh Windows virtual environment 从 PyPI 安装 `granttrace==2.5.0` 成功，安装 `PyYAML-6.0.3 granttrace-2.5.0`。
+- [x] CLI 为 `GrantTrace 2.5.0`，`importlib.metadata` 为 `2.5.0`。
+- [x] read-only demo：BOLA / IDOR 1 confirmed、Mass Assignment 0 confirmed、PATCH disabled；database restored、server stopped，成功完成。
+- [x] active demo：BOLA / IDOR 1 confirmed、Mass Assignment 1 confirmed、rollback verified、database restored、server stopped，成功完成。
+- [x] 临时隔离虚拟环境已清理，存在性检查为 `False`。
+- [x] 本次 PR 已完成最小发布后文档同步，等待人工 review；PR 保持开放、未合并。
 
-Final wheel SHA256: TBD after tag build
+Final main SHA：`151bab4a613edee1b3ff8c86b68575038f769b00`
 
-Final sdist SHA256: TBD after tag build
+正式 GitHub Release wheel：`granttrace-2.5.0-py3-none-any.whl`，109901 bytes。
 
-## Release Notes 草稿
+Final wheel SHA256：`8cd2fb7715727503585cefa9f83147dc81e1a19941bf454836b379a400f64805`
+
+正式 GitHub Release sdist：`granttrace-2.5.0.tar.gz`，342818 bytes。
+
+Final sdist SHA256：`d05d08b3f66e05741867b587781510d93da312778676fca11a07adc29e7b24e2`
+
+`SHA256SUMS`：190 bytes，GitHub digest 为 `sha256:f03073a8800790cd53d72a4aba1412fcbf28dc0f788cff512cfce13118950f9b`。
+
+这些 hash 仅标识 GitHub Release 资产；PyPI 工作流独立构建发行物。安装与 demo 结果为用户提供的 bundled local demo / isolated local acceptance，不证明生产 API 零误报、完整授权覆盖或完全安全。本次文档 PR 未重新执行安装、demo 或发布。
+
+## 发布前 Release Notes 草稿（历史）
+
+以下保留发布前草稿原文；末尾的未发布说明仅指草稿编写时的状态。当前正式发布事实见上方完成记录。
 
 GrantTrace v2.5.0 introduces CONFIRMED-only SARIF 2.1.0 export with safe OpenAPI
 artifact locations, safe cURL reproduction templates with Visitor credential
