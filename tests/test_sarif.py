@@ -6,9 +6,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from urllib.parse import quote, quote_plus
+from unittest.mock import patch
+from urllib.parse import quote, quote_plus, unquote
 
 from core import __version__
+from core.models import parse_operation_key
 from core.sarif import SarifReportGenerator
 
 
@@ -18,9 +20,10 @@ class SarifReportTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.output = Path(temporary.name) / "report.sarif"
 
-    def generate(self, results=(), target="https://api.example.test", secrets=()):
+    def generate(self, results=(), target="https://api.example.test", secrets=(), spec_path=None):
         SarifReportGenerator.generate(
             results=results, target_url=target, output_path=str(self.output), secret_values=secrets,
+            spec_path=spec_path,
         )
         return json.loads(self.output.read_text(encoding="utf-8"))
 
@@ -138,6 +141,20 @@ class SarifReportTests(unittest.TestCase):
                 self.assertNotIn(marker, text)
                 self.assertNotIn(encoded, text)
 
+    def test_url_encoded_sensitive_assignments_and_partial_known_credentials_are_redacted(self):
+        endpoints = (
+            ("GET /api/Bearer%20pk_live_demo", (), "pk_live_demo"),
+            ("GET /api/password%3Dpk_live_demo", (), "pk_live_demo"),
+            ("GET /api/%4D9K7W2Q6R4", ("M9K7W2Q6R4",), "%4D9K7W2Q6R4"),
+            ("GET /api/%50RIVATE_AUTH_XYZ", ("PRIVATE_AUTH_XYZ",), "%50RIVATE_AUTH_XYZ"),
+        )
+        for endpoint, secrets, private in endpoints:
+            with self.subTest(endpoint=endpoint):
+                text = json.dumps(self.generate([self.confirmed(endpoint=endpoint)], secrets=secrets))
+                self.assertNotIn(private, text)
+                self.assertNotIn("M9K7W2Q6R4", text)
+                self.assertNotIn("PRIVATE_AUTH_XYZ", text)
+
     def test_raw_response_headers_and_private_business_evidence_are_never_exported(self):
         marker = "SARIF_TEST_PRIVATE_RESPONSE_MARKER"
         finding = self.confirmed(
@@ -206,14 +223,12 @@ class SarifReportTests(unittest.TestCase):
                 self.assertNotIn("SARIF_TEST_PRIVATE", json.dumps(result))
                 self.assertNotIn("locations", result)
 
-    def test_operation_shaped_local_paths_and_traversal_are_also_omitted(self):
-        for endpoint in ("GET /Users/SARIF_TEST_PRIVATE/spec.json", "GET /home/SARIF_TEST_PRIVATE/spec.json",
-                         "GET /private/SARIF_TEST_PRIVATE/spec.json", "GET /tmp/SARIF_TEST_PRIVATE/spec.json",
-                         "GET /api/../SARIF_TEST_PRIVATE", "GET //remote.example/SARIF_TEST_PRIVATE"):
+    def test_legitimate_user_routes_are_not_mistaken_for_filesystem_paths(self):
+        for endpoint in ("GET /users/{id}", "GET /Users/{id}"):
             with self.subTest(endpoint=endpoint):
                 result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
-                self.assertNotIn("endpoint", result["properties"])
-                self.assertNotIn("SARIF_TEST_PRIVATE", json.dumps(result))
+                self.assertEqual(result["properties"]["endpoint"], endpoint)
+                self.assertIn(endpoint, result["message"]["text"])
 
     def test_missing_or_nonstr_endpoint_retains_confirmed_result_without_endpoint(self):
         for endpoint in (None, [], {}, 123):
@@ -223,30 +238,32 @@ class SarifReportTests(unittest.TestCase):
                 self.assertNotIn("endpoint", results[0]["properties"])
                 self.assertTrue(results[0]["message"]["text"])
 
-    def test_credential_shaped_route_is_omitted_even_without_known_secret_values(self):
-        for route in ("/api/Bearer/SARIF_PRIVATE", "/api/api-key/SARIF_PRIVATE",
-                      "/api/password/SARIF_PRIVATE", "/api/session/SARIF_PRIVATE"):
-            with self.subTest(route=route):
-                result = self.generate([self.confirmed(endpoint="GET " + route)])["runs"][0]["results"][0]
-                self.assertNotIn("endpoint", result["properties"])
-                self.assertNotIn("SARIF_PRIVATE", json.dumps(result))
+    def test_authorization_related_route_names_are_preserved_without_secret_values(self):
+        for endpoint in ("GET /sessions/{id}", "POST /api/token/introspect", "GET /api/credentials/{id}"):
+            with self.subTest(endpoint=endpoint):
+                result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
+                self.assertEqual(result["properties"]["endpoint"], endpoint)
+                self.assertIn(endpoint, result["message"]["text"])
 
-    def test_dotted_credential_route_is_omitted_without_known_secret_values(self):
-        for endpoint in ("GET /api/api.key/pk_live_fixture", "GET /api/private.key/private-key-fixture"):
+    def test_dotted_route_names_are_not_used_as_credential_blacklists(self):
+        for endpoint in ("GET /api/api.key/{id}", "GET /api/private.key/{id}"):
+            with self.subTest(endpoint=endpoint):
+                result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
+                self.assertEqual(result["properties"]["endpoint"], endpoint)
+
+    def test_endpoint_metadata_reuses_existing_operation_key_parser(self):
+        endpoint = "GET /sessions/{id}"
+        with patch("core.sarif.parse_operation_key", wraps=parse_operation_key) as shared_parser:
+            result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
+        shared_parser.assert_called_once_with(endpoint)
+        self.assertEqual(result["properties"]["endpoint"], endpoint)
+
+    def test_malformed_operation_keys_are_rejected_by_shared_parser(self):
+        for endpoint in ("get /users/{id}", "GET  /users/{id}", "GET /users/{id} ",
+                         "GET users/{id}", "GET\t/users/{id}", "BOGUS /users/{id}"):
             with self.subTest(endpoint=endpoint):
                 result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
                 self.assertNotIn("endpoint", result["properties"])
-                self.assertNotIn("pk_live_fixture", json.dumps(result))
-                self.assertNotIn("private-key-fixture", json.dumps(result))
-
-    def test_wsl_and_system_filesystem_paths_are_omitted(self):
-        for endpoint in ("GET /mnt/c/Users/private-user/spec.json", "GET /var/log/private-report.json",
-                         "GET /etc/private.key", "GET /opt/private-user/spec.json", "GET /mnt", "GET /etc"):
-            with self.subTest(endpoint=endpoint):
-                result = self.generate([self.confirmed(endpoint=endpoint)])["runs"][0]["results"][0]
-                self.assertNotIn("endpoint", result["properties"])
-                self.assertNotIn("private-user", json.dumps(result))
-                self.assertNotIn("private-report", json.dumps(result))
 
     def test_query_fragment_and_url_credentials_are_not_endpoint_metadata(self):
         finding = self.confirmed(endpoint="GET /api/users/{id}?token=SARIF_QUERY_PRIVATE#SARIF_FRAGMENT_PRIVATE")
@@ -264,6 +281,129 @@ class SarifReportTests(unittest.TestCase):
         with self.assertRaises(OSError):
             SarifReportGenerator.generate(results=[], target_url="https://api.example.test",
                                           output_path=str(self.output.parent), secret_values=())
+
+    def test_existing_workspace_spec_has_real_relative_location_without_fake_region(self):
+        spec = self.output.parent / "openapi.json"
+        spec.write_text('{"openapi":"3.0.3","paths":{}}', encoding="utf-8")
+        with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+            result = self.generate([self.confirmed()], spec_path="openapi.json")["runs"][0]["results"][0]
+        self.assertEqual(result["locations"], [{"physicalLocation": {"artifactLocation": {"uri": "openapi.json"}}}])
+        self.assertNotIn("region", result["locations"][0]["physicalLocation"])
+        self.assertNotIn(str(self.output.parent), json.dumps(result))
+
+    def test_nested_absolute_workspace_spec_becomes_relative_posix_uri(self):
+        spec = self.output.parent / "specs" / "nested" / "openapi.yaml"
+        spec.parent.mkdir(parents=True)
+        spec.write_text("openapi: 3.0.3\npaths: {}\n", encoding="utf-8")
+        with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+            result = self.generate([self.confirmed()], spec_path=str(spec))["runs"][0]["results"][0]
+        self.assertEqual(result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+                         "specs/nested/openapi.yaml")
+        self.assertNotIn("\\", json.dumps(result["locations"]))
+        self.assertNotIn(str(spec), json.dumps(result))
+
+    def test_existing_external_spec_does_not_disclose_absolute_path(self):
+        with tempfile.TemporaryDirectory(prefix="granttrace-external-spec-") as external:
+            spec = Path(external) / "external-private-spec.json"
+            spec.write_text("{}", encoding="utf-8")
+            with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+                result = self.generate([self.confirmed()], spec_path=str(spec))["runs"][0]["results"][0]
+        self.assertNotIn("locations", result)
+        self.assertNotIn(str(spec), json.dumps(result))
+        self.assertNotIn("external-private-spec", json.dumps(result))
+
+    def test_symlink_resolution_escape_omits_location_without_absolute_path(self):
+        inside = self.output.parent / "linked-spec.json"
+        inside.write_text("{}", encoding="utf-8")
+        original_resolve = Path.resolve
+        with tempfile.TemporaryDirectory(prefix="granttrace-external-spec-") as external:
+            outside = Path(external) / "private-spec.json"
+            outside.write_text("{}", encoding="utf-8")
+            resolved_outside = outside.resolve()
+
+            def resolve_with_escape(path, *args, **kwargs):
+                # Simulate link resolution portably; Windows link privileges vary.
+                return resolved_outside if path == inside else original_resolve(path, *args, **kwargs)
+
+            with patch("core.sarif.Path.cwd", return_value=self.output.parent), \
+                 patch("core.sarif.Path.resolve", autospec=True, side_effect=resolve_with_escape):
+                result = self.generate([self.confirmed()], spec_path=str(inside))["runs"][0]["results"][0]
+        self.assertNotIn("locations", result)
+        self.assertNotIn(str(resolved_outside), json.dumps(result))
+        self.assertNotIn("private-spec", json.dumps(result))
+
+    def test_unicode_space_and_fragment_characters_are_encoded_in_spec_uri(self):
+        relative = "规格 文件/openapi #%.json"
+        spec = self.output.parent / relative
+        spec.parent.mkdir()
+        spec.write_text("{}", encoding="utf-8")
+        with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+            result = self.generate([self.confirmed()], spec_path=relative)["runs"][0]["results"][0]
+        uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        self.assertEqual(uri, quote(relative, safe="/"))
+        self.assertNotIn("#", uri)
+        self.assertNotIn(" ", uri)
+        self.assertEqual((self.output.parent / unquote(uri)).resolve(), spec.resolve())
+        self.assertNotIn(str(self.output.parent), json.dumps(result))
+
+    def test_query_character_in_virtual_crossplatform_spec_name_is_uri_encoded(self):
+        # '?' is a valid POSIX filename but forbidden by Windows. Simulate its
+        # existence so both platforms verify the same relative-URI encoding.
+        relative = "specs/openapi?.json"
+        spec = self.output.parent / relative
+        original_is_file = Path.is_file
+        original_resolve = Path.resolve
+
+        def is_file_with_virtual_name(path):
+            return True if path == spec else original_is_file(path)
+
+        def resolve_with_virtual_name(path, *args, **kwargs):
+            return spec if path == spec else original_resolve(path, *args, **kwargs)
+
+        with patch("core.sarif.Path.cwd", return_value=self.output.parent), \
+             patch("core.sarif.Path.is_file", autospec=True, side_effect=is_file_with_virtual_name), \
+             patch("core.sarif.Path.resolve", autospec=True, side_effect=resolve_with_virtual_name):
+            result = self.generate([self.confirmed()], spec_path=relative)["runs"][0]["results"][0]
+        self.assertEqual(result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+                         "specs/openapi%3F.json")
+
+    def test_known_secret_in_spec_basename_omits_location(self):
+        marker = "M9K7W2Q6R4"
+        spec = self.output.parent / (marker + ".json")
+        spec.write_text("{}", encoding="utf-8")
+        with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+            result = self.generate([self.confirmed()], secrets=[marker], spec_path=str(spec))["runs"][0]["results"][0]
+        self.assertNotIn("locations", result)
+        self.assertNotIn(marker, json.dumps(result))
+
+    def test_partially_encoded_known_secret_in_spec_filename_omits_location(self):
+        for basename, marker in (("%50RIVATE_AUTH_XYZ.json", "PRIVATE_AUTH_XYZ"),
+                                 ("%4D9K7W2Q6R4.json", "M9K7W2Q6R4")):
+            with self.subTest(basename=basename):
+                spec = self.output.parent / basename
+                spec.write_text("{}", encoding="utf-8")
+                with patch("core.sarif.Path.cwd", return_value=self.output.parent):
+                    result = self.generate([self.confirmed()], secrets=[marker],
+                                           spec_path=basename)["runs"][0]["results"][0]
+                self.assertNotIn("locations", result)
+                text = json.dumps(result)
+                self.assertNotIn(marker, text)
+                self.assertNotIn(basename, text)
+                self.assertNotIn(quote(basename, safe="/"), text)
+
+    def test_missing_directory_and_invalid_spec_paths_omit_location(self):
+        for spec in ("missing.json", str(self.output.parent), "invalid\0spec.json", " "):
+            with self.subTest(spec=repr(spec)), patch("core.sarif.Path.cwd", return_value=self.output.parent):
+                result = self.generate([self.confirmed()], spec_path=spec)["runs"][0]["results"][0]
+                self.assertNotIn("locations", result)
+                self.assertNotIn("region", json.dumps(result))
+
+    def test_spec_resolve_failure_omits_location_without_disrupting_results(self):
+        with patch("core.sarif.Path.cwd", side_effect=OSError("private working directory unavailable")):
+            result = self.generate([self.confirmed()], spec_path="openapi.json")["runs"][0]["results"][0]
+        self.assertNotIn("locations", result)
+        self.assertEqual(result["properties"]["granttraceVerdict"], "CONFIRMED")
+        self.assertNotIn("private working directory", json.dumps(result))
 
 
 if __name__ == "__main__":

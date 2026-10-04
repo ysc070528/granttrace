@@ -62,7 +62,7 @@ granttrace --spec your-openapi.yaml --config config.local.json \
   --export-json result.local.json --export-sarif granttrace.sarif -o report.html
 ```
 
-SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。API endpoint 不伪装成源码文件或行号。可用于 SARIF-compatible tooling；GitHub Code Scanning 的告警展示需要真实位置，接入前请核对 [兼容说明](docs/advanced.md#sarif-导出)。
+SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](docs/advanced.md#sarif-导出)。
 
 ## 从源码开发 / 运行仓库 mock
 

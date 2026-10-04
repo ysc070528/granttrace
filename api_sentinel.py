@@ -273,6 +273,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return demo_main(selected[1:])
     args = build_argument_parser().parse_args(selected)
     if args.export_sarif is not None:
+        if not args.export_sarif.strip() or any(ord(char) < 32 or ord(char) == 127
+                                              for char in args.export_sarif):
+            print("[ERROR] --export-sarif requires a non-empty output path without control characters",
+                  file=sys.stderr)
+            return 2
         if args.dry_run or args.init_config is not None or args.validate_config:
             print("[ERROR] --export-sarif requires audit results and cannot be combined with "
                   "--dry-run, --init-config, or --validate-config", file=sys.stderr)
@@ -443,6 +448,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 target_url=args.target,
                 output_path=args.export_sarif,
                 secret_values=auditor._secret_values,
+                spec_path=spec_path,
             )
             print("[OK] SARIF report: " + sanitize_log_text(
                 sanitize_text(args.export_sarif, secret_values=auditor._secret_values)

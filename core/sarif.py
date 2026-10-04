@@ -12,10 +12,11 @@ import re
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Iterable, Mapping, Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from core import __version__
-from core.evidence import sanitize_text, sanitize_url
+from core.evidence import sanitize_evidence, sanitize_text, sanitize_url
+from core.models import parse_operation_key
 
 
 _RULES: tuple[dict[str, object], ...] = (
@@ -49,34 +50,52 @@ _CHECK_RULES = {
     "BOLA": (0, "GT-BOLA-001", "CWE-639", "Confirmed broken object level authorization"),
     "MASS_ASSIGNMENT": (1, "GT-MASS-001", "CWE-915", "Confirmed mass assignment"),
 }
-_PRIVATE_PATH_PREFIXES = (
-    "/users", "/home", "/root", "/documents and settings", "/tmp", "/private", "/mnt", "/var",
-    "/etc", "/opt", "/volumes", "/applications", "/library", "/windows", "/programdata", "/usr",
-    "/srv", "/run", "/proc", "/sys", "/dev", "/media",
-)
-_CREDENTIAL_PATH_WORDS = (
-    "authorization", "bearer", "password", "passwd", "cookie", "session", "token", "apikey",
-    "credential", "secret", "privatekey",
-)
 
 
 def _safe_endpoint(value: object, secret_values: tuple[str, ...]) -> Optional[str]:
-    # Only a specification operation template is eligible. Concrete URLs,
-    # queries, encoded paths, local paths and arbitrary diagnostic text are not.
-    if not isinstance(value, str):
+    valid, method, path, _, _ = parse_operation_key(value)
+    if not valid:
         return None
-    match = re.fullmatch(r"(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD|TRACE) (/[A-Za-z0-9_./{}~-]*)", value)
-    if match is None:
+    # Use the existing URL-aware evidence boundary so encoded credentials in
+    # valid operation paths receive the same redaction as HTTP evidence.
+    safe_evidence = sanitize_evidence({"endpoint_url": path}, secret_values=secret_values)
+    safe_path = safe_evidence.get("endpoint_url") if isinstance(safe_evidence, dict) else None
+    if not isinstance(safe_path, str):
         return None
-    method, path = match.groups()
-    private_path = any(path.casefold() == prefix or path.casefold().startswith(prefix + "/")
-                       for prefix in _PRIVATE_PATH_PREFIXES)
-    if path.startswith("//") or private_path or ".." in path.split("/"):
+    return sanitize_text(f"{method} {safe_path}", secret_values=secret_values)
+
+
+def _safe_spec_uri(spec_path: Optional[str], secret_values: tuple[str, ...]) -> Optional[str]:
+    """Locate the actual specification inside the current workspace only."""
+    if not isinstance(spec_path, str) or not spec_path or re.search(r"[\x00-\x1f\x7f]", spec_path):
         return None
-    compact_path = path.lower().replace("_", "").replace("-", "").replace(".", "")
-    if any(word in compact_path for word in _CREDENTIAL_PATH_WORDS):
+    try:
+        root = Path.cwd().resolve(strict=True)
+        source = Path(spec_path)
+        if not source.is_absolute():
+            source = root / source
+        source = source.resolve(strict=True)
+        if not source.is_file():
+            return None
+        # Resolve before containment checking so an outward symlink cannot
+        # turn a workspace-relative URI into a reference to a private file.
+        relative = source.relative_to(root).as_posix()
+        if re.search(r"[\\\x00-\x1f\x7f]", relative):
+            return None
+        uri = quote(relative, safe="/")
+        if (sanitize_text(relative, secret_values=secret_values) != relative
+                or sanitize_text(uri, secret_values=secret_values) != uri):
+            return None
+        # Preserve literal filename delimiters while letting the existing
+        # URL sanitizer inspect any encoded credential already in the name.
+        privacy_uri = quote(relative, safe="/%")
+        safe_evidence = sanitize_evidence({"endpoint_url": privacy_uri}, secret_values=secret_values)
+        safe_uri = safe_evidence.get("endpoint_url") if isinstance(safe_evidence, dict) else None
+        if not isinstance(safe_uri, str) or safe_uri != privacy_uri:
+            return None
+        return uri
+    except (OSError, ValueError, RuntimeError, UnicodeError):
         return None
-    return sanitize_text(f"{method} {sanitize_url(path)}", secret_values=secret_values)
 
 
 def _safe_origin(target_url: str, secret_values: tuple[str, ...]) -> Optional[str]:
@@ -123,9 +142,12 @@ class SarifReportGenerator:
         target_url: str,
         output_path: str,
         secret_values: Iterable[str] = (),
+        *,
+        spec_path: Optional[str] = None,
     ) -> None:
         secrets = tuple(secret_values)
         target = _safe_origin(target_url, secrets)
+        spec_uri = _safe_spec_uri(spec_path, secrets)
         sarif_results: list[dict[str, object]] = []
         for result in results:
             check = result.get("check")
@@ -141,10 +163,13 @@ class SarifReportGenerator:
                 message += f" at {endpoint}"
             if target is not None:
                 properties["target"] = target
-            sarif_results.append({
+            sarif_result: dict[str, object] = {
                 "ruleId": rule_id, "ruleIndex": index, "level": "error",
                 "message": {"text": message + "."}, "properties": properties,
-            })
+            }
+            if spec_uri is not None:
+                sarif_result["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": spec_uri}}}]
+            sarif_results.append(sarif_result)
         report = {
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",

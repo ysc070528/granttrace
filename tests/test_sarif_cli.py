@@ -78,6 +78,8 @@ class SarifCliTests(unittest.TestCase):
         self.assertEqual(report["tool_version"], __version__)
         sarif = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual([item["ruleId"] for item in sarif["runs"][0]["results"]], ["GT-BOLA-001"])
+        self.assertEqual(sarif["runs"][0]["results"][0]["locations"],
+                         [{"physicalLocation": {"artifactLocation": {"uri": "spec.json"}}}])
         self.assertIn("[OK] SARIF report:", completed.stdout)
         self.assertNotIn("Traceback", completed.stderr)
 
@@ -104,6 +106,9 @@ class SarifCliTests(unittest.TestCase):
         results = json.loads(output.read_text(encoding="utf-8"))["runs"][0]["results"]
         self.assertEqual({item["ruleId"] for item in results}, {"GT-BOLA-001", "GT-MASS-001"})
         self.assertEqual(len(results), 2)
+        for result in results:
+            self.assertEqual(result["locations"],
+                             [{"physicalLocation": {"artifactLocation": {"uri": "spec.json"}}}])
 
     def test_dry_run_sarif_is_rejected_before_auditor_files_or_network(self):
         output = self.folder / "must-not-exist.sarif"
@@ -185,16 +190,24 @@ class SarifCliTests(unittest.TestCase):
         self.assertEqual(output.read_bytes(), original)
         self.assertNotIn("Traceback", stdout + stderr)
 
-    def test_empty_or_nul_sarif_path_returns_two_without_network_or_traceback(self):
-        with patch("api_sentinel.APISentinelAuditor", side_effect=AssertionError("Auditor created")), \
-             patch("socket.socket", side_effect=AssertionError("Network opened")):
-            for path in ("", "invalid\0report.sarif"):
+    def test_empty_whitespace_or_nul_sarif_path_rejected_before_auditor_network_or_files(self):
+        before = {path.name: path.read_bytes() for path in self.folder.iterdir()}
+        with patch("api_sentinel.APISentinelAuditor") as auditor, \
+             patch("api_sentinel._load_config") as config_loader, \
+             patch("api_sentinel._load_spec") as spec_loader, \
+             patch("socket.socket") as socket:
+            for path in ("", "   ", "\t", "\n", "\u3000", "invalid\0report.sarif"):
                 with self.subTest(path=repr(path)):
                     code, stdout, stderr = self.call_cli(self.arguments("http://127.0.0.1:1", path))
                     self.assertEqual(code, 2, stdout + stderr)
+                    auditor.assert_not_called()
+                    config_loader.assert_not_called()
+                    spec_loader.assert_not_called()
+                    socket.assert_not_called()
                     self.assertIn("[ERROR]", stderr)
                     self.assertNotIn("[OK] SARIF report:", stdout)
                     self.assertNotIn("Traceback", stdout + stderr)
+                    self.assertEqual({file.name: file.read_bytes() for file in self.folder.iterdir()}, before)
 
     def test_sarif_directory_io_error_returns_two_preserving_html_and_json(self):
         directory = self.folder / "output-directory"
@@ -238,6 +251,7 @@ class SarifCliTests(unittest.TestCase):
         for private in ("Fictional demo salary", "Demo Owner", "Disposable demo content", "Fictional demo document"):
             self.assertNotIn(private, sarif_text)
         self.assertEqual(len(json.loads(sarif_text)["runs"][0]["results"]), 1)
+        self.assertNotIn("locations", json.loads(sarif_text)["runs"][0]["results"][0])
         self.assertIn("[OK] SARIF report:", stdout)
 
     def test_successful_sarif_export_preserves_existing_fail_on_vulnerability_exit(self):
