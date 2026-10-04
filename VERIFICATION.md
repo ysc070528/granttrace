@@ -1,5 +1,50 @@
 # GrantTrace 验收记录
 
+## 2026-10-04 v2.4.1 正式发布验收
+
+发布时 final main commit 为
+[`8ba6cb46c9bbd670449989a5bd54fb233543d81f`](https://github.com/ysc070528/granttrace/commit/8ba6cb46c9bbd670449989a5bd54fb233543d81f)。
+[Release Prep PR #18](https://github.com/ysc070528/granttrace/pull/18) 已合并，
+annotated tag `v2.4.1` 最终解析到该 commit。
+
+### 正式发布证据
+
+- [GitHub Release “GrantTrace v2.4.1”](https://github.com/ysc070528/granttrace/releases/tag/v2.4.1)
+  已正式发布，非 draft、非 prerelease。附件包括
+  `granttrace-2.4.1-py3-none-any.whl`、`granttrace-2.4.1.tar.gz` 和 `SHA256SUMS`。
+- [Publish to PyPI 工作流](https://github.com/ysc070528/granttrace/actions/runs/37175522087)
+  成功，[PyPI 2.4.1](https://pypi.org/project/granttrace/2.4.1/) 已可安装。
+  使用 OIDC Trusted Publishing，owner 为 `ysc070528`、repository 为
+  `granttrace`、workflow 为 `release.yml`、environment 为 `pypi`。
+  [PyPI 发布者 provenance](https://pypi.org/integrity/granttrace/2.4.1/granttrace-2.4.1-py3-none-any.whl/provenance)
+  与上述配置一致，未使用 PyPI Token 或用户名/密码。
+- 发布 commit 的 [main CI](https://github.com/ysc070528/granttrace/actions/runs/37137142692)
+  与 [CodeQL](https://github.com/ysc070528/granttrace/actions/runs/37137142656)
+  均成功；Python 3.9 / 3.12 / 3.14 测试通过。
+- `main` Branch Protection 的 required checks 包含 **Mypy**；mypy 是正式
+  blocking 门禁，coverage 的 `fail_under = 80` 保持启用。
+
+### 正式测试与 demo 基线
+
+| 检查 | 实际结果 |
+|---|---|
+| Python 3.9 / 3.12 / 3.14 unittest | 每个版本均 **304 项通过**，0 failures / errors / skipped |
+| mypy | **0 errors**，15 个源码文件无诊断 |
+| Ruff / Runtime dependency audit / CodeQL | 全部 passed |
+| 真实 unittest 总覆盖率（语句与分支） | Python 3.9：**80.85%**；Python 3.12 / 3.14：**80.83%**，均达到 >=80% 门槛 |
+| 正式 wheel 独立安装 | 在源码目录外的新虚拟环境验证，CLI 为 `GrantTrace 2.4.1`，metadata / HTML / JSON / User-Agent 版本一致 |
+| `granttrace demo --read-only` | **0 PATCH**；数据库保持初始状态，`database_restored=true`、`server_stopped=true` |
+| `granttrace demo` | BOLA / IDOR 与 Mass Assignment 演示正常；独立 GET readback、`rollback_verified=true`、`database_restored=true`、`server_stopped=true` |
+| demo 安全范围 | 只使用动态 `127.0.0.1` 靶场，不接受外部 target，不使用用户凭据；完成后服务端口不可连接 |
+
+本次发布未改变 BOLA / IDOR / Mass Assignment 判定语义或安全边界。
+用户 API 扫描仍默认只读；主动 PATCH 仍受显式允许、write allowlist、
+独立 GET readback、状态快照和 rollback verification 限制，恢复失败继续阻断写入。
+验收只使用虚构数据和隔离本机靶场，不访问生产 API 或使用真实生产凭据。
+
+下方“2026-10-03 2.4.1.dev0 内置 demo 验收”及其后的章节均为历史记录；
+其中“当前”“未发布”“advisory”等表述指各轮记录当时的状态，历史原文完整保留。
+
 ## 2026-10-03 2.4.1.dev0 内置 demo 验收
 
 本轮仅改善安装后的首次体验，稳定版仍为 v2.4.0，开发版本为
