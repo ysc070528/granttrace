@@ -115,7 +115,7 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
 
 ## SARIF 导出
 
-该功能用于源码开发版本，尚未包含在已发布的 v2.4.1 包中；本说明不表示 v2.5 已发布。完成审计后可同时输出 HTML、JSON 与 SARIF：
+完成审计后可同时输出 HTML、JSON 与 SARIF：
 
 ```bash
 granttrace --spec openapi.json --config config.local.json \
@@ -133,7 +133,7 @@ granttrace --spec openapi.json --config config.local.json \
 
 ## cURL 复现模板
 
-当前源码开发功能，尚未包含在已发布的 v2.4.1 包中，不表示 v2.5 已发布。HTML 的确认漏洞卡片可提供 **cURL 复现模板（请填入授权测试凭据）**，只用于明确授权的测试环境：
+HTML 的确认漏洞卡片可提供 **cURL 复现模板（请填入授权测试凭据）**，只用于明确授权的测试环境：
 
 - 只为能够安全表达的 CONFIRMED BOLA / IDOR 和 Mass Assignment 生成；普通端点结果行及其他 verdict 不添加按钮。模板使用实际测试 URL 和 canonical operation，不猜测资源 ID 或请求参数。
 - 认证来自 Visitor 的有效 header 形状，全部转换为占位符，例如 `Authorization: Bearer <VISITOR_TOKEN>`、`Authorization: Basic <VISITOR_CREDENTIAL>`、`X-API-Key: <VISITOR_X_API_KEY>`、`Cookie: <VISITOR_COOKIE>`。自定义 header 的值同样是占位符；原值不会作为模板元数据传给报告层，`--include-sensitive-evidence` 不能解除这个边界。
