@@ -1,6 +1,7 @@
 # GrantTrace
 
 ![CI](https://github.com/ysc070528/granttrace/actions/workflows/test.yml/badge.svg)
+[![PyPI](https://img.shields.io/pypi/v/granttrace.svg)](https://pypi.org/project/granttrace/)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
@@ -10,7 +11,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
-[五分钟体验](#五分钟体验) · [完整示例报告](examples/sample_report.html) · [配置指南](docs/configuration.md) · [命令行与迁移](docs/advanced.md) · [验收记录](VERIFICATION.md) · [发布自检](docs/release-checklist.md)
+[五分钟体验](#五分钟体验) · [完整示例报告](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html) · [配置指南](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md) · [命令行与迁移](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md) · [验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md) · [发布自检](https://github.com/ysc070528/granttrace/blob/main/docs/release-checklist.md)
 
 ## 为什么是 GrantTrace / Why GrantTrace
 
@@ -18,7 +19,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 - **Verify real side effects**：通过独立读回验证状态是否真正持久化，不只看 HTTP 状态码。
 - **Restore safely**：主动 PATCH 测试使用显式 allowlist、原始状态快照、恢复与恢复验证。
 
-<img src="docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
+<img src="https://raw.githubusercontent.com/ysc070528/granttrace/v2.5.0/docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
 
 ## 五分钟体验
 
@@ -34,7 +35,7 @@ granttrace demo
 
 HTML / JSON 报告保留在当前目录的 `granttrace-demo/` 唯一子目录，终端会输出绝对路径，不覆盖已有报告。可选用 `granttrace demo --output-dir PATH` 指定报告父目录，或 `granttrace demo --read-only` 仅体验只读身份访问，发送 **0 PATCH**。
 
-完整离线示例：[HTML 报告](examples/sample_report.html)（下载后用浏览器打开）与 [JSON 结果](examples/sample_result.json)。
+完整离线示例：[HTML 报告](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html)（下载后用浏览器打开）与 [JSON 结果](https://github.com/ysc070528/granttrace/blob/main/examples/sample_result.json)。
 
 ## 接入自己的 API
 
@@ -69,7 +70,7 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
 
 6. **以后需要时再考虑主动 PATCH**：只有在专用可丢弃资源、独立 GET readback、字段映射、一致性和恢复路径均经人工确认后，才配置明确的 `write_allowlist` 并在真实扫描中单独添加 `--allow-write-tests`。允许清单存在不表示写测试已开启，运行时仍须满足写入与恢复条件。
 
-OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测试权限、生产读回一致性或实际恢复能力；检查通过只代表配置结构及支持的语义通过当前检查。账户、API Key / Cookie、合法共享和管理员访问见 [配置指南](docs/configuration.md)，输出与自动化兼容性见 [命令行说明](docs/advanced.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
+OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测试权限、生产读回一致性或实际恢复能力；检查通过只代表配置结构及支持的语义通过当前检查。账户、API Key / Cookie、合法共享和管理员访问见 [配置指南](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md)，输出与自动化兼容性见 [命令行说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md)。接入实测前请核对 [安全边界](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md)。
 
 ## SARIF 导出
 
@@ -80,11 +81,11 @@ granttrace --spec your-openapi.yaml --config config.local.json \
   --export-json result.local.json --export-sarif granttrace.sarif -o report.html
 ```
 
-SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](docs/advanced.md#sarif-导出)。
+SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#sarif-导出)。
 
 ## cURL 复现模板
 
-HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](docs/advanced.md#curl-复现模板)。
+HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#curl-复现模板)。
 
 ## 从源码开发 / 运行仓库 mock
 
@@ -121,8 +122,8 @@ python scripts/verify_business_scenarios.py
 python scripts/verify_install.py
 ```
 
-测试直接使用仓库中的 `config.example.json`，无需创建本地凭据文件。[业务场景验收](docs/business-scenarios.md) 单独记录团队共享、管理员读取、跨租户拒绝和故意越权的真值、误报与漏报；[验收记录](VERIFICATION.md) 标明实际测试环境和范围。
+测试直接使用仓库中的 `config.example.json`，无需创建本地凭据文件。[业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md) 单独记录团队共享、管理员读取、跨租户拒绝和故意越权的真值、误报与漏报；[验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md) 标明实际测试环境和范围。
 
-“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。仅在具备专用测试账户、独立读回和恢复方案的隔离环境启用写测试。远程 `$ref`、GraphQL、gRPC、自动 OAuth / mTLS 登录以及 POST / PUT 主动测试尚未实现。更多规则与迁移说明见 [操作指南](docs/advanced.md)。
+“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。仅在具备专用测试账户、独立读回和恢复方案的隔离环境启用写测试。远程 `$ref`、GraphQL、gRPC、自动 OAuth / mTLS 登录以及 POST / PUT 主动测试尚未实现。更多规则与迁移说明见 [操作指南](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。
 
 Apache License 2.0。
