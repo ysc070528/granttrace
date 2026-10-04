@@ -6,10 +6,11 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core import __version__
 from core.evidence import sanitize_url
+from core.reproduction import CurlTemplate
 
 
 class SecurityReportGenerator:
@@ -148,6 +149,17 @@ class SecurityReportGenerator:
         )
 
     @classmethod
+    def _curl_html(cls, template: CurlTemplate) -> str:
+        return (
+            "<section class='reproduction' aria-label='cURL 复现模板'>"
+            "<p><strong>cURL 复现模板（请填入授权测试凭据）</strong></p>"
+            "<button type='button' data-copy-curl aria-live='polite'>复制 cURL</button>"
+            "<pre class='curl-template'>" + cls._escape(template.command) + "</pre>"
+            "<p class='meta'>POSIX shell cURL template · 仅用于明确授权的测试环境。</p>"
+            "<p class='meta'>" + cls._escape(template.note) + "</p></section>"
+        )
+
+    @classmethod
     def generate(
         cls,
         stats: Dict[str, Any],
@@ -155,6 +167,7 @@ class SecurityReportGenerator:
         target_url: str,
         output_path: str = "granttrace_report.html",
         results: Optional[List[Dict[str, Any]]] = None,
+        reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
     ) -> None:
         results = results or []
         target_url = sanitize_url(target_url)
@@ -223,6 +236,12 @@ class SecurityReportGenerator:
             severity = str(finding.get("severity", "High"))
             evidence = finding.get("evidence", {})
             explanation = cls._summarize({**finding, "verdict": "CONFIRMED"})
+            template = (reproduction_templates or {}).get(index - 1)
+            curl_html = (
+                cls._curl_html(template)
+                if template is not None and finding.get("verdict", "CONFIRMED") == "CONFIRMED"
+                and finding.get("cwe") in {"CWE-639", "CWE-915"} else ""
+            )
             finding_html_parts.append(
                 f"""
                 <article class="finding" data-audit-item="finding" data-verdict="CONFIRMED"
@@ -239,6 +258,7 @@ class SecurityReportGenerator:
                   <p class="verification">{cls._escape(explanation['verification'])}</p>
                   <p class="meta">依据：{cls._escape(finding.get('details', ''))}</p>
                   {cls._guidance_html(explanation)}
+                  {curl_html}
                   <details>
                     <summary>查看已最小化的证据</summary>
                     <pre>{cls._json_pre(evidence)}</pre>
@@ -296,6 +316,11 @@ class SecurityReportGenerator:
     .result-summary {{ margin:0 0 7px; }} .verification {{ font-weight:600; }}
     .guidance {{ margin:16px 0; font-size:14px; line-height:1.6; }}
     .guidance li {{ margin:6px 0; }} [hidden] {{ display:none !important; }}
+    .reproduction {{ border-top:1px solid #e2e8f0; margin-top:18px; padding-top:6px; }}
+    [data-copy-curl] {{ border:1px solid #cbd5e1; border-radius:6px; padding:7px 12px;
+                       background:#f1f5f9; color:#334155; font:inherit; cursor:pointer; }}
+    [data-copy-curl]:focus-visible {{ outline:2px solid #0284c7; outline-offset:3px; }}
+    [data-copy-curl]:disabled {{ cursor:wait; opacity:.7; }}
     @media (max-width:640px) {{ main {{ padding:20px 12px; }} header {{ flex-wrap:wrap; }} }}
   </style>
 </head>
@@ -331,6 +356,58 @@ class SecurityReportGenerator:
 </main>
 <script>
   (() => {{
+    function fallbackCopy(text) {{
+      let area;
+      const previousFocus = document.activeElement;
+      try {{
+        area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.setAttribute('aria-hidden', 'true');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        area.setSelectionRange(0, text.length);
+        return document.execCommand('copy') === true;
+      }} catch {{
+        return false;
+      }} finally {{
+        if (area && area.parentNode) area.parentNode.removeChild(area);
+        if (previousFocus && typeof previousFocus.focus === 'function') {{
+          try {{ previousFocus.focus(); }} catch {{ /* Copy status remains available. */ }}
+        }}
+      }}
+    }}
+    document.querySelectorAll('[data-copy-curl]').forEach(button => {{
+      let resetTimer;
+      button.addEventListener('click', async () => {{
+        if (resetTimer) clearTimeout(resetTimer);
+        const restoreButtonFocus = document.activeElement === button;
+        button.disabled = true;
+        let copied = false;
+        try {{
+          const text = button.parentElement.querySelector('.curl-template').textContent;
+          try {{
+            const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+            if (clipboard && typeof clipboard.writeText === 'function') {{
+              await clipboard.writeText(text);
+              copied = true;
+            }}
+          }} catch {{ /* Try offline fallback. */ }}
+          if (!copied) copied = fallbackCopy(text);
+        }} catch {{ /* Manual selection remains available in the report. */ }}
+        finally {{
+          button.disabled = false;
+          if (restoreButtonFocus && typeof button.focus === 'function') {{
+            try {{ button.focus(); }} catch {{ /* Preserve the copy status. */ }}
+          }}
+          button.textContent = copied ? '已复制' : '复制失败，请手动选择';
+          resetTimer = setTimeout(() => {{ button.textContent = '复制 cURL'; }}, 2500);
+        }}
+      }});
+    }});
     const search = document.getElementById('endpoint-search');
     const filter = document.getElementById('verdict-filter');
     const items = Array.from(document.querySelectorAll('[data-audit-item]'));

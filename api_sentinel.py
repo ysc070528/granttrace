@@ -19,6 +19,7 @@ from core.evidence import sanitize_log_text, sanitize_text
 from core.models import parse_operation_key
 from core.parser import OpenAPIParser
 from core.reporter import SecurityReportGenerator
+from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
 
 
@@ -413,12 +414,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         elapsed = time.time() - started
 
         _ensure_parent(args.output)
+        reproduction_secrets = set(auditor._secret_values)
+        for identity_name in auditor.identities:
+            reproduction_secrets.update(auditor._identity_headers(identity_name).values())
+        reproduction_templates = build_reproduction_templates(
+            auditor.findings, auditor._identity_headers("visitor"), reproduction_secrets,
+        )
         SecurityReportGenerator.generate(
             stats=auditor.stats,
             findings=auditor.findings,
             results=auditor.results,
             target_url=args.target,
             output_path=args.output,
+            reproduction_templates=reproduction_templates,
         )
         print(f"[OK] HTML report: {args.output}")
 

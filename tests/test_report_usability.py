@@ -169,7 +169,8 @@ for (const id of ['endpoint-search', 'verdict-filter', 'filter-count', 'no-match
     addEventListener(event, callback) { this.handlers[event] = callback; }};
 }
 const items = ITEMS.map(dataset => ({dataset, hidden: false}));
-const document = {getElementById: id => controls[id], querySelectorAll: () => items};
+const document = {getElementById: id => controls[id],
+  querySelectorAll: selector => selector === '[data-audit-item]' ? items : []};
 vm.runInNewContext(SCRIPT, {document});
 assert.equal(items.filter(item => !item.hidden).length, 4);
 controls['endpoint-search'].value = '/USERS';

@@ -40,6 +40,17 @@ granttrace --spec openapi.json --config config.local.json \
 - `--dry-run --export-sarif` 返回退出码 2，不生成 SARIF，也不发送请求。配置草稿生成与离线配置校验同样不能导出 SARIF。
 - SARIF 输出路径不得为空、纯空白或包含 NUL 等控制字符，以上情况在创建 auditor 或发送请求前返回退出码 2。路径也不得与 HTML / JSON 输出或 spec / config 输入重合。缺失的输出父目录沿用现有逻辑创建；写入失败返回退出码 2、不打印 traceback 或成功提示，已完成的 HTML / JSON 输出保留。
 
+## cURL 复现模板
+
+当前源码开发功能，尚未包含在已发布的 v2.4.1 包中，不表示 v2.5 已发布。HTML 的确认漏洞卡片可提供 **cURL 复现模板（请填入授权测试凭据）**，只用于明确授权的测试环境：
+
+- 只为能够安全表达的 CONFIRMED BOLA / IDOR 和 Mass Assignment 生成；普通端点结果行及其他 verdict 不添加按钮。模板使用实际测试 URL 和 canonical operation，不猜测资源 ID 或请求参数。
+- 认证来自 Visitor 的有效 header 形状，全部转换为占位符，例如 `Authorization: Bearer <VISITOR_TOKEN>`、`Authorization: Basic <VISITOR_CREDENTIAL>`、`X-API-Key: <VISITOR_X_API_KEY>`、`Cookie: <VISITOR_COOKIE>`。自定义 header 的值同样是占位符；原值不会作为模板元数据传给报告层，`--include-sensitive-evidence` 不能解除这个边界。
+- PATCH 只使用重新脱敏的已确认注入字段和实际请求 Content-Type，保留 `application/merge-patch+json`。模板不复制 snapshot、rollback payload、恢复数据或响应；无法可靠表达的嵌套/数组字段、缺失或不安全元数据会省略模板。
+- URL 凭据、query 值、fragment 和已知 secrets 按现有规则处理；部分值脱敏时会提示人工补全测试值。模板针对 POSIX shell，对参数使用 shell quoting，并关闭 cURL URL glob；不适合作为 PowerShell 命令直接粘贴。
+- 命令以 escaped HTML 文本保存在 `<pre>`，按钮通过 `textContent` 读取。优先用浏览器 Clipboard API；在 `file://` 等不可用或失败场景尝试临时 textarea 复制。失败时显示“复制失败，请手动选择”，搜索/筛选继续工作；无 JavaScript 时仍可手动选择模板。
+- 主动 PATCH 复现前应自行保存原状态并准备独立 readback、恢复与恢复验证；单条 cURL 模板不会自动执行 GrantTrace 的完整恢复流程。
+
 ## 结果解释
 
 本次 JSON 报告 `report_schema_version` 为 2，新增 `AUTHORIZED` 状态及业务授权预期证据。处理状态枚举的外部程序需同时支持该值。

@@ -24,6 +24,7 @@ from core.config_validator import ConfigValidator
 from core.evidence import sanitize_log_text, sanitize_text
 from core.models import HTTPResult, json_values_equal, strict_json_loads
 from core.reporter import SecurityReportGenerator
+from core.reproduction import build_reproduction_templates
 from mock_server.server import TargetMockHandler
 
 
@@ -189,9 +190,15 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
         verification["server_stopped"] = not server.thread.is_alive() and server.server.socket.fileno() == -1
         if not verification["server_stopped"]:
             raise RuntimeError("Local demo server is still running")
+        reproduction_secrets = set(auditor._secret_values)
+        for identity_name in auditor.identities:
+            reproduction_secrets.update(auditor._identity_headers(identity_name).values())
+        reproduction_templates = build_reproduction_templates(
+            auditor.findings, auditor._identity_headers("visitor"), reproduction_secrets,
+        )
         SecurityReportGenerator.generate(
             stats=auditor.stats, findings=auditor.findings, results=auditor.results,
-            target_url=server.target, output_path=str(html))
+            target_url=server.target, output_path=str(html), reproduction_templates=reproduction_templates)
         payload = {"tool_version": __version__, "report_schema_version": 2,
                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                    "elapsed_seconds": round(time.monotonic() - started, 3), "target": server.target,
