@@ -53,6 +53,17 @@ granttrace --spec your-openapi.yaml --config config.local.json --dry-run --expor
 
 接入自己的 API 时仍默认只读，主动 PATCH 测试必须显式开启并满足 allowlist、独立 readback 和恢复条件。账户、API Key / Cookie、合法共享和管理员访问配置见 [配置指南](docs/configuration.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](docs/parameter-serialization.md)。接入实测前请核对 [安全边界](SECURITY.md)。
 
+## SARIF 导出
+
+源码中的 `--export-sarif PATH` 可与 HTML / JSON 同时使用；本功能尚未包含在已发布的 v2.4.1 中，不表示 v2.5 已发布。
+
+```bash
+granttrace --spec your-openapi.yaml --config config.local.json \
+  --export-json result.local.json --export-sarif granttrace.sarif -o report.html
+```
+
+SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。API endpoint 不伪装成源码文件或行号。可用于 SARIF-compatible tooling；GitHub Code Scanning 的告警展示需要真实位置，接入前请核对 [兼容说明](docs/advanced.md#sarif-导出)。
+
 ## 从源码开发 / 运行仓库 mock
 
 需要查看源码或手工运行仓库靶场时：

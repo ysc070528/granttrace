@@ -19,7 +19,24 @@
 | `--fail-on-suspicious` | 存在可疑结果时返回退出码 2 |
 | `--min-coverage 80` | 确定性端点覆盖率低于指定百分比时返回退出码 2 |
 | `--dry-run` | 只展示本地计划，不向目标发送请求；可用 `--export-json` 导出 |
+| `--export-sarif PATH` | 导出 SARIF 2.1.0，仅包含 CONFIRMED 漏洞；不能与 dry-run 同用 |
 | `--include-sensitive-evidence` | 在报告中保留敏感字段；默认关闭 |
+
+## SARIF 导出
+
+该功能用于源码开发版本，尚未包含在已发布的 v2.4.1 包中；本说明不表示 v2.5 已发布。完成审计后可同时输出 HTML、JSON 与 SARIF：
+
+```bash
+granttrace --spec openapi.json --config config.local.json \
+  --export-json result.local.json --export-sarif granttrace.sarif -o report.html
+```
+
+- 仅精确为 `CONFIRMED` 的现有 BOLA / IDOR 与 Mass Assignment 结果进入 SARIF；SECURE、PUBLIC、AUTHORIZED、SKIPPED、SUSPICIOUS、INCONCLUSIVE、ERROR 不生成漏洞 result，也不改变原判定。
+- BOLA / IDOR 映射为 `GT-BOLA-001` / `CWE-639`，Mass Assignment 映射为 `GT-MASS-001` / `CWE-915`，当前确认漏洞的 SARIF level 均为 `error`。没有确认漏洞时仍生成合法的 `results=[]`。
+- 始终使用现有脱敏能力清理已知凭据，与 `--include-sensitive-evidence` 无关。只保留固定规则信息、可安全表达的 API endpoint 和 HTTP(S) target origin；不复制原始响应、headers、请求 payload 或任意 evidence。无法证明安全的动态字段直接省略。
+- 不构造源码文件、行号或 `physicalLocation`。SARIF-compatible tooling 可读取此格式；[GitHub Code Scanning](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support) 要展示告警需要位置，本轮不提供源码映射，不能保证 API 结果上传后显示为源码告警。
+- `--dry-run --export-sarif` 返回退出码 2，不生成 SARIF，也不发送请求。配置草稿生成与离线配置校验同样不能导出 SARIF。
+- SARIF 路径不得与 HTML / JSON 输出或 spec / config 输入重合。缺失的输出父目录沿用现有逻辑创建；写入失败返回退出码 2、不打印 traceback 或成功提示，已完成的 HTML / JSON 输出保留。
 
 ## 结果解释
 
