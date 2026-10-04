@@ -1,3 +1,98 @@
+# v2.5.1 发布准备与发布前验收清单
+
+这是 **release preparation**：正式源码版本为 `2.5.1`，
+尚未创建 v2.5.1 tag / GitHub Release，尚未上传或发布 PyPI。
+当前已发布 stable 仍为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)。
+
+README 的 `Stable: v2.5.1` 及相关 Release / PyPI 链接是本轮发布准备的前置展示；正式发布完成前，实际已发布稳定版仍为 v2.5.0。
+本轮准备发布已合并 maintenance 修复，不新增功能；历史 release、tag 和资产保持不变。
+
+## v2.5.1 Release source
+
+- Base main：[`c950432c2696c9fcd442591db82ed2cb0393351a`](https://github.com/ysc070528/granttrace/commit/c950432c2696c9fcd442591db82ed2cb0393351a)。
+- Release Prep branch：`codex/v2.5.1-release`。
+- 已合并的修复：[maintenance PR #26](https://github.com/ysc070528/granttrace/pull/26)。
+- 版本：`2.5.1`，不保留 `.dev0`，不添加 rc / post-release 后缀。
+- 实际执行证据与限制见 [v2.5.1 发布前验收](../VERIFICATION.md#2026-10-05-v251-发布前验收)。
+
+## v2.5.1 本轮本地已完成
+
+### 版本链、构建和独立安装
+
+- [x] project / runtime / wheel / installed metadata / JSON 均为 `2.5.1`。
+- [x] CLI 为 `GrantTrace 2.5.1`；HTML 为 `v2.5.1`，实际 User-Agent 为 `GrantTrace/2.5.1`。
+- [x] 隔离 `python -m build` 产生 2.5.1 wheel 与 sdist；两种 distribution 均通过 `twine check --strict`，没有上传。
+- [x] wheel / sdist 的 Name、Version、Python>=3.9、Apache-2.0、PyYAML>=6.0 与 Markdown README long description 正确；wheel RECORD size / hash 核对通过，所需 runtime / demo / docs / scripts / tests / examples 内容齐全。
+- [x] 在本轮包内文件名与内容检查范围内未发现私有配置、缓存、日志、临时报告、venv / .git / coverage / 嵌套构建产物或真实主机路径；公开 synthetic 隐私 fixture 经过上下文核对，此项不代表通用秘密扫描保证。
+- [x] 本轮实际构建 wheel 在源码目录外的 fresh virtual environment 安装，imports、CLI / help、metadata、默认报告与 packaged demo resources 可用。
+- [x] 安装环境 `pip check` 无依赖冲突，实际为 granttrace 2.5.1、PyYAML 6.0.3。
+- [x] 安装后的 JSON / YAML plan 等价，`requests_sent = 0`，配置草稿继续阻断。
+- [x] 官方 HTML / JSON 示例由 `verify_examples.py --update-examples` 更新，再不带更新参数复验通过。
+- [x] 报告截图保留；固定 v2.5.0 raw 图片 URL 实测 200 / image/png，PNG signature 正确。
+
+### 质量与本机模型
+
+- [x] 本轮 unittest **552 项通过**，0 failures / errors / skipped。
+- [x] coverage 下同为 552 项通过；branch-aware 总覆盖率 **84.91%**，XML / JSON 生成。
+- [x] 保留 coverage source、`branch = true`、`fail_under = 80`，没有降低门槛。
+- [x] blocking mypy **0 errors**（18 个源码文件），Ruff 通过。
+- [x] strict runtime dependency audit：实际解析的 PyYAML 6.0.3 没有已知漏洞，没有 ignore。
+- [x] 业务场景 **6/6** 符合本机 fixture 真值。
+- [x] JSON / YAML examples 的只读及主动结果符合预期，三个模式完整恢复 mock 数据库。
+
+### Installed demo 与现有安全边界
+
+- [x] read-only demo **0 PATCH**；rollback 不适用，数据库恢复与 server stopped 通过。
+- [x] active demo 1 BOLA / 1 Mass Assignment CONFIRMED；rollback verified、database restored、server stopped 均为 true。
+- [x] 安装后默认用户扫描 0 PATCH；主动扫描独立读回、rollback 及完整数据库恢复通过。
+- [x] Merge Patch 恢复安全、数组记录比较、credential redaction、报告/输入 alias、conditional / local `$ref`、参数兼容与 operation/spec 交叉检查的维护回归通过完整 unittest。
+- [x] SARIF、cURL、HTML / JavaScript 和 onboarding 的现有单元回归通过；不冒称本轮独立安装后执行官方 SARIF schema 或浏览器验收。
+- [x] 默认只读、显式 PATCH 开关与 allowlist、独立 GET readback、snapshot / rollback verification 和恢复失败停写保持。
+- [x] 只使用虚构凭据和隔离本机模型；未增加主动 POST / PUT、自动登录 / OAuth 或其他检测能力。
+
+### 发布工作流
+
+- [x] `release.yml` 仅更改 manual default / choices / allowlist / 对应说明，保留历史版本。
+- [x] 4 段内嵌 Python AST 解析；3 段下游校验 AST 与 base 一致。
+- [x] 43 组完全离线校验通过：28 组 event / tag / release，15 组 source / distribution / hash。
+- [x] 稳定 published 与已有正式 Release 的 main/manual 正例通过；draft / prerelease / edited / dev tag / 版本或资产不一致等负例阻断。
+- [x] 未执行 `workflow_dispatch`，没有实际上传或取得 OIDC 发布身份；上述结果仅为静态与 mock 验收。
+
+## v2.5.1 远程门禁与后续动作
+
+Release Prep PR 尚未创建，本轮远程 CI / CodeQL 尚未运行；
+以下项目必须以本轮 PR 最新 HEAD 的实际检查为依据，不能用旧 maintenance PR 或 main 绿灯替代。
+
+- [ ] 创建 Release Prep PR，保留开放并等待人工 review。
+- [ ] PR 最新 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit、CodeQL 全部通过。
+- [ ] 补入首次远程证据后，最终文档 commit 的全部远程门禁再次通过。
+- [ ] 人工审查并合并 Release Prep PR。
+- [ ] 核对最终 main exact 40-char SHA，以及 main CI / CodeQL。
+- [ ] 基于最终 main / tagged source 核实正式 wheel / sdist / SHA256SUMS；本轮分支构建 hash 不能当作最终 Release hash。
+- [ ] 经明确授权创建 annotated tag `v2.5.1`，确认精确指向最终 main。
+- [ ] 经明确授权创建正式 GitHub Release 并附加三个正式资产。
+- [ ] 经明确授权执行 PyPI 发布；核对 OIDC 与发布工作流真实结果。
+- [ ] PyPI 可见后，fresh install / metadata / 两种 demo 及恢复、server shutdown 复核。
+
+发布前构建仅属于 **PR branch pre-release build**，不证明 v2.5.1 已正式发布。
+已发布 PyPI 2.5.0 long description 保持不可变；README 源修复没有回写它。
+本轮验收只覆盖所列本机 fixture 与安装流程，不代表生产 API 零误报、完整授权覆盖或完全安全。
+
+## v2.5.1 Release Notes 草稿
+
+GrantTrace v2.5.1 prepares the maintenance fixes merged in PR #26: safer Merge Patch
+recovery checks, array record comparison corrections, known-credential redaction,
+report/input overwrite protection, local and conditional schema handling, and
+configuration/spec and parameter validation with canonical legacy scalar compatibility.
+Default read-only auditing and explicit PATCH opt-in, independent readback and rollback
+verification remain in place. No new detection capabilities are added.
+This is release preparation; no v2.5.1 tag, GitHub Release or PyPI release has been created.
+
+---
+
+下方 v2.5.0 与更早清单按原文保留，只记录对应历史版本；
+其中“当前”“本轮”“已发布”“未发布”不表示 v2.5.1 发布准备的状态。
+
 # v2.5.0 发布完成与发布后验收清单
 
 **v2.5.0 已于 2026-10-04 正式发布**，当前稳定版本为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)，[PyPI 2.5.0](https://pypi.org/project/granttrace/2.5.0/) 已可安装。本轮只同步发布完成与安装验收文档；v2.4.1 / v2.4.0 / v2.3.1 的 tag、Release、PyPI 与资产历史保持不变，不新增功能、修改检测逻辑或版本，也不执行新的 tag / 发布操作。
