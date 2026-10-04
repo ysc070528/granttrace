@@ -1,7 +1,7 @@
 # GrantTrace
 
 ![CI](https://github.com/ysc070528/granttrace/actions/workflows/test.yml/badge.svg)
-[![PyPI](https://img.shields.io/pypi/v/granttrace.svg)](https://pypi.org/project/granttrace/2.5.0/)
+[![PyPI](https://img.shields.io/pypi/v/granttrace.svg)](https://pypi.org/project/granttrace/)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
