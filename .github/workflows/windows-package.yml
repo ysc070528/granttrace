@@ -1,0 +1,58 @@
+name: GrantTrace Windows portable
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Windows x64 portable
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Setup fixed Windows x64 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.5"
+          architecture: x64
+      - name: Install packaging tools and GrantTrace
+        run: |
+          python -m pip install -r packaging/windows/requirements-build.txt
+          python -m pip install --no-build-isolation --no-deps .
+      - name: Build folder bundle, ZIP and SHA256
+        run: python scripts/build_windows_portable.py
+      - name: Verify extracted portable outside checkout and Python PATH
+        run: python scripts/verify_windows_portable.py --zip dist/GrantTrace-v2.5.1-Windows-x64.zip --output dist/windows-portable-verification.json
+      - name: Record portable build evidence
+        shell: pwsh
+        run: |
+          @('### Windows x64 portable', '```json') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Get-Content dist/windows-portable-build.json | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          @('```', '```text') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Get-Content dist/SHA256SUMS.txt | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload verified portable artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: GrantTrace-v2.5.1-Windows-x64
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            dist/GrantTrace-v2.5.1-Windows-x64.zip
+            dist/SHA256SUMS.txt
+            dist/windows-portable-build.json
+            dist/windows-portable-verification.json
