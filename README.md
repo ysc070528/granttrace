@@ -7,21 +7,36 @@
 
 **Stable:** [v2.5.1](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) · [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/)
 
-源码、GitHub 和 PyPI 正式版本均为 **2.5.1**。Windows 便携 ZIP 尚待维护者完成验收并添加到此 Release，目前尚无可下载的便携资产。
+源码、GitHub 和 PyPI 正式版本均为 **2.5.1**，Windows 便携版已正式提供。
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
+仅对明确获得授权的系统进行测试；主动写测试仅应在可丢弃、隔离的测试资源上启用。
+
 ## Windows 用户：解压后双击体验
 
-**推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 待 [v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) 添加便携资产后：
+**推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 从官方 [v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) 下载：
 
-1. 下载 **`GrantTrace-v2.5.1-Windows-x64.zip`**，将整个 ZIP 解压到一个普通文件夹。
+1. 下载 [GrantTrace-v2.5.1-Windows-x64.zip](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/GrantTrace-v2.5.1-Windows-x64.zip)，将整个 ZIP 解压到一个普通文件夹。
 2. 打开解压后的文件夹，双击 **`Start-Demo.bat`**；保留旁边的程序和依赖文件。
 3. 查看自动打开的 HTML 报告；若未打开，按启动器打印的 HTML 路径手动打开。HTML / JSON 保存在解压目录的 `granttrace-demo/session-*/run-*/`。Demo 只使用内置、可丢弃的 `127.0.0.1` 靶场，结束时关闭靶场并核验数据恢复。
 
 不要直接在 ZIP 内运行启动器。便携包固定为 GrantTrace **2.5.1**；程序、启动器和报告在解压目录内使用，不需要修改系统 PATH。维护者的构建与验收步骤见 [Windows 便携包说明](docs/windows-portable.md)。
+
+Windows 便携程序尚未进行代码签名，部分系统可能显示 Microsoft Defender SmartScreen 或“发布者未知”提示。请只从官方 GitHub Release 下载，并使用 [SHA256SUMS.txt](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/SHA256SUMS.txt) 核对完整性。
+
+## macOS / Linux 用户：使用 Python 安装
+
+需要 **Python 3.9+**；当前不提供 macOS / Linux standalone binary，Windows ZIP 仅适用于 Windows。
+已有 Python 的 Windows 用户也可沿用此方式：
+
+```bash
+python -m pip install --upgrade granttrace
+granttrace --version
+granttrace demo
+```
 
 [Python 五分钟体验](#五分钟体验) · [完整示例报告](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html) · [配置指南](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md) · [命令行与迁移](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md) · [验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md) · [发布自检](https://github.com/ysc070528/granttrace/blob/main/docs/release-checklist.md)
 
@@ -31,17 +46,24 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 - **Verify real side effects**：通过独立读回验证状态是否真正持久化，不只看 HTTP 状态码。
 - **Restore safely**：主动 PATCH 测试使用显式 allowlist、原始状态快照、恢复与恢复验证。
 
-<img src="https://raw.githubusercontent.com/ysc070528/granttrace/v2.5.0/docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
+## 10 秒看懂 GrantTrace
+
+```mermaid
+flowchart TD
+    A["OpenAPI Spec + Owner / Visitor / Anonymous"] --> B["GrantTrace"]
+    B --> C["只读身份差异比较（默认）"]
+    C --> R["HTML / JSON（可选 SARIF）"]
+    B -->|显式开启并满足写入安全条件| W["PATCH 测试"]
+    W --> D["独立 GET 读回"]
+    D --> E["恢复并验证"]
+    E --> R
+```
+
+<img src="https://raw.githubusercontent.com/ysc070528/granttrace/v2.5.1/docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
 
 ## 五分钟体验
 
-已有 Python 的用户也可以使用原命令行安装方式，需要 Python 3.9+。当前稳定版为 [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/)，安装包包含内置 `granttrace demo`，首次体验只需：
-
-```bash
-python -m pip install --upgrade granttrace
-granttrace --version
-granttrace demo
-```
+使用上方 Windows 启动器或 Python 安装命令，即可体验内置 `granttrace demo`。
 
 安装后可在任意目录运行，无需 clone、准备配置、另开终端或访问外部 API。Demo 自动启动动态端口的 `127.0.0.1` 靶场，比较身份访问、演示 BOLA / IDOR 与 Mass Assignment，并通过独立读回与恢复核验展示 PATCH 测试证据。**主动写操作仅发生在内置、可丢弃的本机靶场**；demo 不接受外部 target 或用户凭据，结束时关闭靶场。
 
