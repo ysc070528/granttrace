@@ -45,3 +45,21 @@ or sensitive identity information. Redact examples and reports before sharing.
 Report vulnerabilities through GitHub's
 [Private Vulnerability Reporting](https://github.com/ysc070528/granttrace/security/advisories/new),
 following [SECURITY.md](SECURITY.md), rather than a public issue.
+
+## Branch naming
+
+Use a prefix that describes the purpose of the change, followed by a short,
+descriptive topic:
+
+- `feat/<topic>` for features.
+- `fix/<topic>` for bug fixes.
+- `docs/<topic>` for documentation changes.
+- `refactor/<topic>` for refactoring.
+- `test/<topic>` for test changes.
+- `chore/<topic>` for maintenance.
+- `release/vX.Y.Z` for release preparation.
+
+Examples: `fix/openapi-array-validation`, `docs/windows-installation`, and
+`chore/release-metadata`.
+
+Avoid tool-specific prefixes in new branches.
