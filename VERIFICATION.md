@@ -1,5 +1,30 @@
 # GrantTrace 验收记录
 
+## 2026-10-05 v2.5.1 公开文档与当前分发状态
+
+本轮基于 main `0214905dc43f2b50cf0c2c93834091f72276e798`，
+只同步文档，不修改产品、测试、Windows 打包逻辑或版本。
+
+- [GitHub v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1)
+  实际存在，Release ID `403394773`，非 draft；现有附件为
+  `GrantTrace-v2.5.1-Windows-x64.zip` 与 `SHA256SUMS.txt`。
+  实际读取校验和，ZIP 的 SHA256 与 GitHub asset digest 一致：
+  `c9cdc2d42305f3160ce2df73cfeddf389c68b8515600eda11420b224c402307e`。
+- [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/) 实际存在 wheel / sdist。
+  页面中的部分发布状态文字来自已发布 wheel / sdist 构建时的历史 README，
+  仍提到 stable v2.5.0 与 Ready for release；不影响包本身和安装使用。
+  当前准确公开状态以 GitHub README 与 v2.5.1 Release 为准。
+  本轮不覆盖 PyPI 2.5.1、不发布 2.5.2，也不改版本。
+- v2.5.1 tag 仍指向 `16a605d245e34dcc1aa6d1449b1195c2ac4c434a`。
+  tag 中的 `docs/assets/report-preview.png` 实际存在；raw 链接返回
+  HTTP 200 / image/png / 99428 bytes，PNG 内容与现有图片完全一致，未修改图片。
+- Topics 已包含现有 API security / authorization / BOLA / IDOR / Mass Assignment 等标签；
+  本轮保持不变。SECURITY.md 已覆盖明确授权、默认只读、PATCH opt-in、恢复与报告敏感数据，保持不变。
+
+本轮只做文档与链接检查，不重新构建、执行扫描或改动已发布资产。
+最终文档提交的现有 CI / CodeQL 以对应 PR HEAD 和运行记录为准，历史绿灯不代用。
+以下各轮验收按当时状态保留；旧“未发布”“待添加资产”不表示当前分发状态。
+
 ## 2026-10-05 v2.5.1 Windows 便携分发验收
 
 本轮基于 main `16a605d245e34dcc1aa6d1449b1195c2ac4c434a`，

@@ -7,8 +7,10 @@
 解压目录的 `granttrace-demo/session-*/run-*/`，每次运行使用新的目录。
 
 GitHub 已正式发布 [v2.5.1](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1)，
-便携 ZIP 当前尚待维护者验收并人工添加为 Release 资产。构建工作流只上传
-Actions artifact，不自动修改 tag / Release 或上传 PyPI。
+现已提供 [GrantTrace-v2.5.1-Windows-x64.zip](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/GrantTrace-v2.5.1-Windows-x64.zip)
+和 [SHA256SUMS.txt](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/SHA256SUMS.txt)。
+普通用户直接下载正式 Release ZIP。以下构建工作流只上传 Actions artifact，
+不自动修改 tag / Release 或上传 PyPI。
 
 ## 本地构建
 
@@ -43,7 +45,7 @@ py -3.14 -m venv dist/windows-build-env
 CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍默认打开 HTML。
 暂停保留，自动验证只通过标准输入模拟按键，不隐藏程序或关闭安全软件。
 
-## GitHub Actions 取包与人工验收
+## GitHub Actions 构建产物与独立验收
 
 1. 在 PR 的 Checks 或仓库 Actions 中打开 **GrantTrace Windows portable**
    工作流（`windows-package.yml`），
@@ -54,15 +56,14 @@ CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍�
    阅读验证 JSON，再将分发 ZIP 完整解压到新的测试目录。
 4. 在没有安装 Python 的 Windows x64 环境双击 `Start-Demo.bat`，
    核对版本、报告、服务关闭和数据恢复；记录操作系统、commit 和结果。
-5. 经维护者批准后，人工将已验收的 ZIP 与校验和添加到现有 v2.5.1 Release。
-   不移动 v2.5.1 tag，不创建另一版本 Release，也不发布 PyPI。
+
+这些步骤用于维护者验证构建产物，不会替换已经提供的 Release 附件。
 
 本次已在 Windows 11 x64（10.0.26200）实际构建和执行以上自动验证；
 默认启动器另行在不抑制浏览器打开的条件下返回 0，系统打开 HTML 未报告错误。
 这属于启动器执行验证，不是人工鼠标双击或浏览器视觉验收，也不是干净 Windows 虚拟机实测。
-最终 PR HEAD 的 Windows 构建、原有 CI / CodeQL 仍须独立成功；
-以对应运行的 artifact 和构建 / 验证 JSON 为准，不用本地旧构建代替。
+原便携分发 PR #29 已合并。后续提交的自动检查须核对各自实际 HEAD；
+以对应运行的 artifact 和构建 / 验证 JSON 为准，历史结果不代替新的提交。
 
 EXE 未签名，下载后可能出现 SmartScreen 或安全软件提示；不保证所有产品均无误报。
-仅使用本项目 Actions artifact、维护者交付包或人工添加后的官方 Release 资产，
-并核对 `SHA256SUMS.txt`；不关闭或绕过安全软件。
+普通用户只从官方 GitHub Release 下载并核对 `SHA256SUMS.txt`；不关闭或绕过安全软件。

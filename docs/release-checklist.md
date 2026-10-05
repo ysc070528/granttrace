@@ -1,4 +1,19 @@
-# v2.5.1 Ready for release 收尾清单
+# v2.5.1 当前公开发布与分发状态
+
+- [x] [GitHub v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) 已正式存在。
+- [x] Release 已提供 `GrantTrace-v2.5.1-Windows-x64.zip` 和 `SHA256SUMS.txt`。
+- [x] [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/) 的 wheel / sdist 已存在。
+- [x] README 已同步 Windows 下载、未签名 / SmartScreen 提示、macOS / Linux Python 安装与 v2.5.1 预览图。
+- [x] PyPI 页面历史 README 状态文字已在 [当前验收记录](../VERIFICATION.md#2026-10-05-v251-公开文档与当前分发状态) 说明；不覆盖已发布包或修改版本。
+- [x] 本轮只修改文档；Topics、SECURITY.md、产品 / 测试 / Windows 打包逻辑、tag、Release 和 PyPI 均保持不变。
+
+最终文档 HEAD 的自动检查以对应 PR 为准；历史检查结果不代替该提交。
+下方完整保留各轮发布准备与验收时点的历史清单，包括当时未勾选的后续动作；
+其中“Ready for release”“未发布”“待添加”不表示当前状态或要求重新执行发布。
+
+---
+
+# v2.5.1 Ready for release 收尾清单（历史）
 
 最新 main 为
 [`c913f19a7331dbd291332f9c7dfb7244f45fb2d3`](https://github.com/ysc070528/granttrace/commit/c913f19a7331dbd291332f9c7dfb7244f45fb2d3)，
