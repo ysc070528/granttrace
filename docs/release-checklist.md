@@ -18,11 +18,26 @@
 - [x] 本轮 wheel 与 PyYAML 6.0.3 在源码外 fresh virtual environment 安装通过；版本链为 2.5.1。
 - [x] installed read-only demo 0 PATCH；active demo 1 BOLA / 1 Mass Assignment，rollback / database restored / server stopped 均为 true；JSON / YAML plan 等价且 0 请求。
 
-**Ready for release（未发布）：本轮本地发布前验收已完成。**
+**Ready for release（未正式发布）：本轮本地发布前验收已完成，修复已提交到
+[PR #28](https://github.com/ysc070528/granttrace/pull/28)。**
 
 PR #27 发布准备验收的 **552 passed / 6/6** 仅作为基线。
 main 的 CI 37220855716 / CodeQL 37220855877 仅验证合并基线；
-本轮本地收尾没有创建新提交 / PR 或运行新的远程 CI，不将基线绿灯代用。
+本轮修复在分支 `fix/v2.5.1-final` 的 PR #28 接受远程验收，不将基线绿灯代用。
+
+- [x] 清理前 HEAD `4ef40072f4b258d394d409562f72e372faed05a6` 的
+  [GrantTrace CI 37250719546](https://github.com/ysc070528/granttrace/actions/runs/37250719546) 与
+  [CodeQL 37250719536](https://github.com/ysc070528/granttrace/actions/runs/37250719536)
+  已真实运行，均为 `completed / success`。
+- [x] 该 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit 与 CodeQL 全部通过；
+  完整测试 **560 tests OK**，Python 3.12 的 branch-aware coverage **85.27%**，80% 门槛保留。
+
+这些成功记录仅对应上述清理前 HEAD。本次仅更新文档、取消旧资产跟踪，不重新构建或安装；
+新提交会自动再次触发 CI / CodeQL。合并前必须按
+[PR #28 Checks](https://github.com/ysc070528/granttrace/pull/28/checks) 核对最新实际 HEAD
+及对应运行，等待 CI / CodeQL 和全部门禁再次成功，不用旧 HEAD 的结果代替。
+当前仍未创建 v2.5.1 tag、GitHub Release，仍未发布 PyPI 2.5.1。
+
 正式发布的最终源码须包含本轮修复，再核实 exact commit、远程门禁及最终资产。
 准确结果与范围见 [Ready for release 收尾验收](../VERIFICATION.md#2026-10-05-v251-ready-for-release-收尾验收)。
 

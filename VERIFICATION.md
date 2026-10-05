@@ -17,7 +17,7 @@ Swagger 2.0 参数 schema 提取现保留 `uniqueItems`；重复数组在离线�
 下方 PR #27 发布准备记录的基线为 **552 项测试通过、6/6 业务场景符合本机 fixture 真值**；
 这是已执行的基线记录，不代替本轮收尾变更后的实际结果。
 本轮本地发布前验收已完成，状态为 **Ready for release（未发布）**。
-以下结果均为收尾变更后的实际执行证据，源码版本保持 2.5.1。
+下表保留收尾修复后的本地验收证据；本次 PR 清理不重新执行构建或安装，源码版本保持 2.5.1。
 
 | 本轮检查 | 实际结果 |
 |---|---|
@@ -35,8 +35,24 @@ Swagger 2.0 参数 schema 提取现保留 `uniqueItems`；重复数组在离线�
 合并基线 `c913f19a7331dbd291332f9c7dfb7244f45fb2d3` 的
 [main CI 37220855716](https://github.com/ysc070528/granttrace/actions/runs/37220855716) 与
 [CodeQL 37220855877](https://github.com/ysc070528/granttrace/actions/runs/37220855877) 成功。
-它们仅对应已合并基线，不覆盖本轮尚未提交的收尾修复。
-本轮是本地收尾，没有创建新提交 / PR，没有触发新的远程 CI。
+它们仅对应已合并基线，不覆盖本轮收尾修复。
+
+本轮修复已提交到现有分支 `fix/v2.5.1-final` 的
+[PR #28](https://github.com/ysc070528/granttrace/pull/28)。清理前 HEAD
+[`4ef40072f4b258d394d409562f72e372faed05a6`](https://github.com/ysc070528/granttrace/commit/4ef40072f4b258d394d409562f72e372faed05a6)
+的 [GrantTrace CI 37250719546](https://github.com/ysc070528/granttrace/actions/runs/37250719546) 与
+[CodeQL 37250719536](https://github.com/ysc070528/granttrace/actions/runs/37250719536)
+均已真实运行并成功（`completed / success`）。Python 3.9 / 3.12 / 3.14、Mypy、Ruff、
+Runtime dependency audit 与 CodeQL 全部通过；完整测试 **560 tests OK**，
+Python 3.12 的 branch-aware coverage 为 **85.27%**，保留 80% 门槛。
+
+上述运行只验证明确列出的清理前 HEAD，不能代替后续提交的结果。
+本次文档更新与旧资产取消跟踪提交会产生新 HEAD，并自动再次触发 CI / CodeQL；
+合并前必须按 [PR #28 Checks](https://github.com/ysc070528/granttrace/pull/28/checks)
+核对最新实际 HEAD 及其对应运行，等待两项工作流和全部门禁再次成功。
+当前仍未创建 v2.5.1 tag 或 GitHub Release，仍未发布 PyPI 2.5.1；
+状态仍为 **Ready for release（未正式发布）**。
+
 正式 tag / Release 所用的最终源码须包含本轮修复，再核实 exact commit、
 远程检查及最终 wheel / sdist / SHA256SUMS；不能将基线或本轮本地构建当作正式发布资产。
 
