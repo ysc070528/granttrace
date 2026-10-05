@@ -1,5 +1,51 @@
 # GrantTrace 验收记录
 
+## 2026-10-05 v2.5.1 Windows 便携分发验收
+
+本轮基于 main `16a605d245e34dcc1aa6d1449b1195c2ac4c434a`，
+分支为 `fix/v2.5.1-windows-portable`，版本保持 **2.5.1**。
+GitHub 的 [v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1)
+已于 `2026-10-05T05:32:19Z` 正式发布（ID `403394773`），本轮开始时 assets 为空。
+[PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/) 的 wheel / sdist 也已实际查询确认存在。
+这些是已存在的发布；本轮只准备 Windows ZIP 和校验和，不创建或改动 tag / Release，也不上传 PyPI。
+
+采用 **CPython 3.14.5 x64 / PyInstaller 6.22.3 one-folder**，关闭 UPX，
+固定 UTF-8 输出并包含 `core.demo_assets` 三个 JSON、mock 模块、内嵌 HTML 模板、
+Python / DLL 与许可证。没有修改核心扫描代码、CLI 命令语义、检测规则、默认只读或版本。
+`--version` 保持实际完整输出 **`GrantTrace 2.5.1`**。
+
+本地 Windows 11 x64（10.0.26200）实际验证：
+
+| 检查 | 实际结果 |
+|---|---|
+| 完整 pytest | **560 passed / 860 subtests passed** |
+| Mypy / Ruff | 18 个源码文件 **0 issues**；仓库根目录 Ruff 通过 |
+| 业务场景与原有 examples | **6/6**；只读 / active JSON / active YAML 均通过，完整恢复数据库，未更新示例 |
+| 原有 `verify_install.py` | 本次 wheel 在仓库外 fresh venv 安装，metadata / CLI / runtime 均 2.5.1；Demo、只读 / active 扫描、JSON / YAML 0 请求计划与草稿阻断通过 |
+| EXE `--version` / `--help` | 输出 `GrantTrace 2.5.1`；help 返回 0 |
+| EXE active / read-only Demo | HTML / JSON 生成；active BOLA 1 / Mass Assignment 1，独立 readback、rollback、数据恢复与服务关闭通过；read-only 只发送 GET |
+| ZIP 空格 / 中文路径与启动器 | 真实解压到仓库外，两种路径均通过；子进程不含 Python PATH / Python 环境变量，从空工作目录启动；BAT 正常执行、打印完整报告路径并保留 pause |
+| 独立运行检查 | 每次报告的 loopback 端口均已关闭；可查询的包内进程无残留；YAML dry-run 0 请求，未开启写操作 |
+| BAT 错误路径 | 缺少 EXE 时返回 2，中文错误和暂停提示可见 |
+| 默认报告打开 | 另行不设置 `GRANTTRACE_DEMO_NO_OPEN` 执行 BAT，返回 0，系统打开 HTML 未报告错误 |
+
+自动 BAT 检查通过标准输入模拟按键，并在 CI 抑制打开浏览器；
+不冒称人工鼠标双击、浏览器视觉验收或未安装 Python 的干净虚拟机实测。
+实际 EXE 子进程只使用 ZIP 内 runtime，未从开发环境或源码目录加载依赖。
+本机构建 / 执行未遇安全软件拦截；EXE 未签名，不能保证下载后的 SmartScreen 或其他杀毒软件无提示 / 误报。
+没有关闭安全软件或加入绕过代码。
+
+产物为 `GrantTrace-v2.5.1-Windows-x64.zip` 和 `SHA256SUMS.txt`；
+源码、工具版本、大小和哈希见每次的 `windows-portable-build.json`，
+独立启动与路径证据见 `windows-portable-verification.json`。
+[Windows 构建工作流](https://github.com/ysc070528/granttrace/actions/workflows/windows-package.yml)
+只上传已通过 smoke 的 Actions artifact，不自动修改 Release。
+最新实际 PR HEAD 须独立通过 Windows 构建及原有 CI / CodeQL，
+不得把本轮本地或其他 SHA 的结果代替该 HEAD；最终 SHA / run / ZIP 哈希在 PR 验收报告记录。
+人工确认后才可将同一已验收 ZIP 和校验和添加到既有 v2.5.1 Release。
+
+下方记录按各轮验收当时状态保留；其中“未发布”不表示当前 GitHub / PyPI 2.5.1 状态。
+
 ## 2026-10-05 v2.5.1 Ready for release 收尾验收
 
 本轮基于最新 main
