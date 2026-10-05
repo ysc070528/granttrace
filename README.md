@@ -5,7 +5,9 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**Stable:** [v2.5.1](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) · [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/)
+**Stable:** [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0) · [PyPI 2.5.0](https://pypi.org/project/granttrace/2.5.0/)
+
+源码版本为 **2.5.1**，发布前验收已完成，**Ready for release（未发布）**；尚未创建 v2.5.1 tag / GitHub Release 或发布到 PyPI。
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -23,7 +25,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## 五分钟体验
 
-需要 Python 3.9+。当前稳定版 **v2.5.1**：[PyPI](https://pypi.org/project/granttrace/2.5.1/)。安装包包含内置 `granttrace demo`，首次体验只需：
+需要 Python 3.9+。当前已发布稳定版 **v2.5.0**：[PyPI](https://pypi.org/project/granttrace/2.5.0/)。安装包包含内置 `granttrace demo`，首次体验只需：
 
 ```bash
 python -m pip install --upgrade granttrace
@@ -74,10 +76,10 @@ OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测
 
 ## SARIF 导出
 
-`--export-sarif PATH` 可与 HTML / JSON 同时使用：
+`--export-sarif PATH` 可与 HTML / JSON 同时使用。启动下方仓库 mock 后，在明确授权、可丢弃的本机靶场执行；此命令会发送读取请求，默认 **0 PATCH**：
 
 ```bash
-granttrace --spec your-openapi.yaml --config config.local.json \
+granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json \
   --export-json result.local.json --export-sarif granttrace.sarif -o report.html
 ```
 

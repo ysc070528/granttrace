@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from core.auditor import APISentinelAuditor
+from core.config_validator import ConfigValidator
 from core.generator import SmartDataGenerator
 from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
 from core.parser import OpenAPIParser
@@ -168,6 +169,73 @@ class ParameterSerializationTests(unittest.TestCase):
             self.assertEqual(endpoint["parameters"], spec["paths"]["/items"]["get"]["parameters"])
 
 
+class SwaggerUniqueItemsTests(unittest.TestCase):
+    @staticmethod
+    def parameter(**constraints):
+        return {"name": "ids", "in": "query", "type": "array",
+                "items": {"type": "integer"}, **constraints}
+
+    def assert_valid_array(self, parameter, value):
+        schema = SmartDataGenerator._parameter_schema(parameter)
+        self.assertTrue(SmartDataGenerator.validate_schema_value(value, schema, request=False))
+        self.assertEqual([("ids", ",".join(map(str, value)))],
+                         serialize_query_parameter(parameter, value, swagger2=True))
+        self.assertEqual(
+            ",".join(map(str, value)),
+            serialize_path_parameter({**parameter, "in": "path"}, value, swagger2=True),
+        )
+        self.assertEqual(value, SmartDataGenerator.generate_raw_value_for_param({**parameter, "example": value}))
+
+    def test_swagger_unique_items_accepts_distinct_integer_values(self):
+        self.assert_valid_array(self.parameter(uniqueItems=True), [1, 2])
+
+    def test_swagger_unique_items_rejects_duplicate_integer_values(self):
+        parameter = self.parameter(uniqueItems=True)
+        self.assertFalse(SmartDataGenerator.validate_schema_value(
+            [1, 1], SmartDataGenerator._parameter_schema(parameter), request=False))
+        for location, serializer in (("query", serialize_query_parameter), ("path", serialize_path_parameter)):
+            with self.subTest(location=location), self.assertRaises(ParameterSerializationError):
+                serializer({**parameter, "in": location}, [1, 1], swagger2=True)
+
+    def test_swagger_unique_items_false_preserves_duplicate_values(self):
+        self.assert_valid_array(self.parameter(uniqueItems=False), [1, 1])
+
+    def test_swagger_unique_items_absent_preserves_duplicate_values(self):
+        self.assert_valid_array(self.parameter(), [1, 1])
+
+    def test_swagger_generator_does_not_use_duplicate_documented_example(self):
+        parameter = self.parameter(uniqueItems=True, example=[1, 1])
+        generated = SmartDataGenerator.generate_raw_value_for_param(parameter)
+        self.assertNotEqual([1, 1], generated)
+        self.assertTrue(SmartDataGenerator.validate_schema_value(
+            generated, {"type": "array", "items": {"type": "integer"}, "uniqueItems": True}))
+
+    def test_openapi3_unique_items_schema_keeps_existing_validation(self):
+        for unique, value, valid in ((True, [1, 2], True), (True, [1, 1], False), (False, [1, 1], True)):
+            parameter = {"name": "ids", "in": "query", "schema": {
+                "type": "array", "items": {"type": "integer"}, "uniqueItems": unique,
+            }}
+            with self.subTest(unique=unique, value=value):
+                if valid:
+                    self.assertEqual([("ids", str(item)) for item in value],
+                                     serialize_query_parameter(parameter, value))
+                else:
+                    with self.assertRaises(ParameterSerializationError):
+                        serialize_query_parameter(parameter, value)
+
+    def test_swagger_config_validation_rejects_duplicate_parameter_values(self):
+        spec = {"swagger": "2.0", "paths": {"/items": {"get": {
+            "parameters": [self.parameter(uniqueItems=True)],
+            "responses": {"200": {"description": "Items"}},
+        }}}}
+        for value, valid in (([1, 2], True), ([1, 1], False)):
+            with self.subTest(value=value):
+                result = ConfigValidator.validate({"parameter_values": {"GET /items": {"ids": value}}}, spec)
+                self.assertEqual(valid, result.is_valid)
+                if not valid:
+                    self.assertIn("parameter_values.GET /items.ids", [issue.path for issue in result.errors])
+
+
 class WireParameterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -217,6 +285,31 @@ class WireParameterTests(unittest.TestCase):
         url = auditor._build_url(endpoint, "owner", {"ids": [10, 20], "flags": [True, False]})
         self.assertEqual(auditor._http_request("GET", url).status, 200)
         self.assertEqual(self.requests[0][0], "/items?ids=10&ids=20&flags=true%7Cfalse")
+
+    def test_swagger_duplicate_unique_items_stops_audit_before_any_http_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = {"swagger": "2.0", "paths": {"/items": {"get": {
+                "parameters": [SwaggerUniqueItemsTests.parameter(uniqueItems=True)],
+                "responses": {"200": {"description": "Items"}},
+            }}}}
+            spec_path = Path(directory) / "swagger.json"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            auditor = APISentinelAuditor(str(spec_path), self.target, request_delay=0,
+                parameter_values={"GET /items": {"common": {"ids": [1, 1]}}})
+            endpoint = auditor.parser.get_endpoints()[0]
+            with patch.object(auditor, "_http_request", wraps=auditor._http_request) as transport:
+                auditor.audit_endpoint_bola(endpoint)
+            transport.assert_not_called()
+            self.assertEqual("INCONCLUSIVE", auditor.results[0]["verdict"])
+            self.assertIn("no request was sent", auditor.results[0]["reason"])
+            self.assertEqual([], self.requests)
+
+            # A valid value reaches the same live loopback server, proving the
+            # zero-request assertion is caused by validation rather than setup.
+            auditor.parameter_values["GET /items"] = {"common": {"ids": [1, 2]}}
+            auditor.audit_endpoint_bola(endpoint)
+            self.assertEqual(3, len(self.requests))
+            self.assertTrue(all(path == "/items?ids=1,2" for path, _ in self.requests))
 
     def test_canonical_legacy_and_native_scalars_send_identical_urls(self):
         auditor = self.make_auditor()

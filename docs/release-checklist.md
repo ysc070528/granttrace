@@ -1,10 +1,55 @@
+# v2.5.1 Ready for release 收尾清单
+
+最新 main 为
+[`c913f19a7331dbd291332f9c7dfb7244f45fb2d3`](https://github.com/ysc070528/granttrace/commit/c913f19a7331dbd291332f9c7dfb7244f45fb2d3)，
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 已合并。
+源码保持 `2.5.1`；实际已发布 stable 仍为 v2.5.0，尚无 v2.5.1 tag / Release / PyPI。
+本轮不执行发布操作，不改变版本或增加接口能力。
+
+- [x] README 真实扫描和 SARIF 示例显式提供 target；SARIF 使用已授权的 loopback mock。
+- [x] README Stable / PyPI 指向实际已发布 v2.5.0，源码 2.5.1 状态单独说明。
+- [x] PR #27 已合并，等待 review / merge 的过时状态已纠正。
+- [x] Swagger 2.0 参数 schema 保留 `uniqueItems`；8 项定向回归通过，重复数组请求前拒绝，有效值正例保留。
+- [x] 收尾变更后的完整 pytest **560 passed / 860 subtests passed**；新增 8 个回归方法。
+- [x] 定向回归 **218 passed / 522 subtests passed**；mypy 18 个源码文件 0 issues，仓库根目录 Ruff 通过。
+- [x] 业务场景 **6/6** 符合本机 fixture，三个 JSON / YAML example 模式完整恢复数据库。
+- [x] coverage 下 **560 tests OK / branch-aware 85.27%**，XML / JSON 已生成，80% 门槛与原 source / branch 配置保留。
+- [x] 现有构建依赖满足要求，`build --no-isolation` 生成本轮 2.5.1 wheel / sdist；两者 twine strict PASS，未上传。
+- [x] 本轮 wheel 与 PyYAML 6.0.3 在源码外 fresh virtual environment 安装通过；版本链为 2.5.1。
+- [x] installed read-only demo 0 PATCH；active demo 1 BOLA / 1 Mass Assignment，rollback / database restored / server stopped 均为 true；JSON / YAML plan 等价且 0 请求。
+
+**Ready for release（未正式发布）：本轮本地发布前验收已完成，修复已提交到
+[PR #28](https://github.com/ysc070528/granttrace/pull/28)。**
+
+PR #27 发布准备验收的 **552 passed / 6/6** 仅作为基线。
+main 的 CI 37220855716 / CodeQL 37220855877 仅验证合并基线；
+本轮修复在分支 `fix/v2.5.1-final` 的 PR #28 接受远程验收，不将基线绿灯代用。
+
+- [x] 清理前 HEAD `4ef40072f4b258d394d409562f72e372faed05a6` 的
+  [GrantTrace CI 37250719546](https://github.com/ysc070528/granttrace/actions/runs/37250719546) 与
+  [CodeQL 37250719536](https://github.com/ysc070528/granttrace/actions/runs/37250719536)
+  已真实运行，均为 `completed / success`。
+- [x] 该 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit 与 CodeQL 全部通过；
+  完整测试 **560 tests OK**，Python 3.12 的 branch-aware coverage **85.27%**，80% 门槛保留。
+
+这些成功记录仅对应上述清理前 HEAD。本次仅更新文档、取消旧资产跟踪，不重新构建或安装；
+新提交会自动再次触发 CI / CodeQL。合并前必须按
+[PR #28 Checks](https://github.com/ysc070528/granttrace/pull/28/checks) 核对最新实际 HEAD
+及对应运行，等待 CI / CodeQL 和全部门禁再次成功，不用旧 HEAD 的结果代替。
+当前仍未创建 v2.5.1 tag、GitHub Release，仍未发布 PyPI 2.5.1。
+
+正式发布的最终源码须包含本轮修复，再核实 exact commit、远程门禁及最终资产。
+准确结果与范围见 [Ready for release 收尾验收](../VERIFICATION.md#2026-10-05-v251-ready-for-release-收尾验收)。
+
+---
+
 # v2.5.1 发布准备与发布前验收清单
 
 这是 **release preparation**：正式源码版本为 `2.5.1`，
 尚未创建 v2.5.1 tag / GitHub Release，尚未上传或发布 PyPI。
 当前已发布 stable 仍为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)。
 
-README 的 `Stable: v2.5.1` 及相关 Release / PyPI 链接是本轮发布准备的前置展示；正式发布完成前，实际已发布稳定版仍为 v2.5.0。
+Release Prep 阶段曾前置展示 README 的 `Stable: v2.5.1` 及发布链接；当前 README 已改为实际已发布的 stable v2.5.0，源码 2.5.1 与正式发布状态分别说明。
 本轮准备发布已合并 maintenance 修复，不新增功能；历史 release、tag 和资产保持不变。
 
 ## v2.5.1 Release source
@@ -72,10 +117,10 @@ CodeQL analysis `1889266959` 实际分析 PR merge commit
 最新状态以 [PR #27 Checks](https://github.com/ysc070528/granttrace/pull/27/checks) 为准。
 最终 HEAD 的 exact SHA 与对应运行记录见 PR 正文；首次提交成功不能代替该验证。
 
-- [x] 创建 Release Prep PR，保留开放并等待人工 review。
+- [x] 创建 [Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27)，现已合并。
 - [x] 首次 HEAD 的 Python 3.9 / 3.12 / 3.14、Mypy、Ruff、Runtime dependency audit、CodeQL 全部通过。
-- [ ] 人工审查并合并 Release Prep PR。
-- [ ] 核对最终 main exact 40-char SHA，以及 main CI / CodeQL。
+- [x] Release Prep PR #27 已合并；main 为 `c913f19a7331dbd291332f9c7dfb7244f45fb2d3`。
+- [x] 核对 PR #27 合并后的 main `c913f19a7331dbd291332f9c7dfb7244f45fb2d3`，以及 [CI 37220855716](https://github.com/ysc070528/granttrace/actions/runs/37220855716) / [CodeQL 37220855877](https://github.com/ysc070528/granttrace/actions/runs/37220855877)；它们只验证本轮收尾修复前的合并基线。
 - [ ] 基于最终 main / tagged source 核实正式 wheel / sdist / SHA256SUMS；本轮分支构建 hash 不能当作最终 Release hash。
 - [ ] 经明确授权创建 annotated tag `v2.5.1`，确认精确指向最终 main。
 - [ ] 经明确授权创建正式 GitHub Release 并附加三个正式资产。
@@ -92,6 +137,8 @@ GrantTrace v2.5.1 prepares the maintenance fixes merged in PR #26: safer Merge P
 recovery checks, array record comparison corrections, known-credential redaction,
 report/input overwrite protection, local and conditional schema handling, and
 configuration/spec and parameter validation with canonical legacy scalar compatibility.
+The final cleanup also preserves Swagger 2.0 `uniqueItems` constraints so duplicate
+configured arrays are rejected before any request is sent.
 Default read-only auditing and explicit PATCH opt-in, independent readback and rollback
 verification remain in place. No new detection capabilities are added.
 This is release preparation; no v2.5.1 tag, GitHub Release or PyPI release has been created.
