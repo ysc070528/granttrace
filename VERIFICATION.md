@@ -1,5 +1,51 @@
 # GrantTrace 验收记录
 
+## 2026-10-05 v2.5.1 Ready for release 收尾验收
+
+本轮基于最新 main
+[`c913f19a7331dbd291332f9c7dfb7244f45fb2d3`](https://github.com/ysc070528/granttrace/commit/c913f19a7331dbd291332f9c7dfb7244f45fb2d3)，
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 已合并。
+源码版本保持 `2.5.1`；已发布 stable 仍为 v2.5.0。
+本轮不创建 tag / GitHub Release，不上传或发布 PyPI，不修改版本或增加接口能力。
+
+### 本轮验收状态
+
+Swagger 2.0 参数 schema 提取现保留 `uniqueItems`；重复数组在离线配置及请求前校验中被拒绝。
+该修复的 8 项定向回归已通过，包括拒绝重复值时真实 loopback **0 请求**的检查，
+以及有效值正例的实际 3 个读取请求；没有修改接口、序列化规则或请求数量约定。
+
+下方 PR #27 发布准备记录的基线为 **552 项测试通过、6/6 业务场景符合本机 fixture 真值**；
+这是已执行的基线记录，不代替本轮收尾变更后的实际结果。
+本轮本地发布前验收已完成，状态为 **Ready for release（未发布）**。
+以下结果均为收尾变更后的实际执行证据，源码版本保持 2.5.1。
+
+| 本轮检查 | 实际结果 |
+|---|---|
+| 完整 pytest | **560 passed**，另有 **860 subtests passed**；新增 8 个回归方法 |
+| 定向 schema / generator / parameter / config-spec / CLI / SARIF / onboarding / cURL 回归 | **218 passed**，另有 **522 subtests passed** |
+| mypy / Ruff | mypy 18 个源码文件 **0 issues**；仓库根目录 `Ruff check .` 通过 |
+| 业务场景 | **6/6** 符合隔离本机 fixture 真值 |
+| JSON / YAML examples | read-only、active JSON、active YAML 均完整恢复数据库；finding 与既有预期一致 |
+| coverage erase / run unittest / report / XML / JSON | **560 tests OK**；branch-aware 总覆盖率 **85.27%**；4643 statements / 578 missing，2390 branches / 322 partial；XML / JSON 已生成，原 source、branch 与 80% 门槛保留 |
+| `python -m build --no-isolation` | 现有 setuptools 84 / wheel 0.48 满足构建依赖；生成 2.5.1 wheel / sdist，两者 `twine check --strict` PASS，没有上传 |
+| 本轮 wheel 独立安装 | `verify_install.py --wheel ... --wheelhouse ...` 使用本轮 wheel 与 PyYAML 6.0.3，在源码目录外 fresh virtual environment 通过 |
+| 安装后版本链 | CLI / runtime / importlib.metadata / wheel / JSON 均为 2.5.1；HTML 为 v2.5.1，实际 HTTP User-Agent 检查通过 |
+| installed demo / 本地计划 | read-only demo **0 PATCH**；active demo 1 BOLA / 1 Mass Assignment CONFIRMED，rollback verified、database restored、server stopped 均为 true；JSON / YAML plan 等价且 `requests_sent = 0` |
+
+合并基线 `c913f19a7331dbd291332f9c7dfb7244f45fb2d3` 的
+[main CI 37220855716](https://github.com/ysc070528/granttrace/actions/runs/37220855716) 与
+[CodeQL 37220855877](https://github.com/ysc070528/granttrace/actions/runs/37220855877) 成功。
+它们仅对应已合并基线，不覆盖本轮尚未提交的收尾修复。
+本轮是本地收尾，没有创建新提交 / PR，没有触发新的远程 CI。
+正式 tag / Release 所用的最终源码须包含本轮修复，再核实 exact commit、
+远程检查及最终 wheel / sdist / SHA256SUMS；不能将基线或本轮本地构建当作正式发布资产。
+
+README 的真实扫描示例均显式指定 target；SARIF 示例只指向明确授权的仓库
+`http://127.0.0.1:8080` 可丢弃 mock，默认 0 PATCH。
+README Stable / PyPI 链接指向已发布 v2.5.0，单独标明源码 2.5.1 尚未发布。
+
+下方继续保留各轮实际验收证据；v2.5.0 和更早版本历史原文不变。
+
 ## 2026-10-05 v2.5.1 发布前验收
 
 这是 **发布前验收**，不表示 v2.5.1 已创建 tag、GitHub Release 或发布到 PyPI。
@@ -10,7 +56,7 @@ Release Prep 分支为 `codex/v2.5.1-release`，源码版本统一为 `2.5.1`。
 只同步正式版本、发布说明、示例和验收记录，不新增检测能力。
 当前已发布的稳定版仍为 [v2.5.0](https://github.com/ysc070528/granttrace/releases/tag/v2.5.0)。
 
-README 的 `Stable: v2.5.1` 及相关 Release / PyPI 链接是本轮发布准备的前置展示；正式发布完成前，实际已发布稳定版仍为 v2.5.0。
+Release Prep 阶段曾前置展示 README 的 `Stable: v2.5.1` 及发布链接；当前 README 已改为实际已发布的 stable v2.5.0，源码 2.5.1 与正式发布状态分别说明。
 
 ### 已合并的维护修复与保留边界
 
@@ -106,7 +152,7 @@ analysis 的 error / warning 数量为 0、结果为空，PR ref 查询的 open 
 
 本轮所有 API 目标为隔离本机 fixture，凭据为虚构数据；
 通过所列验收不证明生产 API 零误报、完整授权覆盖或完全安全。
-Release Prep PR 等待人工 review，不自动合并。
+[Release Prep PR #27](https://github.com/ysc070528/granttrace/pull/27) 已合并，main 为 `c913f19a7331dbd291332f9c7dfb7244f45fb2d3`；这表示发布准备源码已合并，不表示 v2.5.1 已正式发布。
 未创建新 tag / GitHub Release，未发布或重新发布 PyPI。
 下方 v2.5.0 和更早验收保留原文；其中“当前”“未发布”“待复核”均指各轮历史状态。
 

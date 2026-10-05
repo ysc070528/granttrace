@@ -9,6 +9,7 @@
 - Harden report target/metadata redaction for known credentials and prevent report outputs from overwriting specification, configuration, or loaded local `$ref` inputs.
 - Improve local and conditional schema resolution plus configuration-to-spec operation validation.
 - Preserve legacy v2.5.0 scalar parameter configurations while applying strict schema-aware normalization and validation for canonical integer, number, and boolean values.
+- Preserve Swagger 2.0 `uniqueItems` parameter constraints during schema extraction so duplicate configured arrays fail validation before requests.
 
 ## 2.5.0 - 2026-10-04
 

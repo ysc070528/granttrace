@@ -76,6 +76,7 @@ class SmartDataGenerator:
         "pattern",
         "minItems",
         "maxItems",
+        "uniqueItems",
         "items",
         "nullable",
     }
