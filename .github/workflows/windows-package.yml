@@ -36,7 +36,7 @@ jobs:
       - name: Build folder bundle, ZIP and SHA256
         run: python scripts/build_windows_portable.py
       - name: Verify extracted portable outside checkout and Python PATH
-        run: python scripts/verify_windows_portable.py --zip dist/GrantTrace-v2.5.1-Windows-x64.zip --output dist/windows-portable-verification.json
+        run: python scripts/verify_windows_portable.py --zip dist/GrantTrace-v2.5.2-Windows-x64.zip --output dist/windows-portable-verification.json
       - name: Record portable build evidence
         shell: pwsh
         run: |
@@ -48,11 +48,11 @@ jobs:
       - name: Upload verified portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: GrantTrace-v2.5.1-Windows-x64
+          name: GrantTrace-v2.5.2-Windows-x64
           retention-days: 30
           if-no-files-found: error
           path: |
-            dist/GrantTrace-v2.5.1-Windows-x64.zip
+            dist/GrantTrace-v2.5.2-Windows-x64.zip
             dist/SHA256SUMS.txt
             dist/windows-portable-build.json
             dist/windows-portable-verification.json

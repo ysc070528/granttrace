@@ -1,4 +1,27 @@
-# v2.5.1 当前公开发布与分发状态
+# v2.5.2 文档与分发元数据同步发布准备
+
+- [x] 从包含 PR #30 最新 README 的 main `0b9c117f4e2d6187dc2f1fb64becb68d2e887fc5` 创建独立分支 `release/v2.5.2-docs-sync`。
+- [x] 项目、runtime、固定版本断言、Windows 启动器 / 说明 / 构建与验证脚本 / artifact 名称同步为 2.5.2。
+- [x] 发布 workflow 只追加 v2.5.2 元数据选项，保留现有触发、历史版本支持和发布门禁。
+- [x] CHANGELOG 明确 documentation / distribution metadata maintenance release；检测逻辑、安全模型、默认只读和 CLI 语义不变。
+- [x] 保留当前 README 的 Windows、SmartScreen、macOS / Linux、Mermaid 和授权说明；long description 不含指定的过时发布文案。
+- [x] 全量 560 tests、85.27% branch-aware coverage、Mypy、Ruff、6 个 business scenarios 和 JSON / YAML 恢复验证通过。
+- [x] 新 wheel / sdist 构建与 twine strict 通过；两者的 long description 均为当前 README，源码外安装验证通过。
+- [x] Windows x64 ZIP 和 SHA256SUMS.txt 构建成功，既有 portable smoke 全部通过；范围与限制见 [本轮验收](../VERIFICATION.md#2026-10-05-v252-文档与分发元数据同步验收)。
+
+最终新 HEAD 的 CI / CodeQL / Windows 工作流结果见本轮 PR，不使用历史结果代替。
+以下发布动作必须等待维护者人工确认，本轮不执行：
+
+- [ ] 人工审查并合并本轮 PR。
+- [ ] 在确认最终 main 与远程检查后创建 v2.5.2 tag / GitHub Release。
+- [ ] 人工确认后发布 PyPI 2.5.2，并核对页面版本、long description 与正式 Windows 附件。
+
+现有 v2.5.1 tag / Release / PyPI 与资产保持不变。下方是对应时点的完整历史记录，
+不是要求重新发布或重复执行历史步骤。
+
+---
+
+# v2.5.1 公开发布与分发状态（历史快照）
 
 - [x] [GitHub v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) 已正式存在。
 - [x] Release 已提供 `GrantTrace-v2.5.1-Windows-x64.zip` 和 `SHA256SUMS.txt`。

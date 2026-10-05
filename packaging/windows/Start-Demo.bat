@@ -5,7 +5,7 @@ chcp 65001 >nul
 pushd "%~dp0"
 if errorlevel 1 goto directory_failed
 
-echo GrantTrace v2.5.1
+echo GrantTrace v2.5.2
 echo 正在运行内置 Demo，请稍候。
 echo Demo 仅访问本机内置模拟环境，无需安装 Python。
 echo.
