@@ -5,9 +5,9 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**Stable:** [v2.5.1](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) · [PyPI 2.5.1](https://pypi.org/project/granttrace/2.5.1/)
+**源码 / 包元数据版本：2.5.2** · [GitHub Releases](https://github.com/ysc070528/granttrace/releases) · [PyPI](https://pypi.org/project/granttrace/)
 
-源码、GitHub 和 PyPI 正式版本均为 **2.5.1**，Windows 便携版已正式提供。
+Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -17,15 +17,15 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 ## Windows 用户：解压后双击体验
 
-**推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 从官方 [v2.5.1 Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.1) 下载：
+**推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 从官方 [GitHub Release](https://github.com/ysc070528/granttrace/releases/latest) 选择对应版本下载：
 
-1. 下载 [GrantTrace-v2.5.1-Windows-x64.zip](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/GrantTrace-v2.5.1-Windows-x64.zip)，将整个 ZIP 解压到一个普通文件夹。
+1. 下载 Release 中的 Windows x64 ZIP（2.5.2 对应文件名为 **`GrantTrace-v2.5.2-Windows-x64.zip`**），将整个 ZIP 解压到一个普通文件夹。
 2. 打开解压后的文件夹，双击 **`Start-Demo.bat`**；保留旁边的程序和依赖文件。
 3. 查看自动打开的 HTML 报告；若未打开，按启动器打印的 HTML 路径手动打开。HTML / JSON 保存在解压目录的 `granttrace-demo/session-*/run-*/`。Demo 只使用内置、可丢弃的 `127.0.0.1` 靶场，结束时关闭靶场并核验数据恢复。
 
-不要直接在 ZIP 内运行启动器。便携包固定为 GrantTrace **2.5.1**；程序、启动器和报告在解压目录内使用，不需要修改系统 PATH。维护者的构建与验收步骤见 [Windows 便携包说明](docs/windows-portable.md)。
+不要直接在 ZIP 内运行启动器。便携包版本以包内 `README.txt` 和 `.\granttrace.exe --version` 为准；程序、启动器和报告在解压目录内使用，不需要修改系统 PATH。维护者的构建与验收步骤见 [Windows 便携包说明](docs/windows-portable.md)。
 
-Windows 便携程序尚未进行代码签名，部分系统可能显示 Microsoft Defender SmartScreen 或“发布者未知”提示。请只从官方 GitHub Release 下载，并使用 [SHA256SUMS.txt](https://github.com/ysc070528/granttrace/releases/download/v2.5.1/SHA256SUMS.txt) 核对完整性。
+Windows 便携程序尚未进行代码签名，部分系统可能显示 Microsoft Defender SmartScreen 或“发布者未知”提示。请只从官方 GitHub Release 下载，并使用同一 Release 的 **`SHA256SUMS.txt`** 核对完整性。
 
 ## macOS / Linux 用户：使用 Python 安装
 

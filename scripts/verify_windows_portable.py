@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from zipfile import ZipFile
 
 
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 PACKAGE = f"GrantTrace-v{VERSION}-Windows-x64"
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -234,7 +234,7 @@ def main():
         outside = Path(temporary).resolve()
         require(not outside.is_relative_to(ROOT), "Portable verification must run outside the source checkout")
         for label, suffix in (
-            ("spaces", Path("Test User") / "Desktop" / "GrantTrace v2.5.1"),
+            ("spaces", Path("Test User") / "Desktop" / "GrantTrace v2.5.2"),
             ("chinese_and_spaces", Path("安全工具") / "GrantTrace 测试"),
         ):
             destination = outside / suffix

@@ -1,5 +1,44 @@
 # GrantTrace 验收记录
 
+## 2026-10-05 v2.5.2 文档与分发元数据同步验收
+
+基线为已合并 PR #30 的 main `0b9c117f4e2d6187dc2f1fb64becb68d2e887fc5`，
+分支为 `release/v2.5.2-docs-sync`。这是 documentation / distribution metadata
+maintenance release 准备；只同步版本、当前 README 和 Windows 分发元数据。
+与 v2.5.1 tag / 本轮 main 相比，核心目录只有 `core.__version__` 从
+`2.5.1` 改为 `2.5.2`；BOLA / IDOR / Mass Assignment、安全模型、默认只读、
+CLI 语义与其他产品代码完全不变。唯一测试改动是已有固定版本断言同步。
+
+### 本轮本地实际结果
+
+| 检查 | 结果 |
+|---|---|
+| 全量测试与 configured branch-aware coverage | Windows CPython 3.14.5：560 tests OK，无跳过；85.27%，通过 80% 门槛 |
+| Mypy / Ruff | 18 个源码文件无类型问题；Ruff 全部通过 |
+| Business scenarios | 6/6 通过；误报、漏报、不确定均为 0 |
+| JSON / YAML 示例 | 只读与 active 均通过；数据库完整恢复、rollback 核验和统计等价均通过 |
+| wheel / sdist | `granttrace-2.5.2-py3-none-any.whl` 与 `granttrace-2.5.2.tar.gz` 构建成功；twine strict 均 PASS |
+| README / PyPI long description | wheel METADATA 与 sdist PKG-INFO 的 Markdown 正文均等于当前 README；sdist README 字节相同；无本轮指定的旧发布状态文案 |
+| 包内容 | wheel 的 28 个 RECORD 记录核验通过，23 个产品 / demo 资源文件与源码字节一致；sdist 无 dist、虚拟环境、旧发布资产或本地配置 |
+| 源码外 fresh venv 安装 | CLI、project、wheel、installed metadata / runtime 均为 2.5.2；只读零 PATCH，active / Demo 读回、恢复、服务关闭、JSON / YAML 离线计划均通过 |
+| Windows x64 portable | ZIP 构建成功；两种真实解压路径下的 CLI、active / readonly Demo、YAML dry-run、BAT、恢复与独立 TCP / 进程检查均通过 |
+
+本地 Windows 文件为 `dist/v252-windows/GrantTrace-v2.5.2-Windows-x64.zip`，
+SHA256 为 `4bb273ae13f55f95c6ce4416aee47f3238bc560f6fa4d693507d7a3ce3f665ad`；
+构建 JSON、smoke JSON、SHA256SUMS.txt 与独立 Get-FileHash 一致。
+这是基线 commit 上的预提交工作树构建（`source_tree_dirty=true`），
+不冒充最终 PR HEAD 的构建。Windows 11 x64 实测清除了子进程的 Python PATH / 环境，
+并在源码外运行；未做干净无 Python 虚拟机、人工鼠标双击、浏览器视觉或 SmartScreen 实测。
+
+README 保留 PR #30 的新用户说明，使用通用官方 Release / PyPI 页面并标明源码 / 包元数据
+版本 2.5.2，不提前声称该版本已发布。预览图仍固定在实际存在且未变的 v2.5.1 tag。
+已发布 v2.5.1 的 tag、Release 及其附件、PyPI、Topics、SECURITY.md 均未改动。
+本轮未创建 v2.5.2 tag / GitHub Release，未发布 PyPI，也未执行 workflow_dispatch。
+
+最终新 HEAD 的 CI、CodeQL 和 Windows 工作流以本次 PR 的实际运行记录为准；
+本地与历史绿灯不替代该 HEAD 的远程检查。日志和构建证据只存放于被忽略的 dist。
+下方完整保留各轮历史事实；历史版本的“当前”“未发布”“待添加”均指当时状态。
+
 ## 2026-10-05 v2.5.1 公开文档与当前分发状态
 
 本轮基于 main `0214905dc43f2b50cf0c2c93834091f72276e798`，

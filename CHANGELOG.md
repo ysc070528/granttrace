@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.2 - 2026-10-05
+
+### Maintenance
+
+- Documentation / distribution metadata maintenance release: package the current
+  README for the PyPI project page, retaining the corrected Windows download,
+  unsigned-program notice, macOS / Linux installation and workflow explanation.
+- Align package/runtime versions and Windows portable filenames, launcher,
+  bundled instructions and release workflow metadata at `2.5.2`.
+- No changes to BOLA / IDOR / Mass Assignment detection, the security model,
+  default read-only behavior, CLI semantics or core implementation.
+
 ## 2.5.1 - 2026-10-05
 
 ### Fixed

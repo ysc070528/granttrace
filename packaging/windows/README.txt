@@ -1,4 +1,4 @@
-GrantTrace v2.5.1
+GrantTrace v2.5.2
 =================
 
 第一次使用：
@@ -13,6 +13,6 @@ GrantTrace v2.5.1
 这是未签名的便携程序，请核对项目提供的 SHA256SUMS.txt。
 
 官方发布页：
-https://github.com/ysc070528/granttrace/releases/tag/v2.5.1
+https://github.com/ysc070528/granttrace/releases
 项目主页：
 https://github.com/ysc070528/granttrace

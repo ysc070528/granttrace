@@ -1,4 +1,4 @@
-"""Build the v2.5.1 Windows x64 folder bundle and ZIP; never publish it."""
+"""Build the v2.5.2 Windows x64 folder bundle and ZIP; never publish it."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 PACKAGE_NAME = f"GrantTrace-v{VERSION}-Windows-x64"
 
 
@@ -32,7 +32,7 @@ def check_build_environment() -> None:
     from core import __version__
 
     if __version__ != VERSION or importlib.metadata.version("granttrace") != VERSION:
-        raise RuntimeError("Source and installed GrantTrace must both be version 2.5.1")
+        raise RuntimeError("Source and installed GrantTrace must both be version 2.5.2")
     if importlib.metadata.version("pyinstaller") != "6.22.3":
         raise RuntimeError("Install packaging/windows/requirements-build.txt before building")
 
