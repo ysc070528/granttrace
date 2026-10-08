@@ -13,6 +13,8 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
+默认扫描会在请求前跳过具有明显状态变更语义的 GET，包括独立读回；静态规则无法保证发现所有副作用，仍需人工核对规范和计划。拒绝响应、授权证据及覆盖率的具体边界见 [授权审计加固说明](docs/authorization-audit-hardening.md)。
+
 仅对明确获得授权的系统进行测试；主动写测试仅应在可丢弃、隔离的测试资源上启用。
 
 ## Windows 用户：解压后双击体验

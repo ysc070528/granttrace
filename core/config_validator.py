@@ -1576,7 +1576,9 @@ class ConfigValidator:
                 else:
                     for p in paths:
                         try:
-                            path_parts(p)
+                            # BOLA evidence paths support array wildcards. Use a
+                            # representative index for syntax validation only.
+                            path_parts(p.replace("[]", "[0]"))
                         except ValueError as exc:
                             issues.append(
                                 ConfigIssue(

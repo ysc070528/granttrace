@@ -44,6 +44,24 @@ class ResponseDiffEngine:
         "未登录",
         "需要登录",
     )
+    # Full-message grammar only: a denial prefix must not conceal a reflected
+    # credential, business value, or an unknown explanatory suffix.
+    AUTH_DENIAL_PATTERNS = (
+        r"(?:(?:jwt|bearer|access|authentication|auth) )?token (?:is |was |has )?"
+        r"(?:required|missing|invalid|expired|not provided|not valid|not found)",
+        r"(?:missing|invalid|expired) (?:(?:jwt|bearer|access|authentication|auth) )?token",
+        r"jwt (?:is |has )?(?:required|missing|invalid|expired)",
+        r"(?:jwt|token|jwt token) (?:signature )?(?:verification|validation) failed",
+        r"authentication (?:is )?(?:required|failed)",
+        r"(?:authentication )?credentials (?:are |were )?"
+        r"(?:required|missing|invalid|expired|not provided)",
+        r"(?:invalid|bad|missing) (?:authentication )?credentials",
+        r"(?:insufficient|inadequate) (?:permissions?|privileges|scope)",
+        r"(?:you are not authorized|you do not have permission|not authorized) "
+        r"to (?:access|view) (?:this|the) resource",
+        r"(?:令牌|token|jwt|jwt令牌)(?:已)?(?:缺失|无效|失效|过期)",
+        r"(?:缺少|需要)(?:有效的)?(?:令牌|token|jwt|jwt令牌)",
+    )
     ERROR_STATUS_WORDS = {"error", "fail", "failed", "failure", "denied"}
     ERROR_VALUE_KEYS = {
         "error",
@@ -135,8 +153,21 @@ class ResponseDiffEngine:
         return None
 
     @classmethod
+    def _is_auth_denial_message(cls, value: Any) -> bool:
+        """Recognize a complete authentication rejection, never a substring."""
+        if not isinstance(value, str):
+            return False
+        normalised = re.sub(r"\s+", " ", value.strip().lower()).rstrip(".!?。！？")
+        if normalised in cls.AUTH_ERROR_WORDS:
+            return True
+        return any(re.fullmatch(pattern, normalised) for pattern in cls.AUTH_DENIAL_PATTERNS)
+
+    @classmethod
     def _detect_nested_soft_error(cls, data: Any) -> Optional[Tuple[str, str]]:
         """Inspect response envelopes, never arbitrary records or historical logs."""
+        if cls._is_auth_denial_message(data):
+            return cls.RESPONSE_AUTH_DENIED, "业务鉴权拒绝文本"
+
         def envelope_fields(value: Any, prefix: str = ""):
             if isinstance(value, dict):
                 for raw_key, child in value.items():
@@ -159,7 +190,7 @@ class ResponseDiffEngine:
                 return cls.RESPONSE_AUTH_DENIED, f"业务鉴权错误码: {path}={value}"
 
             if key in cls.MESSAGE_KEYS or key in cls.CODE_KEYS:
-                if isinstance(value, str) and value.strip().lower() in cls.AUTH_ERROR_WORDS:
+                if cls._is_auth_denial_message(value):
                     return cls.RESPONSE_AUTH_DENIED, f"业务鉴权拒绝包装: {path}"
 
         for path, key, value in fields:
@@ -184,7 +215,9 @@ class ResponseDiffEngine:
             if key in cls.ERROR_VALUE_KEYS:
                 if isinstance(value, str):
                     if value.strip() and value.strip().lower() not in {"none", "null", "false", "0"}:
-                        return cls.RESPONSE_APPLICATION_ERROR, f"业务错误字段: {path}={value}"
+                        # A server error can echo credentials or private values.
+                        # Keep the field location as evidence, not its content.
+                        return cls.RESPONSE_APPLICATION_ERROR, f"业务错误字段: {path} 非空"
                 elif value:
                     return cls.RESPONSE_APPLICATION_ERROR, f"业务错误字段: {path} 非空"
 
@@ -327,6 +360,26 @@ class ResponseDiffEngine:
         assessment = cls._assess_response(status_code, body_str)
         return assessment["is_error"], assessment["reason"] if assessment["is_error"] else ""
 
+    @staticmethod
+    def _tracing_scalar_is_clean(key: str, value: Any) -> bool:
+        """Permit bounded tracing syntax, not arbitrary text under a trace key."""
+        if type(value) in (int, float):
+            return True  # Strict JSON parsing has already rejected non-finite numbers.
+        if not isinstance(value, str) or len(value) > 128:
+            return False
+        if key == "timestamp":
+            return any(re.fullmatch(pattern, value) for pattern in (
+                r"[+-]?\d+(?:\.\d+)?",
+                r"\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}:\d{2}"
+                r"(?:\.\d{1,9})?(?:[Zz]|[+-]\d{2}:?\d{2})?)?",
+                r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} "
+                r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+                r"\d{4} \d{2}:\d{2}:\d{2} (?:GMT|UTC)",
+            ))
+        # UUIDs, hexadecimal trace IDs and ordinary bounded request IDs. A
+        # credential, JSON document, assignment or prose is not a tracing ID.
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value))
+
     @classmethod
     def _denial_body_is_clean(cls, assessment: Dict[str, Any], body: str) -> bool:
         """Accept only a recognizable rejection envelope without business content.
@@ -338,24 +391,41 @@ class ResponseDiffEngine:
             return True
         data = assessment["data"]
         if data is None:
-            return str(body).strip().lower() in cls.AUTH_ERROR_WORDS
+            return cls._is_auth_denial_message(body)
+        if isinstance(data, str):
+            return cls._is_auth_denial_message(data)
 
         def clean(value: Any, key: str = "") -> bool:
+            known_keys = (
+                cls.RESPONSE_WRAPPER_KEYS | cls.CODE_KEYS | cls.MESSAGE_KEYS
+                | cls.ERROR_VALUE_KEYS | {"success", "meta", "metadata", "timestamp",
+                                          "request_id", "requestid", "trace_id", "traceid"}
+            )
+            if key and key not in known_keys:
+                return False
             if isinstance(value, dict):
+                if key and key not in cls.RESPONSE_WRAPPER_KEYS | {"meta", "metadata"}:
+                    return False
+                if key in {"meta", "metadata"}:
+                    return all(
+                        cls._normalise_key(raw) in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}
+                        and clean(child, cls._normalise_key(raw))
+                        for raw, child in value.items()
+                    )
                 return all(clean(child, cls._normalise_key(raw)) for raw, child in value.items())
             if isinstance(value, list):
                 return key in cls.RESPONSE_WRAPPER_KEYS and all(clean(child) for child in value)
             if value is None or value == "":
                 return True
             if key in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}:
-                return isinstance(value, (str, int, float))
+                return cls._tracing_scalar_is_clean(key, value)
             if key in cls.CODE_KEYS:
                 return isinstance(value, (int, str)) and value in cls.AUTH_ERROR_CODES
             if key == "success":
                 return value in (False, 0, "0", "false")
             if key in cls.MESSAGE_KEYS or key in cls.ERROR_VALUE_KEYS:
-                return isinstance(value, str) and value.strip().lower() in (
-                    set(cls.AUTH_ERROR_WORDS) | cls.ERROR_STATUS_WORDS
+                return cls._is_auth_denial_message(value) or (
+                    isinstance(value, str) and value.strip().lower() in cls.ERROR_STATUS_WORDS
                 )
             return False
 
@@ -562,6 +632,7 @@ class ResponseDiffEngine:
         visitor_self_value_similarity = 0.0
         visitor_self_shared_ids: Set[Tuple[str, str]] = set()
         self_values: Set[Tuple[str, str]] = set()
+        self_ids: Set[Tuple[str, str]] = set()
         if visitor_self and visitor_self["kind"] == cls.RESPONSE_VALID:
             self_values = cls._meaningful_leaf_pairs(visitor_self["data"])
             self_ids = cls._resource_identifier_pairs(visitor_self["data"], resource_id_paths)
@@ -572,7 +643,7 @@ class ResponseDiffEngine:
             visitor_self_shared_ids = visitor_ids.intersection(self_ids)
         owner_only_shared_ids = shared_ids.difference(visitor_self_shared_ids)
 
-        return {
+        evidence = {
             "responses": {
                 "owner": cls._assessment_evidence(owner),
                 "visitor_cross": cls._assessment_evidence(visitor),
@@ -602,8 +673,50 @@ class ResponseDiffEngine:
             "visitor_self_exact_match": visitor_self_exact_match,
             "visitor_self_value_similarity": round(visitor_self_value_similarity, 6),
             "visitor_self_shared_resource_identifier_count": len(visitor_self_shared_ids),
+            "owner_baseline_valid": owner["kind"] == cls.RESPONSE_VALID,
+            "visitor_cross_baseline_valid": visitor["kind"] == cls.RESPONSE_VALID,
+            "visitor_self_baseline_valid": bool(
+                visitor_self and visitor_self["kind"] == cls.RESPONSE_VALID
+            ),
+            "owner_self_distinct": bool(
+                owner["kind"] == cls.RESPONSE_VALID
+                and visitor_self and visitor_self["kind"] == cls.RESPONSE_VALID
+                and (owner_values != self_values or owner_ids != self_ids)
+            ),
+            "object_access_signals": [],
             "confirmation_signals": [],
         }
+        # These candidates identify the selected Owner object; authentication
+        # denial and the configured permission policy remain separate gates.
+        if (
+            evidence["owner_baseline_valid"] and evidence["visitor_cross_baseline_valid"]
+            and evidence["visitor_self_baseline_valid"] and evidence["owner_self_distinct"]
+        ):
+            evidence["object_access_signals"] = cls._object_access_signals(evidence)
+        return evidence
+
+    @staticmethod
+    def _object_access_signals(evidence: Dict[str, Any]) -> list:
+        """Concrete object matches that survive the Visitor self comparison."""
+        if evidence["visitor_self_exact_match"] or (
+            evidence["owner_only_shared_resource_identifier_count"] == 0
+            and evidence["visitor_self_value_similarity"] > 0
+            and evidence["visitor_self_value_similarity"] >= evidence["value_similarity"]
+        ):
+            return []
+        signals = []
+        if evidence["exact_value_match"] and evidence["owner_specific_shared_value_count"] > 0:
+            signals.append("exact_business_value_match")
+        if evidence["owner_only_shared_resource_identifier_count"] > 0:
+            signals.append("matching_resource_identifier")
+        if (
+            evidence["value_similarity"] >= 0.75
+            and evidence["shared_value_count"] >= 2
+            and evidence["owner_specific_shared_value_count"] > 0
+            and evidence["value_similarity"] > evidence["visitor_self_value_similarity"] + 0.15
+        ):
+            signals.append("high_business_value_overlap")
+        return signals
 
     @staticmethod
     def _result(
@@ -613,6 +726,35 @@ class ResponseDiffEngine:
         evidence: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Create one stable result shape for every decision branch."""
+        missing = []
+        if verdict in {"LOW_SUSPICION", "INCONCLUSIVE"}:
+            if not evidence["owner_baseline_valid"]:
+                missing.append("owner_baseline")
+            if not evidence["visitor_self_baseline_valid"]:
+                missing.append("visitor_self_baseline")
+            elif evidence["owner_baseline_valid"] and not evidence["owner_self_distinct"]:
+                missing.append("distinct_visitor_self_resource")
+            if evidence["responses"]["anonymous"]["kind"] != "AUTH_DENIED":
+                missing.append("anonymous_denial_baseline")
+            elif evidence["anonymous_denial_body_clean"] is False:
+                missing.append("clean_anonymous_denial_body")
+            visitor_kind = evidence["responses"]["visitor_cross"]["kind"]
+            if visitor_kind == "AUTH_DENIED":
+                if evidence["visitor_denial_body_clean"] is False:
+                    missing.append("clean_visitor_denial_body")
+            elif not evidence["visitor_cross_baseline_valid"]:
+                missing.append("visitor_cross_response")
+            elif (
+                evidence["owner_baseline_valid"] and evidence["visitor_self_baseline_valid"]
+                and not evidence["object_access_signals"]
+            ):
+                missing.append("owner_resource_match")
+            if (
+                evidence["expected_public"] and not evidence["requires_auth"]
+                and evidence["responses"]["anonymous"]["kind"] == "VALID"
+            ):
+                missing.append("public_response_equivalence")
+        evidence["missing_evidence"] = missing
         return {
             "verdict": verdict,
             "confidence": float(confidence),
@@ -676,10 +818,29 @@ class ResponseDiffEngine:
         evidence["requires_auth"] = bool(requires_auth)
         evidence["trusted_resource_id_paths"] = sorted(trusted_paths)
         evidence["denial_body_conflict"] = False
+        evidence["visitor_denial_body_clean"] = (
+            cls._denial_body_is_clean(visitor, body_visitor) if visitor["is_auth_denial"] else None
+        )
+        evidence["anonymous_denial_body_clean"] = (
+            cls._denial_body_is_clean(anonymous, body_anon) if anonymous["is_auth_denial"] else None
+        )
+        evidence["anonymous_authentication_violation"] = bool(
+            requires_auth and anonymous["kind"] == cls.RESPONSE_VALID
+        )
 
         owner_values = cls._meaningful_leaf_pairs(owner["data"])
         visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
         anon_values = cls._meaningful_leaf_pairs(anonymous["data"])
+        evidence["anonymous_owner_value_match"] = bool(
+            owner["kind"] == cls.RESPONSE_VALID and anonymous["kind"] == cls.RESPONSE_VALID
+            and owner_values and owner_values == anon_values
+        )
+        evidence["anonymous_owner_identifier_match"] = bool(
+            owner["kind"] == cls.RESPONSE_VALID and anonymous["kind"] == cls.RESPONSE_VALID
+            and cls._resource_identifier_pairs(owner["data"], trusted_paths).intersection(
+                cls._resource_identifier_pairs(anonymous["data"], trusted_paths)
+            )
+        )
         evidence["anonymous_exact_match"] = bool(
             anonymous["data"] is not None and json_values_equal(anonymous["data"], visitor["data"])
         )
@@ -703,7 +864,7 @@ class ResponseDiffEngine:
             )
 
         if visitor["kind"] == cls.RESPONSE_AUTH_DENIED:
-            if not cls._denial_body_is_clean(visitor, body_visitor):
+            if not evidence["visitor_denial_body_clean"]:
                 evidence["denial_body_conflict"] = True
                 return cls._result(
                     "LOW_SUSPICION" if visitor_values else "INCONCLUSIVE",
@@ -729,7 +890,7 @@ class ResponseDiffEngine:
                     + f"：{anonymous['reason']}",
                     evidence,
                 )
-            if anonymous["kind"] == cls.RESPONSE_AUTH_DENIED and not cls._denial_body_is_clean(anonymous, body_anon):
+            if anonymous["kind"] == cls.RESPONSE_AUTH_DENIED and not evidence["anonymous_denial_body_clean"]:
                 evidence["denial_body_conflict"] = True
                 return cls._result(
                     "LOW_SUSPICION", 0.8,
@@ -798,7 +959,7 @@ class ResponseDiffEngine:
                 evidence,
             )
 
-        if not cls._denial_body_is_clean(anonymous, body_anon):
+        if not evidence["anonymous_denial_body_clean"]:
             evidence["denial_body_conflict"] = True
             return cls._result(
                 "LOW_SUSPICION", 0.8,
@@ -823,17 +984,7 @@ class ResponseDiffEngine:
 
         # Confirmation requires concrete values or a trusted object identifier. Structural
         # key similarity remains a diagnostic metric and never contributes a signal.
-        if evidence["exact_value_match"] and evidence["owner_specific_shared_value_count"] > 0:
-            evidence["confirmation_signals"].append("exact_business_value_match")
-        if evidence["owner_only_shared_resource_identifier_count"] > 0:
-            evidence["confirmation_signals"].append("matching_resource_identifier")
-        if (
-            evidence["value_similarity"] >= 0.75
-            and evidence["shared_value_count"] >= 2
-            and evidence["owner_specific_shared_value_count"] > 0
-            and evidence["value_similarity"] > evidence["visitor_self_value_similarity"] + 0.15
-        ):
-            evidence["confirmation_signals"].append("high_business_value_overlap")
+        evidence["confirmation_signals"] = list(evidence["object_access_signals"])
 
         # If the cross-resource result is also exactly the visitor's own baseline,
         # the API may simply be ignoring the requested id and returning the caller's
