@@ -19,7 +19,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Tuple, Union
 
 from core import __version__
 from core.config_validator import ConfigValidator
@@ -38,6 +40,13 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         return None
+
+
+@dataclass(frozen=True)
+class _ReadSafetyCache:
+    parser: OpenAPIParser
+    routes: Tuple[Tuple[Pattern[str], Optional[Tuple[Tuple[str, str], ...]]], ...]
+    readbacks: Mapping[Tuple[str, str], Mapping[str, Any]]
 
 
 class APISentinelAuditor:
@@ -161,6 +170,8 @@ class APISentinelAuditor:
             "coverage_pct": 0.0,
             "conclusive_coverage_pct": 0.0,
         }
+        self._read_safety_cache_lock = threading.Lock()
+        self._read_safety_cache = self._build_read_safety_cache(self.parser)
 
     @staticmethod
     def _validate_target(target: str, allow_http: bool) -> None:
@@ -262,6 +273,37 @@ class APISentinelAuditor:
         charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace"), truncated
 
+    @staticmethod
+    def _build_read_safety_cache(parser: OpenAPIParser) -> _ReadSafetyCache:
+        routes = []
+        readbacks: Dict[Tuple[str, str], Mapping[str, Any]] = {}
+        for endpoint in parser.get_endpoints():
+            method, path = endpoint["method"], endpoint["path"]
+            shape = re.sub(r"\{[^}]+\}", "{}", path)
+            metadata = {key: endpoint[key] for key in (
+                "method", "path", "operation_id", "summary", "description", "spec_version", "parameters"
+            )}
+            readbacks.setdefault((method, shape), MappingProxyType(metadata))
+            if method in {"GET", "HEAD"}:
+                pattern = re.escape(path)
+                pattern = re.sub(r"\\\{[^}]+\\\}", r"[^/]+", pattern)
+                risk = read_only_risk(endpoint)
+                routes.append((re.compile(pattern), tuple(risk.items()) if risk else None))
+        return _ReadSafetyCache(parser, tuple(routes), MappingProxyType(readbacks))
+
+    def _read_safety_snapshot(self) -> _ReadSafetyCache:
+        # Specifications and references are load-once parser snapshots. Replacing
+        # the parser explicitly reloads safety metadata; arbitrary in-place edits
+        # of raw_spec are not a supported reload mechanism.
+        cache = self._read_safety_cache
+        if cache.parser is self.parser:
+            return cache
+        with self._read_safety_cache_lock:
+            if self._read_safety_cache.parser is not self.parser:
+                replacement = self._build_read_safety_cache(self.parser)
+                self._read_safety_cache = replacement
+            return self._read_safety_cache
+
     def _read_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
         """Check concrete routing semantics before transport or write baselines."""
         if str(method).upper() in {"GET", "HEAD"}:
@@ -270,16 +312,14 @@ class APISentinelAuditor:
             if base_path and request_path.startswith(base_path + "/"):
                 request_path = request_path[len(base_path):]
             request_paths = {request_path, urllib.parse.unquote(request_path)}
-            documented = []
-            for endpoint in self.parser.get_endpoints():
-                if endpoint["method"] not in {"GET", "HEAD"}:
-                    continue
-                pattern = re.escape(endpoint["path"])
-                pattern = re.sub(r"\\\{[^}]+\\\}", r"[^/]+", pattern)
-                if any(re.fullmatch(pattern, path) for path in request_paths):
-                    documented.append(endpoint)
-            candidates = documented or [{"method": method, "path": urllib.parse.unquote(request_path)}]
-            return next((risk for endpoint in candidates if (risk := read_only_risk(endpoint))), None)
+            documented = False
+            for pattern, risk in self._read_safety_snapshot().routes:
+                if any(pattern.fullmatch(path) for path in request_paths):
+                    documented = True
+                    if risk:
+                        return dict(risk)
+            if not documented:
+                return read_only_risk({"method": method, "path": urllib.parse.unquote(request_path)})
         return None
 
     def _http_request(
@@ -814,16 +854,16 @@ class APISentinelAuditor:
         # Keep declared semantic metadata even for an equivalent configured
         # template, so an unsafe readback is rejected during planning.
         mapping_shape = re.sub(r"\{[^}]+\}", "{}", str(mapping["path"]))
-        documented = next((candidate for candidate in self.parser.get_endpoints()
-                           if candidate["method"] == str(mapping.get("method", "GET")).upper()
-                           and re.sub(r"\{[^}]+\}", "{}", candidate["path"]) == mapping_shape), None)
+        documented = self._read_safety_snapshot().readbacks.get(
+            (str(mapping.get("method", "GET")).upper(), mapping_shape)
+        )
         # Semantic equivalence does not rename parameter metadata. Preserve the
         # historical fallback unless the declared template matches exactly.
         parameter_source = documented if documented and documented["path"] == str(mapping["path"]) else ep
         return {
             "method": str(mapping.get("method", "GET")).upper(),
             "path": str(mapping["path"]),
-            "parameters": mapping.get("parameters", parameter_source.get("parameters", [])),
+            "parameters": mapping["parameters"] if "parameters" in mapping else copy.deepcopy(parameter_source.get("parameters", [])),
             "spec_version": (documented or ep).get("spec_version", self.parser.raw_spec.get("openapi", self.parser.raw_spec.get("swagger", ""))),
             "operation_id": (documented or {}).get("operation_id", ""),
             "summary": (documented or {}).get("summary", ""),
