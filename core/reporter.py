@@ -28,6 +28,17 @@ class SecurityReportGenerator:
         "CONFIRMED": "确认漏洞", "SECURE": "所测检查通过", "PUBLIC": "允许公开访问",
         "AUTHORIZED": "按策略获准访问", "SUSPICIOUS": "可疑", "INCONCLUSIVE": "证据不足", "SKIPPED": "已跳过", "ERROR": "错误",
     }
+    REASON_CATEGORY_LABELS = {
+        "detector_unimplemented": "检测器尚未实现",
+        "safety_policy": "安全策略阻止执行",
+        "missing_resource_id": "缺少有效资源 ID",
+        "missing_baseline": "缺少身份或访问基线",
+        "not_applicable": "不适用当前检测类型",
+        "invalid_input": "配置或请求参数无效",
+        "insufficient_evidence": "已尝试请求但证据不足",
+        "conclusive": "已完成有效检查并获得确定结论",
+        "error": "检查错误",
+    }
 
     @staticmethod
     def _escape(value: Any) -> str:
@@ -37,6 +48,19 @@ class SecurityReportGenerator:
     def _json_pre(cls, value: Any) -> str:
         rendered = json.dumps(value, ensure_ascii=False, indent=2, default=str)
         return cls._escape(rendered)
+
+    @classmethod
+    def _execution_summary(cls, item: Dict[str, Any]) -> str:
+        evidence = item.get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        category = evidence.get("reason_category")
+        label = cls.REASON_CATEGORY_LABELS.get(str(category), str(category)) if category else "未记录执行分类"
+        attempts = evidence.get("requests_attempted")
+        if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts >= 0:
+            if category == "insufficient_evidence" and attempts == 0:
+                label = "证据不足，未尝试请求"
+            return f"执行分类：{label} · 请求尝试：{attempts} 次。"
+        return f"执行分类：{label} · 请求尝试：未记录；不能据此判断是否发送请求。"
 
     @classmethod
     def _summarize(cls, item: Dict[str, Any]) -> Dict[str, Any]:
@@ -53,12 +77,12 @@ class SecurityReportGenerator:
         resource = sanitize_url(str(target)) if target else "具体请求目标未记录"
         cwe = item.get("cwe")
         if check == "BOLA" or cwe == "CWE-639":
+            decision = evidence.get("decision_evidence")
+            decision = decision if isinstance(decision, dict) else {}
             if target and isinstance(evidence.get("visitor_cross"), dict):
                 summary = f"Visitor 身份访问配置为 Owner 的资源：{resource}。"
             else:
                 summary = "检查目标：Visitor 能否访问配置为 Owner 的资源；具体请求对照未记录。"
-            decision = evidence.get("decision_evidence")
-            decision = decision if isinstance(decision, dict) else {}
             signal_labels = {
                 "matching_resource_identifier": "双方响应的资源标识一致",
                 "exact_business_value_match": "双方响应的业务值一致",
@@ -80,6 +104,27 @@ class SecurityReportGenerator:
                 verification = "当前 Visitor 按配置获准读取所选 Owner 资源；仅适用于本次配置的身份与资源组合。"
             else:
                 verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
+            if decision.get("anonymous_authentication_violation") is True:
+                verification += "记录显示 Anonymous 在要求认证的接口取得有效响应；匿名访问与对象级授权分别评估。"
+                if (decision.get("anonymous_owner_value_match") is True
+                        or decision.get("anonymous_owner_identifier_match") is True):
+                    verification += "匿名响应与 Owner 响应存在相同业务值或可信资源标识。"
+            missing_labels = {
+                "owner_baseline": "有效 Owner 访问基线",
+                "visitor_self_baseline": "有效 Visitor 自有资源基线",
+                "distinct_visitor_self_resource": "与 Owner 不同的 Visitor 自有资源",
+                "anonymous_denial_baseline": "有效匿名拒绝基线",
+                "clean_anonymous_denial_body": "不含业务数据的匿名拒绝响应",
+                "clean_visitor_denial_body": "不含业务数据的 Visitor 拒绝响应",
+                "visitor_cross_response": "有效 Visitor 跨资源响应",
+                "owner_resource_match": "响应与 Owner 资源相符的具体证据",
+                "public_response_equivalence": "公开访问响应等价性证据",
+            }
+            missing = decision.get("missing_evidence")
+            if verdict in {"SUSPICIOUS", "INCONCLUSIVE"} and isinstance(missing, list):
+                labels = [missing_labels.get(code, code) for code in missing if isinstance(code, str)]
+                if labels:
+                    verification += "所缺证据：" + "；".join(labels) + "。"
             return {
                 "summary": summary, "verification": verification,
                 "remediation": "服务端按当前登录身份校验资源归属、团队共享和管理员权限；未获授权时拒绝返回资源数据。",
@@ -192,13 +237,55 @@ class SecurityReportGenerator:
             for label, value, color in cards
         )
 
+        accounting = (
+            "端点按 HTTP 方法与规范路径的组合计数；结果记录数可以多于端点数。"
+            "尝试覆盖率按至少尝试一次 HTTP 请求的端点计算，包含网络失败；"
+            "请求前的安全拦截、配置或参数失败不算请求尝试。"
+            "确定性覆盖率仅计 CONFIRMED、SECURE、PUBLIC 和 AUTHORIZED，"
+            "SUSPICIOUS 与 INCONCLUSIVE 不计入。两种覆盖率均以全部规范端点为分母，"
+            "确认漏洞数量不代表检测成功率。"
+        )
+        attempted_endpoints = stats.get("attempted_endpoints")
+        conclusive_endpoints = stats.get("conclusive_endpoints")
+        if all(isinstance(value, int) and not isinstance(value, bool) and value >= 0
+               for value in (attempted_endpoints, conclusive_endpoints)):
+            accounting += (
+                f"本次尝试端点 {attempted_endpoints}/{stats.get('total_endpoints', 0)}，"
+                f"确定性端点 {conclusive_endpoints}/{stats.get('total_endpoints', 0)}。"
+            )
+        else:
+            accounting = (
+                "此报告未记录端点级请求计数；覆盖率沿用已有统计，"
+                "不能从结果状态推断实际请求数量或重建覆盖率。"
+            ) + accounting
+        check_counts = (
+            f"检查结果记录 {stats.get('total_checks', len(results))} 条"
+            f"（包含单独记录的恢复核验结果）；"
+            f"已尝试的主检查 {stats.get('audited_count', '未记录')} 条，"
+            f"确定性主检查 {stats.get('conclusive_count', '未记录')} 条。"
+        )
+        verdict_counts = " · ".join(
+            f"{verdict}: {stats.get(key, '未记录')}"
+            for verdict, key in (
+                ("CONFIRMED", "confirmed"), ("SECURE", "secure_endpoints"),
+                ("PUBLIC", "public_endpoints"), ("AUTHORIZED", "authorized_endpoints"),
+                ("SUSPICIOUS", "suspicious_count"), ("INCONCLUSIVE", "inconclusive_count"),
+                ("SKIPPED", "skipped_count"), ("ERROR", "error_count"),
+            )
+        )
+        accounting_html = (
+            "<p class='meta' id='coverage-definition'>" + cls._escape(accounting) + "</p>"
+            "<p class='meta'>" + cls._escape(check_counts) + "</p>"
+            "<p class='meta' id='verdict-counts'>" + cls._escape(verdict_counts) + "</p>"
+        )
+
         warnings: List[str] = []
         if stats.get("error_count", 0):
             warnings.append("扫描中存在错误；不能把未完成的检查解释为安全。")
         if stats.get("inconclusive_count", 0):
             warnings.append("部分检查证据不足，需要补充有效资源、身份或读回配置。")
         if stats.get("skipped_count", 0):
-            warnings.append("部分检查被跳过；默认模式不会执行状态变更测试。")
+            warnings.append("部分检查被跳过；请按每条记录的执行分类和原因核对未覆盖范围。")
         if stats.get("suspicious_count", 0):
             warnings.append("存在可疑结果，尚未确认或排除风险，需要人工复核。")
         if not stats.get("conclusive_count", 0):
@@ -222,6 +309,7 @@ class SecurityReportGenerator:
                 f"<td><code>{cls._escape(item.get('endpoint', ''))}</code></td>"
                 f"<td><p class='result-summary'>{cls._escape(explanation['summary'])}</p>"
                 f"<p class='result-summary'>{cls._escape(explanation['verification'])}</p>"
+                f"<p class='meta'>{cls._escape(cls._execution_summary(item))}</p>"
                 f"<p class='meta'>依据：{cls._escape(item.get('reason', ''))}</p>"
                 "<details><summary>修复方向、复验步骤和证据</summary>"
                 f"{cls._guidance_html(explanation)}"
@@ -334,6 +422,7 @@ class SecurityReportGenerator:
     <span class="pill" style="background:#334155">v{cls._escape(__version__)}</span>
   </header>
   <section class="grid">{cards_html}</section>
+  {accounting_html}
   {warning_html}
   <div class="filters">
     <label for="endpoint-search">搜索端点

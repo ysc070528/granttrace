@@ -19,7 +19,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Tuple, Union
 
 from core import __version__
 from core.config_validator import ConfigValidator
@@ -30,6 +32,7 @@ from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
 from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
+from core.scan_safety import read_only_risk
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -37,6 +40,13 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         return None
+
+
+@dataclass(frozen=True)
+class _ReadSafetyCache:
+    parser: OpenAPIParser
+    routes: Tuple[Tuple[Pattern[str], Optional[Tuple[Tuple[str, str], ...]]], ...]
+    readbacks: Mapping[Tuple[str, str], Mapping[str, Any]]
 
 
 class APISentinelAuditor:
@@ -111,6 +121,7 @@ class APISentinelAuditor:
         self._rate_lock = threading.Lock()
         self._next_request_at = 0.0
         self._result_lock = threading.Lock()
+        self._request_accounting = threading.local()
         self._resource_locks: Dict[str, threading.Lock] = {}
         self._resource_locks_guard = threading.Lock()
 
@@ -143,6 +154,8 @@ class APISentinelAuditor:
             "total_checks": 0,
             "audited_count": 0,
             "conclusive_count": 0,
+            "attempted_endpoints": 0,
+            "conclusive_endpoints": 0,
             "confirmed": 0,
             "bola_confirmed": 0,
             "mass_assignment_confirmed": 0,
@@ -157,6 +170,8 @@ class APISentinelAuditor:
             "coverage_pct": 0.0,
             "conclusive_coverage_pct": 0.0,
         }
+        self._read_safety_cache_lock = threading.Lock()
+        self._read_safety_cache = self._build_read_safety_cache(self.parser)
 
     @staticmethod
     def _validate_target(target: str, allow_http: bool) -> None:
@@ -258,6 +273,55 @@ class APISentinelAuditor:
         charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace"), truncated
 
+    @staticmethod
+    def _build_read_safety_cache(parser: OpenAPIParser) -> _ReadSafetyCache:
+        routes = []
+        readbacks: Dict[Tuple[str, str], Mapping[str, Any]] = {}
+        for endpoint in parser.get_endpoints():
+            method, path = endpoint["method"], endpoint["path"]
+            shape = re.sub(r"\{[^}]+\}", "{}", path)
+            metadata = {key: endpoint[key] for key in (
+                "method", "path", "operation_id", "summary", "description", "spec_version", "parameters"
+            )}
+            readbacks.setdefault((method, shape), MappingProxyType(metadata))
+            if method in {"GET", "HEAD"}:
+                pattern = re.escape(path)
+                pattern = re.sub(r"\\\{[^}]+\\\}", r"[^/]+", pattern)
+                risk = read_only_risk(endpoint)
+                routes.append((re.compile(pattern), tuple(risk.items()) if risk else None))
+        return _ReadSafetyCache(parser, tuple(routes), MappingProxyType(readbacks))
+
+    def _read_safety_snapshot(self) -> _ReadSafetyCache:
+        # Specifications and references are load-once parser snapshots. Replacing
+        # the parser explicitly reloads safety metadata; arbitrary in-place edits
+        # of raw_spec are not a supported reload mechanism.
+        cache = self._read_safety_cache
+        if cache.parser is self.parser:
+            return cache
+        with self._read_safety_cache_lock:
+            if self._read_safety_cache.parser is not self.parser:
+                replacement = self._build_read_safety_cache(self.parser)
+                self._read_safety_cache = replacement
+            return self._read_safety_cache
+
+    def _read_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
+        """Check concrete routing semantics before transport or write baselines."""
+        if str(method).upper() in {"GET", "HEAD"}:
+            request_path = urllib.parse.urlsplit(url).path
+            base_path = urllib.parse.urlsplit(self.target_base_url).path.rstrip("/")
+            if base_path and request_path.startswith(base_path + "/"):
+                request_path = request_path[len(base_path):]
+            request_paths = {request_path, urllib.parse.unquote(request_path)}
+            documented = False
+            for pattern, risk in self._read_safety_snapshot().routes:
+                if any(pattern.fullmatch(path) for path in request_paths):
+                    documented = True
+                    if risk:
+                        return dict(risk)
+            if not documented:
+                return read_only_risk({"method": method, "path": urllib.parse.unquote(request_path)})
+        return None
+
     def _http_request(
         self,
         method: str,
@@ -266,6 +330,11 @@ class APISentinelAuditor:
         identity_name: str = "anonymous",
         content_type: str = "application/json",
     ) -> HTTPResult:
+        if getattr(self._request_accounting, "attempts", None) is None:
+            self._request_accounting.attempts = 0
+        risk = self._read_request_risk(method, url)
+        if risk:
+            return HTTPResult(status=0, body="", error=risk["safety_reason"])
         self._throttle()
         try:
             headers = {
@@ -278,6 +347,7 @@ class APISentinelAuditor:
                 headers["content-type"] = content_type
                 encoded_data = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
             request = urllib.request.Request(url, data=encoded_data, method=method, headers=headers)
+            self._request_accounting.attempts = (getattr(self._request_accounting, "attempts", None) or 0) + 1
             try:
                 response = self._opener.open(request, timeout=self.request_timeout)
             except urllib.error.HTTPError as exc:
@@ -411,13 +481,51 @@ class APISentinelAuditor:
         evidence: Optional[Dict[str, Any]] = None,
         finding: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        evidence = dict(evidence or {})
+        # Count transport attempts, including failed connections, rather than
+        # treating a local preflight conclusion as an executed check.
+        attempts = getattr(self._request_accounting, "attempts", None)
+        if attempts is None:
+            # Response records also support callers that provide an isolated
+            # transport fixture instead of using the built-in HTTP executor.
+            def response_count(value: Any) -> int:
+                if isinstance(value, dict):
+                    if {"status", "body", "sha256", "truncated"}.issubset(value):
+                        return 1
+                    return sum(response_count(child) for child in value.values())
+                if isinstance(value, list):
+                    return sum(response_count(child) for child in value)
+                return 0
+            attempts = response_count(evidence)
+        if getattr(self._request_accounting, "attempts", None) is not None:
+            evidence["requests_attempted"] = attempts
+        else:
+            evidence.setdefault("requests_attempted", attempts)
+        primary = check != "ROLLBACK"
+        attempted = evidence["requests_attempted"] > 0
+        conclusive = verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}
+        if "reason_category" not in evidence:
+            if verdict == Verdict.SKIPPED:
+                category = "detector_unimplemented" if check == "UNSUPPORTED" else "not_applicable"
+            elif verdict == Verdict.ERROR:
+                category = "error"
+            elif conclusive:
+                category = "conclusive"
+            else:
+                missing = evidence.get("decision_evidence", {}).get("missing_evidence", [])
+                category = "missing_baseline" if not attempted or any(
+                    item in missing for item in ("owner_baseline", "visitor_self_baseline", "distinct_visitor_self_resource")
+                ) else "insufficient_evidence"
+            evidence["reason_category"] = category
+        if primary:
+            self._request_accounting.attempts = None
         result = {
             "endpoint": self._operation_key(ep),
             "operation_id": ep.get("operation_id", ""),
             "check": check,
             "verdict": verdict.value,
             "reason": reason,
-            "evidence": evidence or {},
+            "evidence": evidence,
         }
         result = sanitize_evidence(result, self.include_sensitive_evidence, self._secret_values)
         if finding:
@@ -425,9 +533,9 @@ class APISentinelAuditor:
         with self._result_lock:
             self.results.append(result)
             self.stats["total_checks"] += 1
-            if verdict not in {Verdict.SKIPPED, Verdict.ERROR}:
+            if primary and attempted:
                 self.stats["audited_count"] += 1
-            if verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}:
+            if primary and attempted and conclusive:
                 self.stats["conclusive_count"] += 1
             if verdict == Verdict.CONFIRMED:
                 self.stats["confirmed"] += 1
@@ -465,18 +573,46 @@ class APISentinelAuditor:
         return mapping.get(str(raw).upper(), Verdict.INCONCLUSIVE)
 
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
+        if str(ep.get("method", "")).upper() != "GET":
+            self._record_result(ep, "BOLA", Verdict.SKIPPED,
+                                "BOLA read-only checks support GET only; no method substitution or request was made",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, "safety_signal": "method"})
+            return
+        risk = read_only_risk(ep)
+        if risk:
+            self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, **risk})
+            return
         path = ep["path"]
         parameters = ep.get("parameters", [])
         has_selector = "{" in path or any(item.get("in") == "query" for item in parameters)
         if not has_selector:
-            self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found")
+            self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found; this operation is not applicable to the current object-level detector",
+                                evidence={"reason_category": "not_applicable", "requests_attempted": 0})
             return
 
+        policy = self.bola_config.get(self._operation_key(ep), {})
+        validation = ConfigValidator.validate({"bola": {self._operation_key(ep): policy}})
+        if not validation.is_valid:
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
+                                "BOLA operation policy is invalid; run offline configuration validation; no request was sent",
+                                evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+            return
+        expected_access = policy.get("expected_visitor_access", "deny")
         try:
             owner_url = self._build_url(ep, "owner")
             visitor_self_url = self._build_url(ep, "visitor")
         except ParameterSerializationError as exc:
-            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc))
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
+                                evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+            return
+        risk = self._read_request_risk("GET", owner_url) or self._read_request_risk("GET", visitor_self_url)
+        if risk:
+            self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, **risk})
             return
         owner = self._http_request(ep["method"], owner_url, identity_name="owner")
         visitor_cross = self._http_request(ep["method"], owner_url, identity_name="visitor")
@@ -496,6 +632,7 @@ class APISentinelAuditor:
             request_results["visitor_self"] = visitor_self
         transport_errors = [f"{name}: {item.error}" for name, item in request_results.items() if item.error]
         evidence: Dict[str, Any] = {
+            "requests_attempted": len(request_results),
             "target_url": owner_url,
             "visitor_self_url": visitor_self_url if visitor_self is not None else None,
             **{name: self._safe_body(item) for name, item in request_results.items()},
@@ -508,12 +645,6 @@ class APISentinelAuditor:
             self._record_result(ep, "BOLA", Verdict.ERROR, "; ".join(transport_errors), evidence=evidence)
             return
 
-        policy = self.bola_config.get(self._operation_key(ep), {})
-        if not isinstance(policy, dict):
-            raise ValueError("BOLA operation policy must be an object")
-        expected_access = policy.get("expected_visitor_access", "deny")
-        if expected_access not in ("allow", "deny"):
-            raise ValueError("expected_visitor_access must be 'allow' or 'deny'")
         security = ep.get("security", [])
         requires_auth = bool(security) and {} not in security
         expected_public = policy.get("expected_public") is True or (
@@ -548,6 +679,8 @@ class APISentinelAuditor:
         evidence["decision_evidence"] = evaluation.get("evidence", {})
         evidence["decision_evidence"]["expected_visitor_access"] = expected_access
         evidence["decision_evidence"]["policy_scope"] = "Configured Owner/Visitor identities and selected resource pair only"
+        if owner.status == 404:
+            evidence["reason_category"] = "missing_resource_id"
         finding = None
         if verdict == Verdict.CONFIRMED:
             finding = {
@@ -712,23 +845,47 @@ class APISentinelAuditor:
             return configured
         return None
 
+    def _readback_endpoint(
+        self,
+        ep: Dict[str, Any],
+        mapping: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # Renaming a path placeholder does not change the executed operation.
+        # Keep declared semantic metadata even for an equivalent configured
+        # template, so an unsafe readback is rejected during planning.
+        mapping_shape = re.sub(r"\{[^}]+\}", "{}", str(mapping["path"]))
+        documented = self._read_safety_snapshot().readbacks.get(
+            (str(mapping.get("method", "GET")).upper(), mapping_shape)
+        )
+        # Semantic equivalence does not rename parameter metadata. Preserve the
+        # historical fallback unless the declared template matches exactly.
+        parameter_source = documented if documented and documented["path"] == str(mapping["path"]) else ep
+        return {
+            "method": str(mapping.get("method", "GET")).upper(),
+            "path": str(mapping["path"]),
+            "parameters": mapping["parameters"] if "parameters" in mapping else copy.deepcopy(parameter_source.get("parameters", [])),
+            "spec_version": (documented or ep).get("spec_version", self.parser.raw_spec.get("openapi", self.parser.raw_spec.get("swagger", ""))),
+            "operation_id": (documented or {}).get("operation_id", ""),
+            "summary": (documented or {}).get("summary", ""),
+            "description": (documented or {}).get("description", ""),
+        }
+
     def _readback_result(
         self,
         ep: Dict[str, Any],
         mapping: Dict[str, Any],
         identity_name: str,
     ) -> Tuple[str, HTTPResult]:
-        documented = next((candidate for candidate in self.parser.get_endpoints()
-                           if candidate["method"] == str(mapping.get("method", "GET")).upper()
-                           and candidate["path"] == str(mapping["path"])), None)
-        read_ep = {
-            "method": str(mapping.get("method", "GET")).upper(),
-            "path": str(mapping["path"]),
-            "parameters": mapping.get("parameters", (documented or ep).get("parameters", [])),
-            "spec_version": (documented or ep).get("spec_version", self.parser.raw_spec.get("openapi", self.parser.raw_spec.get("swagger", ""))),
-            "operation_id": f"readback_{ep.get('operation_id', '')}",
-        }
+        read_ep = self._readback_endpoint(ep, mapping)
+        if read_ep["method"] != "GET":
+            raise ParameterSerializationError("Readback must use GET; no method substitution or request was made")
+        risk = read_only_risk(read_ep)
+        if risk:
+            raise ParameterSerializationError(risk["safety_reason"])
         url = self._build_url(read_ep, identity_name, mapping.get("parameter_values"))
+        risk = self._read_request_risk("GET", url)
+        if risk:
+            raise ParameterSerializationError(risk["safety_reason"])
         return url, self._http_request(read_ep["method"], url, identity_name=identity_name)
 
     def _resource_lock(self, key: str) -> threading.Lock:
@@ -840,17 +997,26 @@ class APISentinelAuditor:
     def audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        if str(ep.get("method", "")).upper() != "PATCH":
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
+                                "Only explicitly allowlisted reversible PATCH checks are supported; no method substitution or request was made",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, "safety_signal": "method"})
+            return
         operation_key = self._operation_key(ep)
         if self._writes_halted_reason:
-            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED, self._writes_halted_reason)
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED, self._writes_halted_reason,
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0})
             return
         if not self.allow_write_tests:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
-                                "State-changing checks are disabled; pass --allow-write-tests to opt in")
+                                "State-changing checks are disabled; pass --allow-write-tests to opt in",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0})
             return
         if operation_key not in self.write_allowlist:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
-                                "Endpoint is not in the explicit, case-sensitive write-test allowlist")
+                                "Endpoint is not in the explicit, case-sensitive write-test allowlist",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0})
             return
         schema = ep.get("request_schema")
         if not isinstance(schema, dict) or not schema:
@@ -861,13 +1027,21 @@ class APISentinelAuditor:
         if content_type not in {"application/json", "application/merge-patch+json"}:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only object application/json and application/merge-patch+json are supported; "
-                                "JSON Patch operation arrays and arbitrary vendor formats are not implemented")
+                                "JSON Patch operation arrays and arbitrary vendor formats are not implemented",
+                                evidence={"reason_category": "detector_unimplemented", "requests_attempted": 0})
             return
         readback = self._readback_for(ep, all_endpoints)
         if (not readback or not readback.get("path")
                 or str(readback.get("method", "GET")).upper() != "GET"):
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "An independent GET readback mapping is required; no write was sent")
+            return
+        risk = read_only_risk(self._readback_endpoint(ep, readback))
+        if risk:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
+                                "Unsafe readback: " + risk["safety_reason"],
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, **risk})
             return
         field_map = readback.get("field_map")
         if not isinstance(field_map, dict) or not field_map:
@@ -888,8 +1062,18 @@ class APISentinelAuditor:
         case_summaries: List[Dict[str, Any]] = []
         try:
             mutation_url = self._build_url(ep, "visitor")
+            read_ep = self._readback_endpoint(ep, readback)
+            readback_url = self._build_url(read_ep, "visitor", readback.get("parameter_values"))
         except ParameterSerializationError as exc:
-            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
+                                evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+            return
+        risk = self._read_request_risk("GET", readback_url)
+        if risk:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
+                                "Unsafe readback: " + risk["safety_reason"],
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, **risk})
             return
 
         with self._resource_lock(mutation_url):
@@ -1020,18 +1204,31 @@ class APISentinelAuditor:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "; ".join(unverified) or "No configured mutation case could be executed safely", evidence)
 
+    def _audit_bola_task(self, ep: Dict[str, Any]) -> None:
+        # A worker must report its own error while transport accounting is still
+        # available in that thread. Reused workers start with a fresh check.
+        self._request_accounting.attempts = None
+        try:
+            self.audit_endpoint_bola(ep)
+        except Exception as exc:
+            self._record_task_error(ep, "BOLA", exc)
+
     def _record_task_error(self, ep: Dict[str, Any], check: str, exc: BaseException) -> None:
         self._record_result(ep, check, Verdict.ERROR, f"Unhandled {type(exc).__name__}: {exc}")
 
     def _finalise_coverage(self) -> None:
         total = max(1, int(self.stats["total_endpoints"]))
         endpoint_results = [item for item in self.results if item["check"] != "ROLLBACK"]
-        attempted = sum(1 for item in endpoint_results if item["verdict"] != Verdict.SKIPPED.value)
-        conclusive = sum(
-            1
-            for item in endpoint_results
-            if item["verdict"] in {Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
-        )
+        attempted_keys = {item["endpoint"] for item in endpoint_results
+                          if item.get("evidence", {}).get("requests_attempted", 0) > 0}
+        conclusive_keys = {item["endpoint"] for item in endpoint_results
+                           if item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
+                               Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value
+                           }}
+        attempted = len(attempted_keys)
+        conclusive = len(conclusive_keys)
+        self.stats["attempted_endpoints"] = attempted
+        self.stats["conclusive_endpoints"] = conclusive
         self.stats["coverage_pct"] = round(attempted * 100.0 / total, 1)
         self.stats["conclusive_coverage_pct"] = round(conclusive * 100.0 / total, 1)
 
@@ -1044,6 +1241,16 @@ class APISentinelAuditor:
             entry = {"endpoint": key, "check": "UNSUPPORTED", "writes_enabled": False}
             if ep["method"] == "GET":
                 entry["check"] = "BOLA"
+                risk = read_only_risk(ep)
+                if not risk:
+                    try:
+                        risk = (self._read_request_risk("GET", self._build_url(ep, "owner"))
+                                or self._read_request_risk("GET", self._build_url(ep, "visitor")))
+                    except ParameterSerializationError:
+                        pass  # Execution still rejects invalid parameters before transport.
+                if risk:
+                    entry.update({"safety_blocked": True, "reason_category": "safety_policy",
+                                  "reason": risk["safety_reason"], "safety_signal": risk["safety_signal"]})
             elif ep["method"] == "PATCH":
                 entry.update({
                     "check": "MASS_ASSIGNMENT",
@@ -1053,6 +1260,18 @@ class APISentinelAuditor:
                     "configured_fields": list(readback.get("field_map", {})),
                     "readback_consistency": readback.get("consistency", "unspecified"),
                 })
+                if isinstance(readback, dict) and readback.get("path"):
+                    read_ep = self._readback_endpoint(ep, readback)
+                    risk = read_only_risk(read_ep)
+                    if not risk and read_ep["method"] == "GET":
+                        try:
+                            risk = self._read_request_risk("GET", self._build_url(read_ep, "visitor", readback.get("parameter_values")))
+                        except ParameterSerializationError:
+                            pass
+                    if risk:
+                        entry.update({"writes_enabled": False, "safety_blocked": True,
+                                      "reason_category": "safety_policy", "reason": "Unsafe readback: " + risk["safety_reason"],
+                                      "safety_signal": risk["safety_signal"]})
             entries.append(entry)
         return sanitize_evidence({"mode": "DRY_RUN", "requests_sent": 0,
                                   "note": "Local plan only; not a successful scan or a recovery guarantee",
@@ -1073,7 +1292,7 @@ class APISentinelAuditor:
 
         get_endpoints = [ep for ep in endpoints if ep["method"] == "GET"]
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_ep = {executor.submit(self.audit_endpoint_bola, ep): ep for ep in get_endpoints}
+            future_to_ep = {executor.submit(self._audit_bola_task, ep): ep for ep in get_endpoints}
             for future in as_completed(future_to_ep):
                 ep = future_to_ep[future]
                 try:

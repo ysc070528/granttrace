@@ -505,6 +505,7 @@ class OpenAPIParser:
                         "method": method.upper(),
                         "operation_id": op_data.get("operationId", f"{method}_{path_url}"),
                         "summary": op_data.get("summary", ""),
+                        "description": op_data.get("description", ""),
                         "parameters": parameters,
                         "spec_version": str(self.raw_spec.get("openapi", self.raw_spec.get("swagger", ""))),
                         "request_schema": request_schema,
