@@ -32,7 +32,7 @@ from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
 from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
-from core.scan_safety import read_only_risk
+from core.scan_safety import read_only_risk, read_path_risk
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -307,17 +307,33 @@ class APISentinelAuditor:
     def _read_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
         """Check concrete routing semantics before transport or write baselines."""
         if str(method).upper() in {"GET", "HEAD"}:
-            request_path = urllib.parse.urlsplit(url).path
+            # Inspect the entire concrete path, including the target prefix,
+            # on every call. A cached safe template cannot certify its values.
+            ambiguity = read_path_risk(url)
+            if ambiguity:
+                return ambiguity
+            request_path = urllib.parse.urlsplit(url).path or "/"
             base_path = urllib.parse.urlsplit(self.target_base_url).path.rstrip("/")
-            if base_path and request_path.startswith(base_path + "/"):
+            if base_path and request_path == base_path:
+                request_path = "/"
+            elif base_path and request_path.startswith(base_path + "/"):
                 request_path = request_path[len(base_path):]
             request_paths = {request_path, urllib.parse.unquote(request_path)}
+            # Some routers ignore trailing slashes or matrix suffixes. These
+            # candidates can add a risky match, never certify a safe route.
+            risk_paths = {path.rstrip("/") or "/" for path in request_paths}
+            for path in request_paths:
+                if ";" in path:
+                    parts = [part.split(";", 1)[0] for part in path.split("/")]
+                    risk_paths.add("/" + "/".join(part for part in parts if part))
             documented = False
             for pattern, risk in self._read_safety_snapshot().routes:
                 if any(pattern.fullmatch(path) for path in request_paths):
                     documented = True
                     if risk:
                         return dict(risk)
+                elif risk and any(pattern.fullmatch(path) for path in risk_paths):
+                    return dict(risk)
             if not documented:
                 return read_only_risk({"method": method, "path": urllib.parse.unquote(request_path)})
         return None

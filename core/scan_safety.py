@@ -1,4 +1,4 @@
-"""Conservative local checks for explicit state-changing read-operation semantics.
+"""Conservative local checks for read-path ambiguity and mutation semantics.
 
 These rules cannot prove that an operation is side-effect free. They identify
 command-like paths/operation identifiers and affirmative mutation descriptions;
@@ -9,6 +9,42 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, Optional
+from urllib.parse import unquote, urlsplit
+
+
+_PATH_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\\]")
+_BAD_PATH_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+_PATH_ESCAPE = re.compile(r"%[0-9a-fA-F]{2}")
+_ENCODED_SLASH_EDGE = re.compile(r"(?:^|/)%2f|%2f(?:/|$)", re.IGNORECASE)
+
+
+def read_path_risk(url: str) -> Optional[Dict[str, str]]:
+    """Reject routing ambiguity without rewriting a concrete read URL.
+
+    Ordinary interior encoded slashes and query data remain usable. Nested
+    escapes are rejected after one decode instead of guessing a proxy's decode
+    depth. Inspect controls before urlsplit can silently remove them.
+    """
+    prefix = url.split("?", 1)[0].split("#", 1)[0]
+    ambiguous = bool(_PATH_CONTROL.search(prefix))
+    path = urlsplit(url).path or "/"
+    if _BAD_PATH_ESCAPE.search(path) or _ENCODED_SLASH_EDGE.search(path):
+        ambiguous = True
+    try:
+        decoded = unquote(path, errors="strict")
+    except UnicodeDecodeError:
+        ambiguous = True
+    else:
+        if (_PATH_ESCAPE.search(decoded) or _PATH_CONTROL.search(decoded)
+                or "//" in decoded
+                or any(part.split(";", 1)[0] in {".", ".."} for part in decoded.split("/"))):
+            ambiguous = True
+    if not ambiguous:
+        return None
+    return {
+        "safety_reason": "Read-only safety policy blocked an ambiguous request path; no request was sent",
+        "safety_signal": "path_ambiguity",
+    }
 
 
 _ACTIONS = (
