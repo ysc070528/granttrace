@@ -68,11 +68,26 @@ the associated PATCH before any mutation. `--allow-write-tests` does not exempt
 these reads and does not enable POST, PUT or DELETE detectors. No method is
 substituted to bypass the guard.
 
-The executor checks raw and once-percent-decoded routes against declared
-operations, including static routes overlapping a parameter template. BOLA and
-readback planning apply the same concrete-route check before collecting baselines.
-Equivalent readback templates retain declared metadata even when placeholder
-names differ. This does not model arbitrary proxy rewrites or repeated decoding.
+Before consulting cached routes, the executor rejects ambiguous concrete read
+paths: malformed or nested percent escapes, invalid UTF-8 escapes, dot segments
+(including matrix suffixes), repeated slashes, encoded slashes at segment edges,
+backslashes and control characters. Checks include the target base path. Nested
+escapes are rejected after one decode rather than assuming a proxy's decode depth.
+Raw and once-decoded paths are then checked against all declared operations,
+including static routes overlapping a parameter template. Trailing-slash and
+matrix-stripped aliases can add a known dangerous match; they cannot certify a
+safe route, and the executor never rewrites the URL. BOLA and readback planning
+apply the same concrete-route check before collecting baselines. Equivalent
+readback templates retain declared metadata when placeholder names differ.
+
+Ordinary Unicode, spaces, dots within identifiers, literal percent characters,
+encoded question/hash characters and interior encoded slashes remain supported.
+Query data is outside the path guard. Values that decode into another percent
+escape, such as a literal `%2F` identifier, are conservatively blocked. Custom
+proxy rewrites, Unicode compatibility normalization, query-triggered side effects
+and undocumented operations still require operator review; this guard does not
+prove that every GET is harmless. Every concrete URL is checked again before
+transport, so warming the metadata cache cannot retain an earlier safe verdict.
 
 Static English command/prose rules cannot discover every side effect, interpret
 every language or prove a GET is harmless. Ambiguous descriptions can cause
@@ -287,3 +302,31 @@ byte-for-byte. Protected authorization, safety rules, CLI, report, dependency,
 version and workflow files were unchanged from `cf9656a`. Verification used only
 local synthetic data and loopback mock targets. Remote CI results for the final
 pushed commit are recorded on PR #33 separately; no merge or release is included.
+
+## Concrete path guard maintenance patch
+
+The earlier raw/once-decoded matcher could accept a safe parameter route while
+a normalizing server resolved its value to a dangerous GET. The new path guard
+runs before base-path removal and the immutable metadata cache on every read.
+It is shared by BOLA preflight, execution plans, independent PATCH readbacks and
+the final HTTP executor. It rejects ambiguity rather than canonicalizing and
+sending a guessed route. An empty URL path or exact target prefix is checked as
+the root operation. Authorization verdict thresholds, CLI/report formats,
+dependencies and package version 2.5.2 remain unchanged.
+
+`tests/test_read_only_path_guards.py` adds 11 regression methods. A local
+normalizing server received eight dangerous GET/HEAD requests before the fix;
+afterward socket/transport attempts, received requests and simulated effects are
+zero. Seventeen ordinary loopback GET/HEAD requests remain successful. Regressions
+also cover repeated/deep encoding, dot and matrix segments, separator/control
+variants, invalid UTF-8, static/dynamic overlap, both BOLA identity paths, PATCH
+readback preflight, mounted roots, warmed concurrent caches and offline CLI modes.
+
+On Windows/Python 3.14.5, the focused safety/serialization/cache run passed 71
+tests; the final full coverage-enabled unittest run passed 634 tests with 86.49%
+branch-aware coverage. Ruff and Mypy passed. Wheel and sdist construction, strict
+Twine checks, byte-for-byte product source checks and a fresh external offline
+wheel installation passed, including mock rollback/restoration and zero read-only
+PATCH. Exact-commit CI and Windows portable results are recorded on the patch PR.
+No real crAPI proxy or production environment was tested, and no release was
+published. The safety limitations and conservative exclusions above still apply.
