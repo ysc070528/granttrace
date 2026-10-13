@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.5.3 - Unreleased
+
+### Fixed
+
+- [PR #33](https://github.com/ysc070528/granttrace/pull/33): recognize complete
+  authentication and permission denial messages, including JWT denials, without
+  treating rejected responses containing business data as clean denials. Explain
+  Owner, Visitor self-resource and Anonymous evidence and missing prerequisites;
+  retain conservative BOLA / IDOR confirmation requirements.
+- Validate selected BOLA policies before HTTP requests and accept the existing
+  `items[].id` trusted-evidence selector syntax in configuration validation.
+- Count actual transport attempts and distinct method/path operations for
+  attempted and conclusive coverage. Exclude zero-request preflight outcomes
+  and recovery rows from endpoint coverage; explain skip and evidence categories
+  in reports. `SUSPICIOUS` and `INCONCLUSIVE` remain non-conclusive.
+- Apply read-only side-effect checks using operation identifiers, paths,
+  summaries and descriptions during BOLA preflight, dry-run planning and final
+  HTTP execution. Reject unsafe independent readbacks before any PATCH.
+- [PR #34](https://github.com/ysc070528/granttrace/pull/34): validate each concrete
+  GET / HEAD path, including the target base path, before route-cache lookup and
+  transport. Reject ambiguous encodings, invalid UTF-8, dot/matrix-dot segments,
+  repeated slashes, boundary encoded slashes, backslashes and control characters.
+  Apply the same guard to BOLA, offline plans and PATCH readbacks without rewriting
+  URLs; ordinary supported encoded identifiers remain supported.
+
+### Changed
+
+- Reuse cached immutable read-safety metadata and route patterns from PR #33
+  while continuing to validate every concrete URL before requests.
+- Synchronize package, runtime, Windows distribution and release-workflow
+  versions to `2.5.3`; refresh release documentation and generated loopback
+  examples. This release preparation introduces no new detector or API behavior.
+
+Static read-safety checks do not prove that every GET is harmless. Verification
+scope and pending publication steps are recorded in [VERIFICATION.md](VERIFICATION.md).
+
 ## 2.5.2 - 2026-10-05
 
 ### Maintenance
