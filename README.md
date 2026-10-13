@@ -5,9 +5,9 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**源码 / 包元数据版本：2.5.2** · [GitHub Releases](https://github.com/ysc070528/granttrace/releases) · [PyPI](https://pypi.org/project/granttrace/)
+**源码 / 包元数据版本：2.5.3（发布准备，未发布）** · [GitHub Releases](https://github.com/ysc070528/granttrace/releases/latest) · [PyPI](https://pypi.org/project/granttrace/)
 
-Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。
+Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。下方下载入口和 `pip install` 获取已发布版本；v2.5.3 须完成发布后才可通过这些入口安装。
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
@@ -21,7 +21,7 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 **推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 从官方 [GitHub Release](https://github.com/ysc070528/granttrace/releases/latest) 选择对应版本下载：
 
-1. 下载 Release 中的 Windows x64 ZIP（2.5.2 对应文件名为 **`GrantTrace-v2.5.2-Windows-x64.zip`**），将整个 ZIP 解压到一个普通文件夹。
+1. 下载 Release 中实际提供的 Windows x64 ZIP，将整个 ZIP 解压到一个普通文件夹。v2.5.3 发布后的文件名为 **`GrantTrace-v2.5.3-Windows-x64.zip`**。
 2. 打开解压后的文件夹，双击 **`Start-Demo.bat`**；保留旁边的程序和依赖文件。
 3. 查看自动打开的 HTML 报告；若未打开，按启动器打印的 HTML 路径手动打开。HTML / JSON 保存在解压目录的 `granttrace-demo/session-*/run-*/`。Demo 只使用内置、可丢弃的 `127.0.0.1` 靶场，结束时关闭靶场并核验数据恢复。
 
@@ -61,7 +61,7 @@ flowchart TD
     E --> R
 ```
 
-<img src="https://raw.githubusercontent.com/ysc070528/granttrace/v2.5.1/docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
+<img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-preview.png" alt="GrantTrace 报告：身份访问摘要、修复建议和端点筛选" width="900">
 
 ## 五分钟体验
 
