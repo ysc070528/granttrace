@@ -247,3 +247,12 @@ Windows build and smoke commands are documented in
 - 上述结果来自当前 Windows 环境的实际测试。
 - 内置 Demo 的确认结果属于预设模拟场景。
 - 全新 Windows 环境下的独立安装验收仍需单独确认。
+
+
+### PATH 隔离测试
+
+- [x] 在 Windows 10 Home China 环境中，将当前 PowerShell 会话的 PATH 临时限制为 `%SystemRoot%\System32;%SystemRoot` 后，便携版 `granttrace.exe --version` 正确输出 `GrantTrace 2.5.3`。
+- [x] 在相同 PATH 限制下运行 `granttrace.exe demo`，Demo 成功完成。
+- [x] 验证结果：`Rollback verified: yes`、`Mock database restored: yes`、`Local server stopped: yes`。
+
+验收边界：本项为当前 Windows 环境下的 PATH 隔离测试，不等同于全新 Windows 设备上的独立安装验收。
