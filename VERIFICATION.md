@@ -227,3 +227,23 @@ followed by `python -m coverage report`. The configured minimum is 80%.
 Windows build and smoke commands are documented in
 [Windows portable](docs/windows-portable.md); release steps are in the
 [release checklist](docs/release-checklist.md).
+
+
+## v2.5.3 发布后验收记录（2026-10-22）
+
+### 已通过
+
+- [x] 在独立 Python 虚拟环境中从 PyPI 安装 granttrace==2.5.3。
+- [x] `granttrace --version` 正确显示 v2.5.3。
+- [x] `granttrace --help` 正常显示帮助信息。
+- [x] 内置 Demo 成功运行，生成 HTML 和 JSON 报告。
+- [x] 内置 Demo 的回滚验证、模拟数据库恢复及本地服务关闭均返回成功。
+- [x] 官方 Windows x64 ZIP 的实际 SHA256 与官方校验值一致。
+- [x] 从官方 Windows ZIP 解压并运行 `Start-Demo.bat`。
+- [x] 便携包 Demo 成功生成报告，HTML 报告可以正常打开。
+
+### 验收边界
+
+- 上述结果来自当前 Windows 环境的实际测试。
+- 内置 Demo 的确认结果属于预设模拟场景。
+- 全新 Windows 环境下的独立安装验收仍需单独确认。
