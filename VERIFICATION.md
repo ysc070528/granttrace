@@ -3,7 +3,64 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
+## v2.5.3 post-release verification
+
+Evidence checked on **2026-10-22**. Current status: **v2.5.3 is published;
+post-release installation, public-asset integrity and manual Windows acceptance
+remain pending**.
+
+The official [GitHub Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.3)
+was published on **2026-10-15 at 05:36:07 UTC** and is neither a draft nor a
+prerelease. The `v2.5.3` tag resolves to release commit
+[7bedc423a1a83a0bc8cef06c81c59b5c4df88751](https://github.com/ysc070528/granttrace/commit/7bedc423a1a83a0bc8cef06c81c59b5c4df88751).
+All four workflow runs below report that exact `head_sha`; results from the
+earlier `8021ef2` baseline or local preparation are not substituted for them.
+
+| Check | Verified result and evidence |
+|---|---|
+| Release-commit CI | [CI run 38422683309](https://github.com/ysc070528/granttrace/actions/runs/38422683309): completed / success on 2026-10-13; Python 3.9 / 3.12 / 3.14, Ruff, Mypy and runtime dependency audit jobs all passed. Each Python job logged 634 tests; Python 3.12 logged 86.49% branch-aware coverage against the 80% gate. |
+| Release-commit CodeQL | [CodeQL run 38422683479](https://github.com/ysc070528/granttrace/actions/runs/38422683479): completed / success on 2026-10-13; the Analyze Python job passed. This records workflow completion, not an assertion about the repository's complete alert inventory. |
+| Release-commit Windows portable | [Windows run 38422683196](https://github.com/ysc070528/granttrace/actions/runs/38422683196): completed / success on 2026-10-13; Windows x64 portable build and extracted-ZIP automated verification passed on windows-2025, with `source_tree_dirty: false`. |
+| PyPI publication workflow | [Publish to PyPI run 38687665680](https://github.com/ysc070528/granttrace/actions/runs/38687665680): completed / success on 2026-10-15, triggered by the Release publication. Both Build and validate distributions and Publish distributions with OIDC passed; logs record wheel/sdist upload to PyPI for [2.5.3](https://pypi.org/project/granttrace/2.5.3/). |
+
+CI includes business scenarios, JSON/YAML scans and restoration, and a fresh
+external virtual environment installation of a wheel built from the checkout.
+That pre-release local-wheel check does not verify a post-release installation
+from PyPI. The publishing workflow validates distribution metadata, strict Twine
+checks and hashes across its build/upload jobs; it does not install the published
+package from PyPI.
+
+Windows automation extracts its built ZIP outside the checkout into paths with
+spaces and Chinese characters, clears Python environment/PATH dependencies and
+checks CLI, demos, launcher execution and cleanup. Browser opening is suppressed
+and the launcher pause is acknowledged via stdin. Its success covers that CI
+artifact, not a later public Release download, human double-click, visual browser
+inspection or a clean machine.
+
+The public Release currently lists `GrantTrace-v2.5.3-Windows-x64.zip` and
+`SHA256SUMS.txt`, both uploaded on 2026-10-20. This update checked their metadata;
+it did not download those public assets or recompute their hashes. Local
+preparation hashes and workflow-internal hash checks cannot certify the public
+downloads.
+
+### Remaining post-release acceptance
+
+The following checks remain **pending** in this record. They were not performed
+in this documentation update, and the evidence above does not establish them.
+
+| Acceptance item | Evidence required before marking passed |
+|---|---|
+| Fresh PyPI installation | Create a new venv outside the source checkout, install `granttrace==2.5.3` from public PyPI and record installation, version, CLI and packaged demo/resource checks. |
+| Public Release assets and SHA256 | Re-download the public assets and checksum file; calculate SHA256 and compare with that Release's checksum entries and GitHub asset digests where supplied, recording exact filenames and results. |
+| Public PyPI wheel/sdist integrity | Download the published wheel/sdist and compare calculated SHA256 with the public PyPI JSON metadata. Publishing-job hashes alone are insufficient. |
+| Manual Windows double-click and browser inspection | Record a human launch of the public portable package, launcher behavior, browser/report inspection and cleanup. |
+| Clean-machine Windows acceptance | Record the public portable package's behavior on a clean Windows machine without an existing Python/development environment, including the tested OS and results. |
+
 ## v2.5.3 release preparation - 2026-10-13
+
+Historical snapshot as of **2026-10-13**. The publication state and pending items
+below describe that preparation date; the post-release section above records
+the completed release gates and the acceptance work still outstanding.
 
 Status: **local validation passed; v2.5.3 is not published**. The reviewed main
 baseline is [8021ef208a9f5883894e8fb63e397c4eb9040070](https://github.com/ysc070528/granttrace/commit/8021ef208a9f5883894e8fb63e397c4eb9040070),
@@ -102,7 +159,7 @@ perform a fresh `pip install granttrace==2.5.3` outside the source checkout.
 Those public-asset and PyPI installation checks remain pending until publication;
 local candidate hashes cannot certify subsequently rebuilt assets.
 
-## Last published release snapshot
+## Historical v2.5.2 published release snapshot
 
 Published snapshot: [v2.5.2](https://github.com/ysc070528/granttrace/releases/tag/v2.5.2)
 ([PyPI](https://pypi.org/project/granttrace/2.5.2/)).
