@@ -5,9 +5,9 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
-**源码 / 包元数据版本：2.5.3（发布准备，未发布）** · [GitHub Releases](https://github.com/ysc070528/granttrace/releases/latest) · [PyPI](https://pypi.org/project/granttrace/)
+**当前发布版本：2.5.3** · [GitHub Releases](https://github.com/ysc070528/granttrace/releases/latest) · [PyPI](https://pypi.org/project/granttrace/)
 
-Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。下方下载入口和 `pip install` 获取已发布版本；v2.5.3 须完成发布后才可通过这些入口安装。
+Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。下方下载入口和 `pip install` 均可获取当前已发布版本。
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
