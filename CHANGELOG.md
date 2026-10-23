@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.5.3 - Unreleased
+## 2.5.3 - 2026-10-15
 
 ### Fixed
 
@@ -34,7 +34,7 @@
   examples. This release preparation introduces no new detector or API behavior.
 
 Static read-safety checks do not prove that every GET is harmless. Verification
-scope and pending publication steps are recorded in [VERIFICATION.md](VERIFICATION.md).
+scope and remaining post-release acceptance are recorded in [VERIFICATION.md](VERIFICATION.md).
 
 ## 2.5.2 - 2026-10-05
 

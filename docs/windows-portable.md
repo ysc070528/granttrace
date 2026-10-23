@@ -7,9 +7,11 @@
 推荐 Windows 10 / 11（64 位）。启动器自动打开 HTML 并打印确切路径；报告保存在
 解压目录的 `granttrace-demo/session-*/run-*/`，每次运行使用新的目录。
 
-**v2.5.3 尚未发布。** 普通用户从官方 [最新 Release](https://github.com/ysc070528/granttrace/releases/latest)
-下载页面实际提供的 Windows ZIP 和 `SHA256SUMS.txt`；2026-10-13 核验时最新发布为 v2.5.2。
-本轮 2.5.3 构建用于发布准备，以下构建工作流只上传 Actions artifact，
+**v2.5.3 已于 2026-10-15 通过官方 [GitHub Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.3) 正式发布。**
+普通用户下载该 Release 的 [Windows ZIP](https://github.com/ysc070528/granttrace/releases/download/v2.5.3/GrantTrace-v2.5.3-Windows-x64.zip)
+和 [SHA256SUMS.txt](https://github.com/ysc070528/granttrace/releases/download/v2.5.3/SHA256SUMS.txt)，
+解压运行前使用 `Get-FileHash -Algorithm SHA256` 核对 ZIP 与校验文件中的记录。
+以下构建工作流供维护者验证源码构建，只上传 Actions artifact，
 不自动修改 tag / Release 或上传 PyPI。
 
 ## 本地构建
@@ -38,7 +40,7 @@ py -3.14 -m venv dist/windows-build-env
 
 验证时使用 ZIP 解压后的程序，确认 `--version` 输出 `GrantTrace 2.5.3`，
 `--help` 可用，内置 demo 能生成 HTML / JSON 报告，关闭本机服务并完整恢复数据。
-发布前还需在含空格和中文的目录人工双击 `Start-Demo.bat`，确认正常完成且报告可以打开。
+每次重新构建后，维护者仍应在含空格和中文的目录人工双击 `Start-Demo.bat`，确认正常完成且报告可以打开。
 自动验证会实际将 ZIP 解压到仓库外的空格、中文路径，从空目录启动程序；
 子进程 PATH 仅保留 Windows 系统目录，并清除 Python / 虚拟环境变量。
 还核对只读 demo 无 PATCH、YAML 离线计划 0 请求、独立 TCP 端口关闭和可查询的包内进程无残留。
@@ -59,12 +61,25 @@ CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍�
 
 这些步骤用于维护者验证构建产物，不会替换已经提供的 Release 附件。
 
-本轮构建与自动验收结果记录在 [VERIFICATION.md](../VERIFICATION.md)。本地准备输出
-位于 `dist/v2.5.3-windows/`；源码有未提交修改时构建 JSON 的 `source_tree_dirty` 为 true，
-须在最终提交上重新取得干净 CI 制品。自动 smoke 通过 `GRANTTRACE_DEMO_NO_OPEN=1`
+构建与验收结果记录在 [VERIFICATION.md](../VERIFICATION.md)。2026-10-13 的历史本地准备输出
+位于 `dist/v2.5.3-windows/`，当时构建 JSON 的 `source_tree_dirty` 为 true；
+正式发布提交的 CI 构建已记录 `source_tree_dirty: false`，本地候选不能替代正式制品。
+自动 smoke 通过 `GRANTTRACE_DEMO_NO_OPEN=1`
 抑制浏览器，并经标准输入确认启动器暂停，不代表人工双击、浏览器视觉验收或干净 Windows 实测。
 PR #29 的历史默认启动器验证保留在 [验证历史](history/release-verification-history.md)。
 后续提交须核对各自实际 HEAD，以对应 artifact 和构建 / 验证 JSON 为准。
+
+## 已记录的人工验收与边界
+
+根据 [2026-10-22 发布后验收记录](../VERIFICATION.md#v253-发布后验收记录2026-10-22)，
+官方 Windows ZIP 的实际 SHA256 已与官方校验值核对一致；已从该 ZIP 解压运行
+`Start-Demo.bat`，Demo 成功生成报告，HTML 报告可以正常打开。
+这些人工记录未注明在含空格和中文的目录中双击，不能据此宣称该项已完成。
+
+同一记录还确认，在 Windows 10 Home China 当前主机上，将会话 PATH 临时限制为
+`%SystemRoot%\System32;%SystemRoot` 后，便携程序的版本输出和 Demo 运行通过，
+回滚验证、模拟数据库恢复及本地服务关闭均成功。
+**全新 Windows 设备上的独立验收仍待完成；PATH 隔离测试不等同于干净机器测试。**
 
 EXE 未签名，下载后可能出现 SmartScreen 或安全软件提示；不保证所有产品均无误报。
 普通用户只从官方 GitHub Release 下载并核对 `SHA256SUMS.txt`；不关闭或绕过安全软件。

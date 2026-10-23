@@ -6,8 +6,11 @@ Detailed historical release verification records are archived in
 ## v2.5.3 post-release verification
 
 Evidence checked on **2026-10-22**. Current status: **v2.5.3 is published;
-post-release installation, public-asset integrity and manual Windows acceptance
-remain pending**.
+fresh PyPI installation, official Windows ZIP SHA256 verification, manual portable
+launch and report checks, and PATH isolation have passed on the documented Windows
+host. Clean-machine Windows acceptance and public PyPI wheel/sdist hash verification
+remain pending**. See the [actual acceptance record](#v253-发布后验收记录2026-10-22)
+for the completed checks and their limits.
 
 The official [GitHub Release](https://github.com/ysc070528/granttrace/releases/tag/v2.5.3)
 was published on **2026-10-15 at 05:36:07 UTC** and is neither a draft nor a
@@ -37,24 +40,27 @@ and the launcher pause is acknowledged via stdin. Its success covers that CI
 artifact, not a later public Release download, human double-click, visual browser
 inspection or a clean machine.
 
-The public Release currently lists `GrantTrace-v2.5.3-Windows-x64.zip` and
-`SHA256SUMS.txt`, both uploaded on 2026-10-20. This update checked their metadata;
-it did not download those public assets or recompute their hashes. Local
-preparation hashes and workflow-internal hash checks cannot certify the public
-downloads.
+The public Release lists [GrantTrace-v2.5.3-Windows-x64.zip](https://github.com/ysc070528/granttrace/releases/download/v2.5.3/GrantTrace-v2.5.3-Windows-x64.zip)
+and [SHA256SUMS.txt](https://github.com/ysc070528/granttrace/releases/download/v2.5.3/SHA256SUMS.txt),
+both uploaded on 2026-10-20. The initial post-release metadata check did not
+download those public assets or recompute their hashes. The subsequent
+[2026-10-22 acceptance record](#v253-发布后验收记录2026-10-22) confirms that the official
+Windows ZIP's calculated SHA256 matched the official checksum. Local preparation
+hashes and workflow-internal hash checks cannot certify public downloads.
 
-### Remaining post-release acceptance
+### Post-release acceptance summary
 
-The following checks remain **pending** in this record. They were not performed
-in this documentation update, and the evidence above does not establish them.
+The summary below reflects the existing 2026-10-22 actual acceptance record.
+This documentation correction adds no new installation or runtime acceptance.
 
-| Acceptance item | Evidence required before marking passed |
+| Acceptance item | Status and evidence |
 |---|---|
-| Fresh PyPI installation | Create a new venv outside the source checkout, install `granttrace==2.5.3` from public PyPI and record installation, version, CLI and packaged demo/resource checks. |
-| Public Release assets and SHA256 | Re-download the public assets and checksum file; calculate SHA256 and compare with that Release's checksum entries and GitHub asset digests where supplied, recording exact filenames and results. |
-| Public PyPI wheel/sdist integrity | Download the published wheel/sdist and compare calculated SHA256 with the public PyPI JSON metadata. Publishing-job hashes alone are insufficient. |
-| Manual Windows double-click and browser inspection | Record a human launch of the public portable package, launcher behavior, browser/report inspection and cleanup. |
-| Clean-machine Windows acceptance | Record the public portable package's behavior on a clean Windows machine without an existing Python/development environment, including the tested OS and results. |
+| Fresh PyPI installation | **Passed** in an independent new venv from public PyPI with `granttrace==2.5.3`; version, help, packaged Demo, HTML/JSON reports, rollback, database restoration and local service shutdown were recorded. |
+| Official Windows ZIP SHA256 | **Passed**: the downloaded official ZIP's actual SHA256 matched the official checksum. The record does not separately establish comparison with GitHub asset digests. |
+| Manual Windows portable launch and report inspection | **Passed** on the current Windows host: extracted the official ZIP, ran `Start-Demo.bat`, generated reports and opened the HTML report. The record does not specify a double-click in a path containing spaces or Chinese characters. |
+| PATH isolation | **Passed** on Windows 10 Home China with the session PATH restricted to `%SystemRoot%\System32;%SystemRoot`: version, Demo, rollback, database restoration and local service shutdown succeeded. This is not clean-machine acceptance. |
+| Public PyPI wheel/sdist integrity | **Pending**: download the published wheel/sdist and compare calculated SHA256 with the public PyPI JSON metadata. Publishing-job hashes and a successful PyPI installation do not establish this check. |
+| Clean-machine Windows acceptance | **Pending**: test the public portable package on a fresh Windows device without an existing Python/development environment and record the tested OS and results. PATH isolation on the current host does not satisfy this requirement. |
 
 ## v2.5.3 release preparation - 2026-10-13
 
