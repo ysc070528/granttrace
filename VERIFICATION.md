@@ -262,3 +262,22 @@ Windows build and smoke commands are documented in
 - [x] 验证结果：`Rollback verified: yes`、`Mock database restored: yes`、`Local server stopped: yes`。
 
 验收边界：本项为当前 Windows 环境下的 PATH 隔离测试，不等同于全新 Windows 设备上的独立安装验收。
+
+
+### Windows USB cross-computer acceptance (2026-10-23)
+
+#### Passed
+
+- [x] Copied the Windows x64 portable package to a USB drive.
+- [x] Ran `Start-Demo.bat` on a second Windows computer.
+- [x] The built-in Demo completed successfully.
+- [x] The HTML report was generated and opened automatically in the default browser.
+- [x] The JSON report was generated successfully.
+- [x] Both reports were saved to the USB drive.
+- [x] No manual command-line input was required.
+
+#### Scope and limitations
+
+- This acceptance covers the built-in local Demo, not a real API security audit.
+- Windows x64 portable execution was verified on a second computer.
+- Other operating systems have not been verified by this test.
