@@ -397,8 +397,9 @@ class OpenAPIParser:
     def _preferred_content_type(content: Dict[str, Any]) -> Optional[str]:
         if not content:
             return None
-        if "application/json" in content:
-            return "application/json"
+        for media_type in content:
+            if media_type.split(";", 1)[0].strip().lower() == "application/json":
+                return media_type
         for media_type in content:
             normalized = media_type.split(";", 1)[0].strip().lower()
             if normalized.endswith("+json"):
@@ -450,7 +451,7 @@ class OpenAPIParser:
             if parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
                 consumes = op_data.get("consumes", self.raw_spec.get("consumes", ["application/json"]))
                 consumes = consumes if isinstance(consumes, list) else [consumes]
-                chosen = consumes[0] if consumes else "application/json"
+                chosen = self._preferred_content_type({media: {} for media in consumes}) or "application/json"
                 return parameter["schema"], chosen, list(consumes)
 
         return None, selected_type, content_types

@@ -601,10 +601,7 @@ class APISentinelAuditor:
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
             return
-        path = ep["path"]
-        parameters = ep.get("parameters", [])
-        has_selector = "{" in path or any(item.get("in") == "query" for item in parameters)
-        if not has_selector:
+        if not self._has_object_selector(ep):
             self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found; this operation is not applicable to the current object-level detector",
                                 evidence={"reason_category": "not_applicable", "requests_attempted": 0})
             return
@@ -720,8 +717,17 @@ class APISentinelAuditor:
         )
 
     @staticmethod
+    def _has_object_selector(ep: Dict[str, Any]) -> bool:
+        return "{" in ep["path"] or any(item.get("in") == "query" for item in ep.get("parameters", []))
+
+    @staticmethod
     def _json_object(result: HTTPResult) -> Optional[Dict[str, Any]]:
-        if not result.ok or result.truncated:
+        # Snapshot/persistence/restoration evidence must describe a complete,
+        # authoritative resource. Generic 2xx success also includes pending,
+        # transformed and partial representations; those cannot certify state.
+        if result.error is not None or result.status != 200 or result.truncated:
+            return None
+        if any(name.lower() == "content-range" for name in result.headers):
             return None
         try:
             value = strict_json_loads(result.body)
@@ -1039,7 +1045,7 @@ class APISentinelAuditor:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "No request schema is available; no write was sent")
             return
-        content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].lower()
+        content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].strip().lower()
         if content_type not in {"application/json", "application/merge-patch+json"}:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only object application/json and application/merge-patch+json are supported; "
@@ -1107,7 +1113,7 @@ class APISentinelAuditor:
                     return
                 before = self._json_object(before_http)
                 if before is None:
-                    unverified.append(f"{field_path}: readback was not a complete successful JSON object")
+                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object without Content-Range")
                     continue
                 try:
                     snapshot = prepare_patch(before, case, readback)
@@ -1258,15 +1264,21 @@ class APISentinelAuditor:
             if ep["method"] == "GET":
                 entry["check"] = "BOLA"
                 risk = read_only_risk(ep)
+                parameter_error = None
                 if not risk:
                     try:
                         risk = (self._read_request_risk("GET", self._build_url(ep, "owner"))
                                 or self._read_request_risk("GET", self._build_url(ep, "visitor")))
-                    except ParameterSerializationError:
-                        pass  # Execution still rejects invalid parameters before transport.
+                    except ParameterSerializationError as exc:
+                        parameter_error = str(exc)
                 if risk:
                     entry.update({"safety_blocked": True, "reason_category": "safety_policy",
                                   "reason": risk["safety_reason"], "safety_signal": risk["safety_signal"]})
+                elif not self._has_object_selector(ep):
+                    entry.update({"reason_category": "not_applicable",
+                                  "reason": "No object selector was found; this operation is not applicable to the current object-level detector"})
+                elif parameter_error:
+                    entry.update({"reason_category": "invalid_input", "reason": parameter_error})
             elif ep["method"] == "PATCH":
                 entry.update({
                     "check": "MASS_ASSIGNMENT",
@@ -1288,6 +1300,9 @@ class APISentinelAuditor:
                         entry.update({"writes_enabled": False, "safety_blocked": True,
                                       "reason_category": "safety_policy", "reason": "Unsafe readback: " + risk["safety_reason"],
                                       "safety_signal": risk["safety_signal"]})
+            else:
+                entry.update({"reason_category": "detector_unimplemented",
+                              "reason": f"No detector is implemented for {ep['method']}"})
             entries.append(entry)
         return sanitize_evidence({"mode": "DRY_RUN", "requests_sent": 0,
                                   "note": "Local plan only; not a successful scan or a recovery guarantee",

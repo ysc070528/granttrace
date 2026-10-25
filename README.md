@@ -152,6 +152,9 @@ granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.ex
 
 ## 验证与边界
 
+当前能力、未检测场景、覆盖率口径与维护验收对比见 [2.5.x 检测能力审计](docs/authorization-coverage-audit.md)。
+该记录区分确认漏洞、可疑线索和安全阻断，并评估尚未实现的相邻授权能力。
+
 ```bash
 python -m unittest discover -s tests
 python scripts/verify_business_scenarios.py

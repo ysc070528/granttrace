@@ -948,6 +948,12 @@ class SmartDataGenerator:
                 if item_schema.get("type") == "object" or "properties" in item_schema:
                     yield from cls._iter_privilege_fields(item_schema, child_path + (0,))
 
+            # Explicit response-only fields are candidates even without a
+            # privilege-like name. Keep existing nested probes first; execution
+            # still requires an operator-selected field_map and reversible state.
+            if child_effective.get("readOnly") is True and not cls._is_privilege_key(name):
+                yield child_path, child
+
     @classmethod
     def _mutation_value(cls, field_name: str, schema: Dict[str, Any]) -> Any:
         effective = cls._effective_schema(schema)

@@ -919,6 +919,21 @@ class ResponseDiffEngine:
             )
 
         if visitor["kind"] != cls.RESPONSE_VALID:
+            # A 4xx/5xx body can disclose the selected Owner object even though
+            # it cannot establish a successful-access baseline. Retain strong
+            # matches as leads only; never promote error responses to CONFIRMED.
+            if (
+                visitor["kind"] in {cls.RESPONSE_HTTP_CLIENT_ERROR, cls.RESPONSE_SERVER_ERROR}
+                and evidence["visitor_self_baseline_valid"] and evidence["owner_self_distinct"]
+                and anonymous["kind"] == cls.RESPONSE_AUTH_DENIED
+                and evidence["anonymous_denial_body_clean"]
+                and cls._object_access_signals(evidence)
+            ):
+                return cls._result(
+                    "LOW_SUSPICION", 0.8,
+                    "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+                    evidence,
+                )
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
