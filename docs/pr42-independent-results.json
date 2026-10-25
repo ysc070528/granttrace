@@ -1,0 +1,3089 @@
+{
+  "reviewed_commit": "863b0a87572a14b6203cc6115184666cd18bddae",
+  "date": "2026-10-26",
+  "scope": "Fresh local review; no production data; independent tests plus explicitly unsolved contract probes",
+  "decision": "PASS WITH CONDITIONS",
+  "environment": {
+    "os": "Linux",
+    "python": "3.12.14"
+  },
+  "phases": {
+    "before": {
+      "independent_adversarial": {
+        "scope": "Independent loopback counterexamples, not the original fixed scenario suite",
+        "tests_run": 20,
+        "failures": 10,
+        "errors": 0,
+        "regression_passed": false,
+        "unresolved_contract_probe_count": 2,
+        "merge_decision": "BLOCK",
+        "diagnostics": [
+          {
+            "test": "test_cached_state_headers_are_rejected_case_insensitively (test_pr42_adversarial.IndependentInterpretationTests.test_cached_state_headers_are_rejected_case_insensitively) (headers={'AGE': '2'})",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 384, in test_cached_state_headers_are_rejected_case_insensitively\n    self.assertIsNone(APISentinelAuditor._json_object(HTTPResult(200, '{\"role\":\"user\"}', headers=headers)))\nAssertionError: {'role': 'user'} is not None\n"
+          },
+          {
+            "test": "test_cached_state_headers_are_rejected_case_insensitively (test_pr42_adversarial.IndependentInterpretationTests.test_cached_state_headers_are_rejected_case_insensitively) (headers={'Age': 'invalid'})",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 384, in test_cached_state_headers_are_rejected_case_insensitively\n    self.assertIsNone(APISentinelAuditor._json_object(HTTPResult(200, '{\"role\":\"user\"}', headers=headers)))\nAssertionError: {'role': 'user'} is not None\n"
+          },
+          {
+            "test": "test_cached_state_headers_are_rejected_case_insensitively (test_pr42_adversarial.IndependentInterpretationTests.test_cached_state_headers_are_rejected_case_insensitively) (headers={'Warning': '110 cache \"Response is stale\"'})",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 384, in test_cached_state_headers_are_rejected_case_insensitively\n    self.assertIsNone(APISentinelAuditor._json_object(HTTPResult(200, '{\"role\":\"user\"}', headers=headers)))\nAssertionError: {'role': 'user'} is not None\n"
+          },
+          {
+            "test": "test_known_cached_restore_is_not_verified (test_pr42_adversarial.IndependentStateTests.test_known_cached_restore_is_not_verified)",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 188, in test_known_cached_restore_is_not_verified\n    self.assertFalse(api.auditor.results[0][\"evidence\"][\"rollback_verified\"])\nAssertionError: True is not false\n"
+          },
+          {
+            "test": "test_known_cached_write_observation_is_not_trusted (test_pr42_adversarial.IndependentStateTests.test_known_cached_write_observation_is_not_trusted)",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 182, in test_known_cached_write_observation_is_not_trusted\n    self.assertEqual(api.original, api.states[\"/profile\"])\nAssertionError: {'id'[19 chars]e': 'user', 'profile': {'server_marker': False[118 chars]d'}]} != {'id'[19 chars]e': 'admin', 'profile': {'server_marker': Fals[119 chars]d'}]}\n  {'counter': 0,\n   'id': 'account-7',\n   'profile': {'display': 'Original display', 'server_marker': False},\n   'records': [{'note': 'first', 'ref': 'a'}, {'note': 'second', 'ref': 'b'}],\n-  'role': 'user'}\n+  'role': 'admin'}\n"
+          },
+          {
+            "test": "test_known_stale_initial_snapshot_sends_zero_patches (test_pr42_adversarial.IndependentStateTests.test_known_stale_initial_snapshot_sends_zero_patches)",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 196, in test_known_stale_initial_snapshot_sends_zero_patches\n    self.assertEqual(0, api.patch_counts[\"/profile\"])\nAssertionError: 0 != 2\n"
+          },
+          {
+            "test": "test_nested_or_array_omissions_cannot_confirm_persistence (test_pr42_adversarial.IndependentStateTests.test_nested_or_array_omissions_cannot_confirm_persistence) (mode='partial_nested_after')",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 214, in test_nested_or_array_omissions_cannot_confirm_persistence\n    self.assertEqual(\"INCONCLUSIVE\", api.auditor.results[0][\"verdict\"])\nAssertionError: 'INCONCLUSIVE' != 'CONFIRMED'\n- INCONCLUSIVE\n+ CONFIRMED\n\n"
+          },
+          {
+            "test": "test_nested_or_array_omissions_cannot_confirm_persistence (test_pr42_adversarial.IndependentStateTests.test_nested_or_array_omissions_cannot_confirm_persistence) (mode='partial_array_after')",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 214, in test_nested_or_array_omissions_cannot_confirm_persistence\n    self.assertEqual(\"INCONCLUSIVE\", api.auditor.results[0][\"verdict\"])\nAssertionError: 'INCONCLUSIVE' != 'CONFIRMED'\n- INCONCLUSIVE\n+ CONFIRMED\n\n"
+          },
+          {
+            "test": "test_partial_200_echo_cannot_confirm_persistence (test_pr42_adversarial.IndependentStateTests.test_partial_200_echo_cannot_confirm_persistence)",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 202, in test_partial_200_echo_cannot_confirm_persistence\n    self.assertNotEqual(\"CONFIRMED\", api.auditor.results[0][\"verdict\"])\nAssertionError: 'CONFIRMED' == 'CONFIRMED'\n"
+          },
+          {
+            "test": "test_waiting_concurrent_call_rechecks_halt_before_writing (test_pr42_adversarial.IndependentStateTests.test_waiting_concurrent_call_rechecks_halt_before_writing)",
+            "traceback": "Traceback (most recent call last):\n  File \"/workspace/scratch/289ea05c9e37/granttrace-verified/tests/test_pr42_adversarial.py\", line 343, in test_waiting_concurrent_call_rechecks_halt_before_writing\n    self.assertEqual(\"SKIPPED\", api.auditor.results[-1][\"verdict\"])\nAssertionError: 'SKIPPED' != 'ERROR'\n- SKIPPED\n+ ERROR\n\n"
+          }
+        ],
+        "observations": [
+          {
+            "case": "public",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "GET /items/{id}",
+                "check": "BOLA",
+                "verdict": "PUBLIC",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "shared",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "GET /items/{id}",
+                "check": "BOLA",
+                "verdict": "AUTHORIZED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "ack_204",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "restore_failure",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "restore_ack_only",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "unrelated_side_effect",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 1,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": []
+          },
+          {
+            "case": "cached_restore",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "cached_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SECURE",
+                "rollback_verified": true,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "cached_before",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "missing_before_field",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": null,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "partial_nested_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "partial_array_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "nested_denied",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SECURE",
+                "rollback_verified": true,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "nested_injected",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "partial_after_echo",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "no_persistence",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SECURE",
+                "rollback_verified": true,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": null,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "concurrent_failure",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              }
+            ]
+          }
+        ],
+        "unsupported_contract_probes": [
+          {
+            "case": "opaque_cached_after",
+            "contract_violated": "configured strong readback serves unmarked old state",
+            "resource_restored": false,
+            "reported_rollback_verified": true,
+            "verdict": "SECURE",
+            "solved": false
+          },
+          {
+            "case": "opaque_cached_restore",
+            "contract_violated": "configured strong readback serves unmarked old state",
+            "resource_restored": false,
+            "reported_rollback_verified": true,
+            "verdict": "CONFIRMED",
+            "solved": false
+          }
+        ],
+        "test_source_sha256": "7626db01741040c3f089a8ff5f7ab6e70c4e31d297def3de913ffe454bce52a0",
+        "source_commit": "863b0a87572a14b6203cc6115184666cd18bddae",
+        "runtime_source_sha256": "8fa918687541a9f24d8264e5c87fd07043514f4e1fb1087b716321ad8a775e02"
+      },
+      "unittest": {
+        "run": 650,
+        "passed": true,
+        "seconds": 90.596
+      },
+      "coverage": {
+        "covered_statements": 4427,
+        "statements": 4984,
+        "statement_pct": 88.82,
+        "covered_branches": 2125,
+        "branches": 2570,
+        "branch_pct": 82.68,
+        "combined_pct": 86.74
+      }
+    },
+    "after": {
+      "independent_adversarial": {
+        "scope": "Independent loopback counterexamples, not the original fixed scenario suite",
+        "tests_run": 20,
+        "failures": 0,
+        "errors": 0,
+        "regression_passed": true,
+        "unresolved_contract_probe_count": 2,
+        "merge_decision": "PASS WITH CONDITIONS",
+        "diagnostics": [],
+        "observations": [
+          {
+            "case": "public",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "GET /items/{id}",
+                "check": "BOLA",
+                "verdict": "PUBLIC",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "shared",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "GET /items/{id}",
+                "check": "BOLA",
+                "verdict": "AUTHORIZED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "ack_204",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "restore_failure",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "restore_ack_only",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "unrelated_side_effect",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 1,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": []
+          },
+          {
+            "case": "cached_restore",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "cached_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "cached_before",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": null,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "missing_before_field",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": null,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "partial_nested_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "partial_array_after",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "nested_denied",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SECURE",
+                "rollback_verified": true,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "nested_injected",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "partial_after_echo",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": true,
+                "recovery_sent": true
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          },
+          {
+            "case": "no_persistence",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 1,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SECURE",
+                "rollback_verified": true,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "honest",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 0,
+              "/other": 0
+            },
+            "halted": false,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "INCONCLUSIVE",
+                "rollback_verified": null,
+                "recovery_sent": false
+              }
+            ]
+          },
+          {
+            "case": "concurrent_failure",
+            "state": {
+              "/profile": {
+                "id": "account-7",
+                "role": "admin",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              },
+              "/other": {
+                "id": "account-7",
+                "role": "user",
+                "profile": {
+                  "server_marker": false,
+                  "display": "Original display"
+                },
+                "counter": 0,
+                "records": [
+                  {
+                    "ref": "a",
+                    "note": "first"
+                  },
+                  {
+                    "ref": "b",
+                    "note": "second"
+                  }
+                ]
+              }
+            },
+            "patch_counts": {
+              "/profile": 2,
+              "/other": 0
+            },
+            "halted": true,
+            "verdicts": [
+              {
+                "endpoint": "PATCH /profile",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "CONFIRMED",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /profile",
+                "check": "ROLLBACK",
+                "verdict": "ERROR",
+                "rollback_verified": false,
+                "recovery_sent": true
+              },
+              {
+                "endpoint": "PATCH /other",
+                "check": "MASS_ASSIGNMENT",
+                "verdict": "SKIPPED",
+                "rollback_verified": null,
+                "recovery_sent": null
+              }
+            ]
+          }
+        ],
+        "unsupported_contract_probes": [
+          {
+            "case": "opaque_cached_after",
+            "contract_violated": "configured strong readback serves unmarked old state",
+            "resource_restored": false,
+            "reported_rollback_verified": true,
+            "verdict": "SECURE",
+            "solved": false
+          },
+          {
+            "case": "opaque_cached_restore",
+            "contract_violated": "configured strong readback serves unmarked old state",
+            "resource_restored": false,
+            "reported_rollback_verified": true,
+            "verdict": "CONFIRMED",
+            "solved": false
+          }
+        ],
+        "test_source_sha256": "7626db01741040c3f089a8ff5f7ab6e70c4e31d297def3de913ffe454bce52a0",
+        "source_commit": "863b0a87572a14b6203cc6115184666cd18bddae",
+        "runtime_source_sha256": "94e57b2a355fe16260e9fdf9c2e7e9e08aa9d512ecfecf5ca7820c70ced1ece6"
+      },
+      "unittest": {
+        "run": 670,
+        "passed": true,
+        "seconds": 93.011
+      },
+      "coverage": {
+        "covered_statements": 4457,
+        "statements": 5011,
+        "statement_pct": 88.94,
+        "covered_branches": 2141,
+        "branches": 2586,
+        "branch_pct": 82.79,
+        "combined_pct": 86.85
+      }
+    }
+  },
+  "remaining_twelve": [
+    {
+      "name": "error_500_owner_data",
+      "verdict": "SUSPICIOUS",
+      "category": "C"
+    },
+    {
+      "name": "error_404_owner_data",
+      "verdict": "SUSPICIOUS",
+      "category": "C"
+    },
+    {
+      "name": "truncated_owner_response",
+      "verdict": "INCONCLUSIVE",
+      "category": "B"
+    },
+    {
+      "name": "patch_initial_202",
+      "verdict": "INCONCLUSIVE",
+      "category": "A"
+    },
+    {
+      "name": "patch_initial_206",
+      "verdict": "INCONCLUSIVE",
+      "category": "A"
+    },
+    {
+      "name": "patch_initial_content_range",
+      "verdict": "INCONCLUSIVE",
+      "category": "A"
+    },
+    {
+      "name": "patch_stale_202",
+      "verdict": "INCONCLUSIVE",
+      "category": "B"
+    },
+    {
+      "name": "patch_stale_203",
+      "verdict": "INCONCLUSIVE",
+      "category": "B"
+    },
+    {
+      "name": "patch_stale_206",
+      "verdict": "INCONCLUSIVE",
+      "category": "B"
+    },
+    {
+      "name": "patch_invalid_after",
+      "verdict": "INCONCLUSIVE",
+      "category": "B"
+    },
+    {
+      "name": "patch_default_readonly",
+      "verdict": "SKIPPED",
+      "category": "A"
+    },
+    {
+      "name": "patch_not_allowlisted",
+      "verdict": "SKIPPED",
+      "category": "A"
+    }
+  ],
+  "confirmation_metrics": {
+    "all_known_vulnerabilities": 25,
+    "confirmed": 13,
+    "all_known_pct": 52.0,
+    "operationally_eligible_known": 20,
+    "operationally_eligible_confirmed": 13,
+    "operationally_eligible_pct": 65.0,
+    "excluded_from_operational_only": [
+      "patch_default_readonly",
+      "patch_initial_202",
+      "patch_initial_206",
+      "patch_initial_content_range",
+      "patch_not_allowlisted"
+    ],
+    "excluded_from_original_denominator": [],
+    "definition": "Exclude only five a priori opt-out/invalid-initial-snapshot controls; retain bad post-write evidence and 4xx/5xx leads; no suspicious as confirmed"
+  },
+  "original_scenarios": {
+    "scope": "Fixed synthetic loopback fixtures; not production detection rates",
+    "metric_definitions": {
+      "known_vulnerability_detection_rate": "CONFIRMED / all independently declared vulnerable fixtures, including safely blocked or opt-out cases",
+      "false_negative": "Known vulnerable fixture without CONFIRMED; SUSPICIOUS is still not a confirmation",
+      "executed": "Primary check attempted at least one HTTP request; initial readback counts as execution, not a PATCH"
+    },
+    "scenario_count": 36,
+    "executed_scenarios": 32,
+    "eligible_target_scenarios": 29,
+    "executed_eligible_targets": 29,
+    "control_only_names": [
+      "no_object_selector",
+      "patch_default_readonly",
+      "patch_initial_202",
+      "patch_initial_206",
+      "patch_initial_content_range",
+      "patch_not_allowlisted",
+      "unsafe_read"
+    ],
+    "verdict_counts": {
+      "SECURE": 3,
+      "CONFIRMED": 13,
+      "AUTHORIZED": 2,
+      "INCONCLUSIVE": 11,
+      "SUSPICIOUS": 3,
+      "SKIPPED": 4
+    },
+    "known_vulnerable_scenarios": 25,
+    "confirmed_known_vulnerabilities": 13,
+    "known_vulnerability_detection_rate": 52.0,
+    "false_positives": 0,
+    "false_negatives": 12,
+    "safety_or_expectation_failures": 0,
+    "unrestored_resources": 2,
+    "false_restoration_claims": 0,
+    "source_commit": "863b0a87572a14b6203cc6115184666cd18bddae",
+    "source_tree_dirty": true,
+    "runtime_source_sha256": "94e57b2a355fe16260e9fdf9c2e7e9e08aa9d512ecfecf5ca7820c70ced1ece6",
+    "fixture_script_sha256": "8ce8961c5d84e1ec74ce3710b5f281ba46bcff495d744f2c5fa20d5ce826318f"
+  },
+  "plan_diagnostic_limit": {
+    "scope": "Direct library API only; CLI validates config before planning",
+    "plan": {
+      "mode": "DRY_RUN",
+      "requests_sent": 0,
+      "note": "Local plan only; not a successful scan or a recovery guarantee",
+      "target": "http://127.0.0.1:8080",
+      "operations": [
+        {
+          "endpoint": "GET /items/{id}",
+          "check": "BOLA",
+          "writes_enabled": false
+        }
+      ]
+    },
+    "execution": [
+      {
+        "endpoint": "GET /items/{id}",
+        "operation_id": "get_/items/{id}",
+        "check": "BOLA",
+        "verdict": "INCONCLUSIVE",
+        "reason": "BOLA operation policy is invalid; run offline configuration validation; no request was sent",
+        "evidence": {
+          "reason_category": "invalid_input",
+          "requests_attempted": 0
+        }
+      }
+    ]
+  },
+  "verification": {
+    "mypy": "Success: no issues found in 19 source files",
+    "ruff": "Fresh python -m ruff check .: exit 0",
+    "business": {
+      "scope": "Six local model fixtures; not production API detection rates",
+      "scenarios": [
+        {
+          "name": "team_sharing",
+          "relationship": "shared_team",
+          "policy": "allow",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy"
+        },
+        {
+          "name": "tenant_admin",
+          "relationship": "tenant_admin",
+          "policy": "allow",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy"
+        },
+        {
+          "name": "unshared_same_tenant",
+          "relationship": "unshared",
+          "policy": "deny",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403"
+        },
+        {
+          "name": "cross_tenant_isolation",
+          "relationship": "cross_tenant",
+          "policy": "deny",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403"
+        },
+        {
+          "name": "cross_tenant_leak",
+          "relationship": "cross_tenant",
+          "policy": "deny",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "finding_count": 1,
+          "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。"
+        },
+        {
+          "name": "same_tenant_leak",
+          "relationship": "unshared",
+          "policy": "deny",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "finding_count": 1,
+          "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。"
+        }
+      ],
+      "false_positives": 0,
+      "false_negatives": 0,
+      "inconclusive": 0,
+      "matches_expectation": true
+    },
+    "examples": [
+      {
+        "mode": "readonly",
+        "exit_code": 0,
+        "confirmed": 1,
+        "status_counts": {
+          "CONFIRMED": 1,
+          "PUBLIC": 1,
+          "SECURE": 1,
+          "SKIPPED": 2
+        },
+        "conclusive_coverage_pct": 60.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      },
+      {
+        "mode": "active-json",
+        "exit_code": 1,
+        "confirmed": 2,
+        "status_counts": {
+          "CONFIRMED": 2,
+          "PUBLIC": 1,
+          "SECURE": 2
+        },
+        "conclusive_coverage_pct": 100.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      },
+      {
+        "mode": "active-yaml",
+        "exit_code": 1,
+        "confirmed": 2,
+        "status_counts": {
+          "CONFIRMED": 2,
+          "PUBLIC": 1,
+          "SECURE": 2
+        },
+        "conclusive_coverage_pct": 100.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      }
+    ],
+    "installation": {
+      "wheel": "granttrace-2.5.3-py3-none-any.whl",
+      "python": "3.12.14",
+      "version": "GrantTrace 2.5.3",
+      "project_version": "2.5.3",
+      "wheel_metadata_version": "2.5.3",
+      "installed_metadata_version": "2.5.3",
+      "installed_runtime_version": "2.5.3",
+      "demo_resources_in_wheel": [
+        "core/demo_assets/demo-config.json",
+        "core/demo_assets/mock-data.json",
+        "core/demo_assets/openapi.json"
+      ],
+      "installed_demo_without_checkout_files": true,
+      "installed_demo_bola_confirmed": 1,
+      "installed_demo_mass_assignment_confirmed": 1,
+      "installed_demo_rollback_verified": true,
+      "installed_demo_database_restored": true,
+      "installed_demo_server_stopped": true,
+      "installed_demo_environment_proxy_bypassed": true,
+      "installed_demo_readonly_patch_requests": 0,
+      "version_consistency": true,
+      "fresh_build_directory": true,
+      "supplied_release_wheel": false,
+      "installed_import_checked": true,
+      "installed_default_report": "granttrace_report.html",
+      "installed_cli_and_reporter_defaults_checked": true,
+      "installed_readonly_scan": "passed",
+      "installed_readonly_patch_requests": 0,
+      "installed_active_scan": "passed",
+      "installed_active_patch_requests": 3,
+      "installed_user_agent_checked": true,
+      "installed_active_rollback_verified": true,
+      "installed_full_database_restored": true,
+      "installed_html_json_versions_checked": true,
+      "declared_pyyaml_dependency_installed": true,
+      "config_validation": "passed",
+      "json_yaml_plan_equivalence": true,
+      "offline_plan_requests_sent": 0,
+      "draft_created_and_blocked": true,
+      "run_outside_source_tree": true,
+      "dependency_install_mode": "pip dependency resolution"
+    },
+    "platform_note": "Local Python 3.9/3.14/Windows unavailable; current HEAD CI evidence to be appended to PR description; desktop browser and USB cross-computer acceptance remain manual"
+  }
+}

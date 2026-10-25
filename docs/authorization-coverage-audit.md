@@ -1,6 +1,6 @@
 # GrantTrace 2.5.x 检测能力审计与维护验收
 
-审计日期：2026-10-26。基线为 `80c7202fdfd203e298a924bf77e5c154671123ff`。
+审计日期：2026-10-26。后续独立复核、统计口径纠正及未解决反例见 [PR #42 独立复核](pr42-independent-review.md)。基线为 `80c7202fdfd203e298a924bf77e5c154671123ff`。
 本轮检查真实源码、现有测试、离线计划、报告边界，并执行本机可丢弃 HTTP 测试。
 未连接生产 API、未执行 crAPI 扫描、未重新验收 Windows 实机便携包；本报告不外推生产检出率。
 版本号维持 2.5.3，当前变更供下一次 2.5.x 维护发布评审，不代表已发布。
@@ -125,7 +125,7 @@
 4. 显式允许写入且 field_map 已列出自定义 readOnly 字段的配置，现在可能真正测试该字段；这就是维护修复的目标。仍需操作者确认该字段对 Visitor 不可写、资源可丢弃。
 5. 计划沿用 reason/reason_category，但它们会出现在更多条目中；严格逐键比较整个条目的外部脚本可能需要放宽可选字段断言。writes_enabled 仍只表达启用与允许条件，计划不构成成功恢复保证。
 6. HTTP 200 不能替代最新性/一致性/归属保证。配置 strong 是操作者声明；工具无法识别所有以 200 返回的陈旧缓存。后端异步事务、未观测的副作用仍需独立策略，本轮未承诺支持。
-7. Windows 打包入口、启动器和 Demo API 未改动。Linux 新 wheel 的安装和内置 Demo 已验证；Windows 实机、Python 3.9/3.14 本轮未执行，不能以历史验收冒充当前验收。
+7. Windows 打包入口、启动器和 Demo API 未改动。Linux 新 wheel 的安装和内置 Demo 已验证；这些本地测量不包含 Windows 实机、Python 3.9/3.14；提交后的当前 CI 补充见 PR 描述，不能以历史验收冒充当前验收。
 
 ## 6. 测试真值、原始口径与真实前后对比
 
@@ -158,7 +158,7 @@
 | 资源未恢复却声称恢复成功 | 4 | 0 |
 | 扫描结束资源仍变化，含故意恢复失败对照 | 5 | 2 |
 | 整体 unittest 测试方法数，通过 | 634 | 650 |
-| 产品分支覆盖率（coverage branch=true） | 86.49% | 86.74% |
+| coverage.py 语句＋分支综合覆盖率 | 86.49% | 86.74% |
 
 新增三个有效确认：普通 readOnly、嵌套 readOnly、Swagger JSON 备选格式。
 同时撤销三个以不可信写前快照为基础的确认，因此严格检出率没有被“做高”。错误正文的两个新增线索仍按未确认漏报计。
@@ -202,7 +202,7 @@ python scripts/verify_authorization_coverage.py --output dist/after.json
 旧源码测量退出 1 是固定新验收标准发现 12 个未满足场景的预期表现；JSON 仍完整写出，不应把此退出码抹成成功。
 新源码返回 0。该脚本不接受目标 URL，所有 HTTP 服务只绑定 127.0.0.1、随机端口，并在 finally 关闭。
 
-本轮执行环境为 Linux / CPython 3.12.14，Node 可用。Ruff、Mypy、650 项 unittest、原六业务场景、JSON/YAML 示例和源码外的新 wheel 安装均通过。
+此处记录首次本地测量：Linux / CPython 3.12.14，Node 可用。Ruff、Mypy、650 项 unittest、原六业务场景、JSON/YAML 示例和源码外的新 wheel 安装均通过。
 安装验收确认：HTML/JSON 版本一致、默认只读 0 PATCH、内置 Demo BOLA/MA 各 1 项、恢复成功、数据库恢复、服务关闭、配置草稿阻断、dry-run 0 请求。
 示例主动扫描的子进程退出 1 来自 `--fail-on-vuln`，由 verify_examples 按预期验证；验收脚本本身通过。
 没有声称执行 Windows 新构建、Windows USB 跨机、浏览器真实打开、Python 3.9/3.14 或外部真实业务扫描。

@@ -121,6 +121,7 @@ class APISentinelAuditor:
         self._rate_lock = threading.Lock()
         self._next_request_at = 0.0
         self._result_lock = threading.Lock()
+        self._write_lock = threading.RLock()
         self._request_accounting = threading.local()
         self._resource_locks: Dict[str, threading.Lock] = {}
         self._resource_locks_guard = threading.Lock()
@@ -727,7 +728,19 @@ class APISentinelAuditor:
         # transformed and partial representations; those cannot certify state.
         if result.error is not None or result.status != 200 or result.truncated:
             return None
-        if any(name.lower() == "content-range" for name in result.headers):
+        headers = {name.lower(): value for name, value in result.headers.items()}
+        if "content-range" in headers:
+            return None
+        # Explicitly aged/stale representations cannot support a state claim,
+        # even when a gateway gives them HTTP 200. Absence of these headers is
+        # not proof of freshness: the operator's strong-read contract still matters.
+        if "age" in headers:
+            try:
+                if int(headers["age"]) != 0:
+                    return None
+            except ValueError:
+                return None
+        if re.search(r"(?:^|,)\s*11[01]\s", headers.get("warning", "")):
             return None
         try:
             value = strict_json_loads(result.body)
@@ -974,6 +987,8 @@ class APISentinelAuditor:
             for attempt in range(attempts):
                 _, after_http = self._readback_result(ep, readback, "visitor")
                 after = self._json_object(after_http)
+                if after is not None and not snapshot.covers_document(after):
+                    after = None
                 if (after is not None and not snapshot.matches(after)) or attempt + 1 == attempts:
                     break
                 time.sleep(delay)
@@ -1017,6 +1032,14 @@ class APISentinelAuditor:
         }
 
     def audit_endpoint_mass_assignment(
+        self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
+    ) -> None:
+        # Keep the halt check and entire transaction under one gate, including
+        # direct library calls. A waiting caller must observe an earlier failure.
+        with self._write_lock:
+            self._audit_endpoint_mass_assignment(ep, all_endpoints)
+
+    def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
         if str(ep.get("method", "")).upper() != "PATCH":
@@ -1113,7 +1136,7 @@ class APISentinelAuditor:
                     return
                 before = self._json_object(before_http)
                 if before is None:
-                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object without Content-Range")
+                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object without partial or stale-cache evidence")
                     continue
                 try:
                     snapshot = prepare_patch(before, case, readback)

@@ -17,6 +17,9 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 仅对明确获得授权的系统进行测试；主动写测试仅应在可丢弃、隔离的测试资源上启用。
 
+主动写测试还依赖独立读回确实最新、完整；HTTP 200 或配置 `consistency: strong` 本身不能证明这些条件。
+无法从服务端实现或独立权威数据核实读回时，请保持只读。[PR #42 独立复核](docs/pr42-independent-review.md) 记录了已修复反例及仍未解决的新鲜度边界。
+
 ## Windows 用户：解压后双击体验
 
 **推荐 Windows 10 / 11（64 位），便携包无需安装 Python。** 从官方 [GitHub Release](https://github.com/ysc070528/granttrace/releases/latest) 选择对应版本下载：

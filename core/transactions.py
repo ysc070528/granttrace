@@ -101,6 +101,34 @@ class PatchSnapshot:
                 and json_values_equal(self._comparison_document(document),
                                       self._comparison_document(self.document)))
 
+    def covers_document(self, document: Any) -> bool:
+        """Reject known missing business structure before claiming persistence.
+
+        The selected field may legitimately change shape, but its full target
+        value is separately compared by the detector. Other observed fields and
+        array records must still be represented; ignored volatile paths are exempt.
+        This cannot discover fields hidden by the initial readback itself.
+        """
+        if not isinstance(document, dict):
+            return False
+
+        def covers(reference: Any, value: Any, path: Tuple[Any, ...]) -> bool:
+            if path == self.read_path:
+                return True
+            if isinstance(reference, dict):
+                return isinstance(value, dict) and all(
+                    key in value and covers(child, value[key], path + (key,))
+                    for key, child in reference.items()
+                )
+            if isinstance(reference, list):
+                return isinstance(value, list) and len(reference) == len(value) and all(
+                    covers(child, value[index], path + (index,))
+                    for index, child in enumerate(reference)
+                )
+            return not isinstance(value, (dict, list))
+
+        return covers(self._comparison_document(self.document), self._comparison_document(document), ())
+
 
 def ensure_reversible_merge_patch(snapshot: PatchSnapshot) -> None:
     """Reject probes whose existing restore body cannot undo RFC 7396 merging."""

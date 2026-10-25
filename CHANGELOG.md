@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- PR #42 follow-up review: reject explicitly aged/stale state evidence, require
+  previously observed business structure before confirming persistence, and
+  serialize direct write-audit calls so waiting callers observe recovery failures.
+- Add independent adversarial regressions and disclose two unresolved unmarked
+  stale-response probes; distinguish statement, branch and combined code coverage.
 - Require complete HTTP 200 JSON state readbacks without Content-Range before
   using them as PATCH snapshots, persistence evidence or restoration evidence.
   Preserve generic write acknowledgement handling, recovery and fail-closed write halting.
