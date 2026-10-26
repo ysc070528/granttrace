@@ -15,6 +15,7 @@ from typing import Iterable, Mapping, Optional
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from core import __version__
+from core.bopla import confirmation_supported
 from core.evidence import sanitize_evidence, sanitize_text, sanitize_url
 from core.models import parse_operation_key
 
@@ -70,11 +71,25 @@ _RULES: tuple[dict[str, object], ...] = (
     },
 )
 
+
+_BOPLA_RULE: dict[str, object] = {
+    "id": "GT-BOPLA-001", "name": "BrokenObjectPropertyLevelAuthorization",
+    "shortDescription": {"text": "Broken Object Property Level Authorization"},
+    "fullDescription": {
+        "text": "A complete response exposed an explicitly forbidden field's identifiable Owner-private value on the bound resource."
+    },
+    "help": {
+        "text": "Enforce field-level read permissions even when the object is public or shared."
+    },
+    "properties": {"tags": ["security", "authorization", "CWE-200"]},
+}
+
 _CHECK_RULES = {
     "BOLA": (0, "GT-BOLA-001", "CWE-639", "Confirmed broken object level authorization"),
     "MASS_ASSIGNMENT": (1, "GT-MASS-001", "CWE-915", "Confirmed mass assignment"),
     "BROKEN_AUTH": (2, "GT-AUTH-001", "CWE-306", "Confirmed broken authentication"),
     "BFLA": (3, "GT-BFLA-001", "CWE-285", "Confirmed broken function level authorization"),
+    "BOPLA": (4, "GT-BOPLA-001", "CWE-200", "Confirmed broken object property level authorization"),
 }
 
 
@@ -171,7 +186,9 @@ class SarifReportGenerator:
         *,
         spec_path: Optional[str] = None,
     ) -> None:
+        results = list(results)
         secrets = tuple(secret_values)
+        rules = (*_RULES, _BOPLA_RULE) if any(item.get("check") == "BOPLA" for item in results) else _RULES
         target = _safe_origin(target_url, secrets)
         spec_uri = _safe_spec_uri(spec_path, secrets)
         sarif_results: list[dict[str, object]] = []
@@ -179,10 +196,23 @@ class SarifReportGenerator:
             check = result.get("check")
             if result.get("verdict") != "CONFIRMED" or not isinstance(check, str) or check not in _CHECK_RULES:
                 continue
+            evidence = result.get("evidence")
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            decision = evidence.get("decision_evidence")
+            decision = decision if isinstance(decision, Mapping) else {}
+            if evidence.get("duplicate_of") or (check == "BOPLA" and not confirmation_supported(decision)):
+                continue
             index, rule_id, cwe, message = _CHECK_RULES[check]
             properties: dict[str, object] = {
                 "check": check, "cwe": cwe, "granttraceVerdict": "CONFIRMED",
             }
+            if check == "BOPLA":
+                for source, destination in (("policy_id", "policyId"), ("context_id", "contextId"),
+                                            ("rule_id", "ruleId"), ("field_path", "fieldPath"),
+                                            ("subject_identity", "subjectIdentity")):
+                    value = decision.get(source)
+                    if isinstance(value, str):
+                        properties[destination] = sanitize_text(value, secret_values=secrets)
             endpoint = _safe_endpoint(result.get("endpoint"), secrets)
             if endpoint is not None:
                 properties["endpoint"] = endpoint
@@ -202,7 +232,7 @@ class SarifReportGenerator:
             "runs": [{
                 "tool": {"driver": {
                     "name": "GrantTrace", "version": __version__,
-                    "informationUri": "https://github.com/ysc070528/granttrace", "rules": _RULES,
+                    "informationUri": "https://github.com/ysc070528/granttrace", "rules": rules,
                 }},
                 "results": sarif_results,
             }],

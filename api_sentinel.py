@@ -534,6 +534,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_response_bytes=args.max_response_bytes,
             include_sensitive_evidence=args.include_sensitive_evidence,
             bola_config=config.get("bola"),
+            bopla_config=config.get("bopla"),
         )
         # Local $ref documents become inputs when endpoint schemas resolve.
         # Protect them before running the audit or writing an offline plan.

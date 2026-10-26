@@ -14,6 +14,8 @@ from ipaddress import ip_address
 from typing import Iterable, Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit
 
+from core.bopla import confirmation_supported
+from core.scan_safety import read_only_risk, read_path_risk
 from core.evidence import MAX_TEXT_CHARS, REDACTED, redact_payload, sanitize_evidence, sanitize_text, sanitize_url
 from core.models import parse_operation_key
 
@@ -191,8 +193,6 @@ def build_reproduction_templates(
     secrets = tuple(value for value in (*supplied_secrets, *visitor_headers.values())
                     if isinstance(value, str) and value)
     headers = _safe_headers(visitor_headers, secrets)
-    if headers is None:
-        return {}
     templates = {}
     for index, finding in enumerate(findings):
         if "verdict" in finding and finding["verdict"] != "CONFIRMED":
@@ -201,7 +201,14 @@ def build_reproduction_templates(
         valid, method, path, _, _ = parse_operation_key(finding.get("endpoint"))
         if not valid or any(character == "\\" or not character.isprintable() for character in path):
             continue
-        if cwe in {"CWE-639", "CWE-306", "CWE-285"}:
+        evidence = finding.get("evidence")
+        evidence = evidence if isinstance(evidence, Mapping) else {}
+        decision = evidence.get("decision_evidence")
+        decision = decision if isinstance(decision, Mapping) else {}
+        is_bopla = cwe == "CWE-200" and finding.get("check") == "BOPLA"
+        if is_bopla and (not confirmation_supported(decision) or evidence.get("duplicate_of")):
+            continue
+        if cwe in {"CWE-639", "CWE-306", "CWE-285"} or is_bopla:
             if method != "GET":
                 continue
         elif cwe == "CWE-915":
@@ -223,8 +230,14 @@ def build_reproduction_templates(
         if url is None:
             continue
         safe_url, redacted = url
+        if is_bopla and (read_path_risk(safe_url)
+                         or read_only_risk({"method": method, "path": urlsplit(safe_url).path})):
+            continue
+        anonymous = cwe == "CWE-306" or (is_bopla and decision.get("subject_identity") == "anonymous")
         lines = ["curl --globoff -X " + shlex.quote(method) + " " + shlex.quote(safe_url)]
-        if cwe != "CWE-306":
+        if not anonymous:
+            if headers is None:
+                continue
             lines.extend("-H " + shlex.quote(name + ": " + placeholder) for name, placeholder in headers
                          if method != "PATCH" or name.lower() != "content-type")
         if method == "PATCH":
@@ -240,7 +253,7 @@ def build_reproduction_templates(
             redacted = redacted or payload_redacted
             lines.extend(("-H " + shlex.quote("Content-Type: " + content_type),
                           "--data " + shlex.quote(rendered)))
-        note = ("POSIX shell；匿名复现不包含身份凭据。" if cwe == "CWE-306" else _NOTE)
+        note = ("POSIX shell；匿名复现不包含身份凭据。" if anonymous else _NOTE)
         note += " 部分值已脱敏，请补全测试值。" if redacted else ""
         command = " ".join(lines)
         templates[index] = CurlTemplate(command, redacted, note)

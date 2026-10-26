@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from core import __version__
-from core.evidence import sanitize_url
+from core.bopla import confirmation_supported
+from core.evidence import sanitize_evidence, sanitize_url
 from core.reproduction import CurlTemplate
 
 
@@ -76,6 +77,34 @@ class SecurityReportGenerator:
         target = evidence.get("target_url") or item.get("target_url")
         resource = sanitize_url(str(target)) if target else "具体请求目标未记录"
         cwe = item.get("cwe")
+        if check == "BOPLA" or (cwe == "CWE-200" and str(item.get("type", "")).startswith("BOPLA")):
+            decision = evidence.get("decision_evidence")
+            decision = decision if isinstance(decision, dict) else {}
+            field = decision.get("field_path", "未记录字段路径")
+            subject = decision.get("subject_identity", "未记录身份")
+            summary = f"字段读取检查：{subject} 对 {field} 的许可；目标：{resource}。"
+            if verdict == "CONFIRMED" and confirmation_supported(decision):
+                verification = ("已确认字段级越权：明确禁止该身份读取的字段返回了相同的 Owner 私有值；"
+                                "已核对有效 Owner 基线、完整私有值与同一资源绑定。")
+            elif verdict == "CONFIRMED":
+                verification = ("报告结论为确认漏洞；当前字段许可、资源绑定或私有值摘要不足，"
+                                "字段名、成功响应或对象可读不能单独证明字段泄露。")
+            elif verdict == "SECURE":
+                verification = "本次所选字段、身份与资源的读取被干净拒绝；不能据此宣称整个对象或接口安全。"
+            elif verdict == "AUTHORIZED":
+                verification = "该身份按明确字段策略获准读取本次所选数据；不代表其他字段或身份也被授权。"
+            else:
+                verification = ("本次字段检查结论：" + cls.VERDICT_LABELS.get(verdict, verdict)
+                                + "；不同值、缺失或脱敏不能单独证明字段或整个对象安全。")
+            return {
+                "summary": summary, "verification": verification,
+                "remediation": "对象允许公开或共享时仍须逐字段校验读取权限；服务端仅返回该身份获准读取的属性。",
+                "retest": [
+                    "由业务方核定本次身份、资源和字段许可；对象级允许访问不替代字段级许可。",
+                    "使用有效 Owner 基线与同资源锚点，以所选低权身份只读 GET 同一资源，核对完整响应和精确字段。",
+                    "验证公开及合法共享字段仍获准读取；缺少可信私有值、响应无效或绑定不符时保持不确定。",
+                ],
+            }
         if check == "BOLA" or cwe == "CWE-639":
             decision = evidence.get("decision_evidence")
             decision = decision if isinstance(decision, dict) else {}
@@ -274,7 +303,30 @@ class SecurityReportGenerator:
         secret_values: Iterable[str] = (),
     ) -> None:
         results = results or []
-        target_url = sanitize_url(target_url, secret_values=secret_values)
+        secrets = tuple(secret_values)
+        if any(item.get("check") == "BOPLA" for item in [*results, *findings]):
+            # This output boundary remains mandatory even if the caller elected
+            # to retain sensitive evidence for older checks sharing observations.
+            def safe_record(item: Dict[str, Any]) -> Dict[str, Any]:
+                safe = sanitize_evidence(item, False, secrets)
+                source_evidence = item.get("evidence", {})
+                attempts = source_evidence.get("requests_attempted") if isinstance(source_evidence, dict) else None
+                # The request count is tool metadata, not a response value. A
+                # private numeric value may equal it without changing the count.
+                if type(attempts) is int and attempts >= 0:
+                    safe.setdefault("evidence", {})["requests_attempted"] = attempts
+                if isinstance(source_evidence, dict):
+                    for identity in ("owner", "visitor_cross", "visitor_self", "anonymous"):
+                        observation = source_evidence.get(identity)
+                        if (isinstance(observation, dict)
+                                and {"body", "sha256", "truncated"}.issubset(observation)
+                                and type(observation.get("status")) is int):
+                            safe["evidence"][identity]["status"] = observation["status"]
+                return safe
+
+            results = [safe_record(item) for item in results]
+            findings = [safe_record(item) for item in findings]
+        target_url = sanitize_url(target_url, secret_values=secrets)
         generated_at = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
         cards = [
@@ -337,6 +389,20 @@ class SecurityReportGenerator:
             "<p class='meta' id='verdict-counts'>" + cls._escape(verdict_counts) + "</p>"
         )
 
+        if any(item.get("check") == "BOPLA" for item in results):
+            field_counts = (
+                f"BOPLA 字段 {stats.get('bopla_fields_checked', '未记录')} 个；"
+                f"字段身份检查 {stats.get('bopla_field_checks', '未记录')} 条；"
+                f"确认泄露字段 {stats.get('bopla_fields_confirmed', '未记录')} 个；"
+                f"不确定 {stats.get('bopla_inconclusive_count', '未记录')} 条；"
+                f"跳过 {stats.get('bopla_skipped_count', '未记录')} 条。"
+                f"实际发送 HTTP 请求 {stats.get('http_requests_sent', '未记录')} 次；"
+                f"去重确认漏洞 {stats.get('unique_confirmed_vulnerabilities', '未记录')} 个。"
+                "同一资源和未授权身份的多字段、多标签共享观察不作为独立漏洞重复计数。"
+                "字段缺失或不同值不表示整个对象安全。"
+            )
+            accounting_html += "<p class='meta' id='bopla-field-counts'>" + cls._escape(field_counts) + "</p>"
+
         warnings: List[str] = []
         if stats.get("error_count", 0):
             warnings.append("扫描中存在错误；不能把未完成的检查解释为安全。")
@@ -387,7 +453,7 @@ class SecurityReportGenerator:
             curl_html = (
                 cls._curl_html(template)
                 if template is not None and finding.get("verdict", "CONFIRMED") == "CONFIRMED"
-                and finding.get("cwe") in {"CWE-639", "CWE-915", "CWE-306", "CWE-285"} else ""
+                and finding.get("cwe") in {"CWE-639", "CWE-915", "CWE-306", "CWE-285", "CWE-200"} else ""
             )
             finding_html_parts.append(
                 f"""

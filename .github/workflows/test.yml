@@ -63,10 +63,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install . setuptools wheel "coverage[toml]>=7.6,<8"
+          python -m pip install . setuptools wheel "coverage[toml]>=7.6,<8" "pytest>=8"
 
       - name: Run unittest suite with branch coverage
         run: python -m coverage run -m unittest discover -s tests
+
+      - name: Run full pytest suite
+        run: python -m pytest --junitxml=dist/pytest.xml
 
       - name: Report test coverage
         if: always()
@@ -111,6 +114,7 @@ jobs:
           name: verification-python-${{ matrix.python-version }}
           retention-days: 14
           path: |
+            dist/pytest.xml
             dist/coverage.txt
             dist/coverage.xml
             dist/coverage.json

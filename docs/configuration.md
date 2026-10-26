@@ -86,11 +86,48 @@ BFLA 的角色仅做精确比较，不推断角色继承。Owner 必须具有明
 
 无选择器的认证集合会进行只读比较；缺少私有值策略时，Visitor 的 200 响应和“没有 Owner ID”都不能证明隔离。明确配置私有路径的无路径占位符集合也支持分页等 query 参数。精确数组索引不跟踪重排或分页中的其他记录；值改名、换索引或未配置的字段可能漏检，不能从未匹配推导安全。Visitor 干净拒绝且 Owner 基准有效时才可在该拒绝范围判为 `SECURE`。明确允许共享仍需正向数据证据与干净匿名拒绝，结论仅为所选身份对的 `AUTHORIZED`。
 
-已有对象选择器默认维持 BOLA 证据模型；显式新增私有值或角色策略后才增加独立检测项。同一组 GET 观察可以支持多项检查，不会为每项重复发送请求。端点按方法加规范路径去重；确认漏洞按检测项计数；确定性端点要求每种已选检查均有确定且实际尝试过的结果。
+已有对象选择器默认维持 BOLA 证据模型；显式新增私有值或角色策略后才增加独立检测项。同一组 GET 观察可以支持多项检查，不会为每项重复发送请求。端点按方法加规范路径去重；未启用 BOPLA 时确认数量维持原检测项语义，启用 BOPLA 的操作按下述关联泄露组去重。确定性端点要求每种已选检查均有确定且实际尝试过的结果。
 
 已有 `resource_id_paths` 只声明对象标识证据，不声明整个集合的所有权；无对象选择器且只有该旧策略时，原 BOLA 项仍为 `SKIPPED`。认证和功能检查单独记录；添加经过人工核定的 `private_data_paths` 才选择新的集合证据模型。
 
 PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状态门阻断。仅内部直接观察实际状态的受控集成支持 `application/json` 全根文档替换：拒绝 envelope、非恒等字段映射、忽略字段和 baseline overrides；完整原快照用于恢复。该夹具能力不能作为通用外部 API 的证明。PUT 不导出仅含探针字段的 cURL 命令。
+
+## BOPLA：对象允许读取，特定字段仍禁止读取
+
+`bopla` 是独立、显式启用的字段许可节；不改变已有 `bola.expected_visitor_access`、匿名认证或功能角色规则。共享对象可以继续按 BOLA 判断为 `AUTHORIZED`，其中仅 Owner 可读的字段仍按 BOPLA 的 deny 规则检查。OpenAPI `security: []` 允许匿名读取操作，也不覆盖明确的字段限制。`readOnly` 和字段名称均不产生读取授权规则。
+
+下面是需要合并进已有测试身份配置的最小示例。先由业务方核定身份、资源归属、字段许可及私有值的完整表示，再执行原有离线验证与只读扫描流程：
+
+```json
+{
+  "parameter_values": {
+    "GET /documents/{id}": {"owner": {"id": "doc-a"}, "visitor": {"id": "doc-b"}}
+  },
+  "bola": {
+    "GET /documents/{id}": {"expected_visitor_access": "allow", "resource_id_paths": ["id"]}
+  },
+  "bopla": {
+    "GET /documents/{id}": {
+      "policy_id": "document-fields-v1",
+      "context_id": "selected-owner-document",
+      "resource_binding": {"id": "doc-a"},
+      "fields": [{
+        "rule_id": "note-owner-only",
+        "path": "private_note",
+        "baseline_representation": "full_private_value",
+        "value_is_resource_specific": true,
+        "access": {"owner": "allow", "visitor": "deny", "anonymous": "deny"}
+      }]
+    }
+  }
+}
+```
+
+`resource_binding` 直接配置响应精确路径与本次预选资源值，例如 `{"tenant_id":"tenant-a","id":"doc-a"}`。Owner 与低权成功响应都必须匹配全部锚点，JSON 类型也须一致。这里使用显式选中值，没有自动从参数推导资源归属。数组字段如 `items[0].private_note` 还必须配置同项锚点，例如 `{"items[0].id":"doc-a"}`；只比较固定位置，不搜索其他项或追页。同名字段在其他路径、不同资源或不同 context 中不能复用本规则的结论。
+
+每条字段规则必须明确 Owner `allow`。Visitor/Anonymous 的许可分别配置；缺项是未知，不能默认为 deny。公开或合法共享字段配置 `allow`，其有效正面比较为 `AUTHORIZED`。deny 的确认还要求 `full_private_value` 和 `value_is_resource_specific: true`：二者是业务核定声明，不能为公共常量、通用状态、重复常见值或已脱敏值虚填。缺声明、无效 Owner、不同值/类型、缺字段、null、mask、不完整响应或绑定失败均不能确认，也不能据此宣称整个对象安全。冲突、非法路径及非 GET 配置离线报错，运行时不发送请求。
+
+已取得的同操作/资源/身份 GET 观察由各检查共享，不按字段重复请求；只选择 BOPLA 的操作仍须取得必要的身份基准。默认 GET 安全门和外部 PATCH/PUT 阻断保持。BOPLA 操作的响应 body/hash 不持久化，已知字段私有值强制脱敏，`--include-sensitive-evidence` 也不能解除。字段、身份检查项与关联泄露组分别计数；多个标签不增加独立漏洞数。完整 verdict、统计和不支持边界见 [BOPLA 只读说明](bopla-readonly.md)。
 
 ## 参数值与编码
 
@@ -109,6 +146,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 - `write_allowlist`：声明 PATCH / PUT 检查范围；仍受权威状态验证门控制，普通外部 API 不会因该声明解锁写入。
 - `readbacks`：写接口对应的独立 GET 路径、字段映射及一致性约定。
 - `bola`（可选）：按操作配置公开/共享策略、资源标识、私有数据证据路径和明确的功能权限边界。
+- `bopla`（可选）：按操作和选中资源配置精确字段许可；仅支持 GET，字段规则不继承整对象公开/共享许可。
 
 简化示例：
 
