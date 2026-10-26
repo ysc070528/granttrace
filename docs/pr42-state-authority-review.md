@@ -80,7 +80,7 @@
 
 ## 验收证据与合并条件
 
-本地测试记录以 Python 源文件 SHA256、测试文件 SHA256、父提交和脏工作树标记关联实际修改内容，详见 [pr42-state-authority-results.json](pr42-state-authority-results.json)。避免把尚未提交的运行谎报成父提交本身的结果。提交后的 CI 必须在该 HEAD 上重新执行；工作流新增独立反例、两套 36 场景与原始 JSON artifact 上传，维护者可核对 artifact 中的 `source_commit`。
+本地测试记录以 Python 源文件 SHA256、测试文件 SHA256、父提交和脏工作树标记关联实际修改内容，详见 [pr42-state-authority-results.json](pr42-state-authority-results.json)。避免把尚未提交的运行谎报成父提交本身的结果。提交后的 CI 必须在该 HEAD 上重新执行；三个工作流显式 checkout PR HEAD（push/手动事件回退到 github.sha），不把 GitHub 自动生成的 PR 合成提交冒充 HEAD；工作流新增独立反例、两套 36 场景与原始 JSON artifact 上传，维护者可核对 artifact 中的 `source_commit`。
 
 本地最终结果：681 项全量测试、28 项独立对抗测试全部通过；36＋36 场景无安全断言失败。Ruff、Mypy（19 个产品源文件）、运行时依赖审计（PyYAML 6.0.3，无已知漏洞）、JSON/YAML、源码外 wheel 安装及主动/只读 Demo 均通过。语句覆盖 4491/5049=88.95%，纯分支 2155/2602=82.82%，综合 6646/7651=86.86%。
 
