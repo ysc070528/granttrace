@@ -203,6 +203,11 @@ def build_reproduction_templates(
             continue
         evidence = finding.get("evidence")
         evidence = evidence if isinstance(evidence, Mapping) else {}
+        if evidence.get("property_privacy_pending"):
+            # A selected Owner baseline may never arrive. A concrete URL can
+            # reflect an as-yet unknown private value from another operation.
+            # Keep the finding, but do not publish an automatic request template.
+            continue
         decision = evidence.get("decision_evidence")
         decision = decision if isinstance(decision, Mapping) else {}
         is_bopla = cwe == "CWE-200" and finding.get("check") == "BOPLA"

@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from core import __version__
 from core.bopla import confirmation_supported
-from core.evidence import sanitize_evidence, sanitize_url
+from core.evidence import PROPERTY_EVIDENCE_LOCK, sanitize_property_record, sanitize_url
 from core.reproduction import CurlTemplate
 
 
@@ -302,31 +302,26 @@ class SecurityReportGenerator:
         reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
         secret_values: Iterable[str] = (),
     ) -> None:
-        results = results or []
-        secrets = tuple(secret_values)
-        if any(item.get("check") == "BOPLA" for item in [*results, *findings]):
-            # This output boundary remains mandatory even if the caller elected
-            # to retain sensitive evidence for older checks sharing observations.
-            def safe_record(item: Dict[str, Any]) -> Dict[str, Any]:
-                safe = sanitize_evidence(item, False, secrets)
-                source_evidence = item.get("evidence", {})
-                attempts = source_evidence.get("requests_attempted") if isinstance(source_evidence, dict) else None
-                # The request count is tool metadata, not a response value. A
-                # private numeric value may equal it without changing the count.
-                if type(attempts) is int and attempts >= 0:
-                    safe.setdefault("evidence", {})["requests_attempted"] = attempts
-                if isinstance(source_evidence, dict):
-                    for identity in ("owner", "visitor_cross", "visitor_self", "anonymous"):
-                        observation = source_evidence.get(identity)
-                        if (isinstance(observation, dict)
-                                and {"body", "sha256", "truncated"}.issubset(observation)
-                                and type(observation.get("status")) is int):
-                            safe["evidence"][identity]["status"] = observation["status"]
-                return safe
-
-            results = [safe_record(item) for item in results]
-            findings = [safe_record(item) for item in findings]
-        target_url = sanitize_url(target_url, secret_values=secrets)
+        with PROPERTY_EVIDENCE_LOCK:
+            stats = dict(stats)
+            results = list(results or [])
+            findings = list(findings)
+            secrets = tuple(secret_values)
+            pending = any(isinstance(item.get("evidence"), Mapping)
+                          and item["evidence"].get("property_privacy_pending") for item in [*results, *findings])
+            if any(item.get("check") == "BOPLA" or (isinstance(item.get("evidence"), Mapping)
+                   and item["evidence"].get("property_privacy_pending"))
+                   for item in [*results, *findings]):
+                # Pending observations must be safe before a late Owner baseline
+                # can identify their private values. Snapshot atomically with
+                # history redaction, and never serialize recoverable body hashes.
+                results = [sanitize_property_record(item, secrets, omit_responses=True) for item in results]
+                findings = [sanitize_property_record(item, secrets, omit_responses=True) for item in findings]
+            if pending:
+                # A caller can retain a template built before a later private
+                # reference was observed. Do not reintroduce its concrete URL.
+                reproduction_templates = {}
+        target_url = sanitize_url("[BOPLA TARGET OMITTED]" if pending else target_url, secret_values=secrets)
         generated_at = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
         cards = [
@@ -396,8 +391,10 @@ class SecurityReportGenerator:
                 f"确认泄露字段 {stats.get('bopla_fields_confirmed', '未记录')} 个；"
                 f"不确定 {stats.get('bopla_inconclusive_count', '未记录')} 条；"
                 f"跳过 {stats.get('bopla_skipped_count', '未记录')} 条。"
-                f"实际发送 HTTP 请求 {stats.get('http_requests_sent', '未记录')} 次；"
+                f"已收到响应的实际发送 HTTP 请求 {stats.get('http_requests_sent', '未记录')} 次；"
                 f"去重确认漏洞 {stats.get('unique_confirmed_vulnerabilities', '未记录')} 个。"
+                "连接失败或超时不能证明请求未到达服务端；已收到响应数是可证实的发送下界，"
+                "传输尝试次数另按请求尝试统计。"
                 "同一资源和未授权身份的多字段、多标签共享观察不作为独立漏洞重复计数。"
                 "字段缺失或不同值不表示整个对象安全。"
             )

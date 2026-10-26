@@ -15,7 +15,10 @@ from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_scaffold import config_needs_input, write_config_scaffold
 from core.config_validator import ConfigIssue, ConfigValidator
-from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text, sanitize_url
+from core.evidence import (
+    PROPERTY_EVIDENCE_LOCK, safe_diagnostic_value, sanitize_log_text, sanitize_property_record,
+    sanitize_text, sanitize_url,
+)
 from core.models import parse_operation_key
 from core.onboarding import (
     display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
@@ -557,18 +560,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         auditor.run()
         elapsed = time.time() - started
 
+        with PROPERTY_EVIDENCE_LOCK:
+            report_stats = dict(auditor.stats)
+            report_results = (list(auditor.results) if not auditor.bopla_config else [
+                sanitize_property_record(item, auditor._secret_values, omit_responses=True)
+                for item in auditor.results])
+            report_findings = (list(auditor.findings) if not auditor.bopla_config else [
+                sanitize_property_record(item, auditor._secret_values, omit_responses=True)
+                for item in auditor.findings])
         _ensure_parent(args.output)
         reproduction_secrets = set(auditor._secret_values)
         for identity_name in auditor.identities:
             reproduction_secrets.update(auditor._identity_headers(identity_name).values())
         reproduction_templates = build_reproduction_templates(
-            auditor.findings, auditor._identity_headers("visitor"), reproduction_secrets,
+            report_findings, auditor._identity_headers("visitor"), reproduction_secrets,
         )
-        report_target = sanitize_url(args.target, secret_values=auditor._secret_values)
+        report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
+                         sanitize_url(args.target, secret_values=auditor._secret_values))
         SecurityReportGenerator.generate(
-            stats=auditor.stats,
-            findings=auditor.findings,
-            results=auditor.results,
+            stats=report_stats,
+            findings=report_findings,
+            results=report_results,
             target_url=report_target,
             output_path=args.output,
             reproduction_templates=reproduction_templates,
@@ -586,9 +598,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                         "elapsed_seconds": round(elapsed, 3),
                         "target": report_target,
-                        "stats": auditor.stats,
-                        "results": auditor.results,
-                        "findings": auditor.findings,
+                        "stats": report_stats,
+                        "results": report_results,
+                        "findings": report_findings,
                     },
                     handle,
                     indent=2,
@@ -598,8 +610,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.export_sarif is not None:
             _ensure_parent(args.export_sarif)
             SarifReportGenerator.generate(
-                results=auditor.results,
-                target_url=args.target,
+                results=report_results,
+                target_url=report_target,
                 output_path=args.export_sarif,
                 secret_values=auditor._secret_values,
                 spec_path=spec_path,

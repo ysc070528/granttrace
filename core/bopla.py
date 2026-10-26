@@ -115,6 +115,33 @@ def confirmation_supported(evidence: Mapping[str, Any]) -> bool:
     )
 
 
+def resource_scope(policy: Mapping[str, Any], field_path: Optional[str] = None) -> Tuple[Any, ...]:
+    """Return a private grouping key, never an output identifier or digest.
+
+    Root fields and legacy object checks share the selected root resource.
+    Array fields additionally select their exact entity branch, preserving
+    ancestor anchors while excluding bindings for sibling array entries.
+    """
+    parsed = [(path_parts(path), value) for path, value in policy["resource_binding"].items()]
+    parts = path_parts(field_path) if field_path is not None else ()
+    indexes = [index for index, part in enumerate(parts) if isinstance(part, int)]
+    entry = parts[:indexes[-1] + 1] if indexes else ()
+    roots = [(path, value) for path, value in parsed if not any(isinstance(part, int) for part in path)]
+    selected = list(roots)
+    if entry:
+        for path, value in parsed:
+            array_indexes = [index for index, part in enumerate(path) if isinstance(part, int)]
+            if array_indexes:
+                bound_entry = path[:array_indexes[-1] + 1]
+                if entry[:len(bound_entry)] == bound_entry:
+                    selected.append((path, value))
+    elif not roots:
+        selected = parsed
+    canonical = tuple((path, type(value).__name__, json.dumps(value, ensure_ascii=False, allow_nan=False))
+                      for path, value in sorted(selected, key=lambda item: json.dumps(item[0])))
+    return ("array" if entry else "root", entry, canonical)
+
+
 class BOPLAEvidence:
     """Pure evaluation of existing GET observations; never sends a request."""
 
@@ -143,24 +170,30 @@ class BOPLAEvidence:
 
     @staticmethod
     def _bound(data: Any, bindings: Mapping[str, Any]) -> bool:
-        for path, expected in bindings.items():
-            parts = _path(path)
+        parsed = [(_path(path), expected) for path, expected in bindings.items()]
+        entries = set()
+        for parts, expected in parsed:
             found, value = get_path(data, parts)
             if not found or not json_values_equal(expected, value):
                 return False
-            # Duplicate identities in a selected array cannot locate one entity.
             for offset, part in enumerate(parts):
                 if isinstance(part, int):
-                    exists, entries = get_path(data, parts[:offset]) if offset else (True, data)
-                    if not exists or not isinstance(entries, list):
-                        return False
-                    matches = 0
-                    for entry in entries:
-                        exists, candidate = get_path(entry, parts[offset + 1:])
-                        if exists and json_values_equal(candidate, expected):
-                            matches += 1
-                    if matches != 1:
-                        return False
+                    entries.add(parts[:offset + 1])
+        # Uniqueness belongs to the selected entity's complete composite anchor,
+        # not each scalar separately (a tenant may legitimately own many rows).
+        for entry in entries:
+            exists, siblings = get_path(data, entry[:-1]) if len(entry) > 1 else (True, data)
+            if not exists or not isinstance(siblings, list):
+                return False
+            anchors = [(parts[len(entry):], expected) for parts, expected in parsed
+                       if parts[:len(entry)] == entry and len(parts) > len(entry)]
+            matches = 0
+            for sibling in siblings:
+                if all((observed := get_path(sibling, relative))[0]
+                       and json_values_equal(observed[1], expected) for relative, expected in anchors):
+                    matches += 1
+            if not anchors or matches != 1:
+                return False
         return True
 
     @staticmethod
@@ -170,7 +203,8 @@ class BOPLAEvidence:
         if isinstance(value, str):
             # Known lossy representations cannot substantiate a full-value claim.
             lowered = value.strip().lower()
-            return ("*" not in value and lowered not in {"[redacted]", "[masked]", "redacted", "masked"})
+            return (not any(marker in value for marker in ("*", "•", "●", "…"))
+                    and lowered not in {"[redacted]", "[masked]", "redacted", "masked"})
         return True
 
     @classmethod
