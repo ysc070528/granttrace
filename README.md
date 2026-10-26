@@ -9,13 +9,17 @@
 
 Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHub Release / PyPI 页面实际列出的版本为准。下方下载入口和 `pip install` 均可获取当前已发布版本。
 
-An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
+An OpenAPI authorization auditor that compares identity responses and reports explicitly scoped authorization evidence.
 
-安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
+安全优先、证据驱动的 OpenAPI 权限与授权审计工具。提供 BOLA / IDOR 只读身份对照，并在配置明确的业务证据后检查匿名私有数据暴露、角色边界和集合接口私有数据泄漏。输出 HTML / JSON 和可选 SARIF。当前分支的新增能力尚未发布；检测范围受身份、资源与配置证据限制，不表示完整覆盖 OWASP API Top 10。
 
 默认扫描会在请求前跳过具有明显状态变更语义的 GET，包括独立读回；静态规则无法保证发现所有副作用，仍需人工核对规范和计划。拒绝响应、授权证据及覆盖率的具体边界见 [授权审计加固说明](docs/authorization-audit-hardening.md)。
 
 仅对明确获得授权的系统进行测试；主动写测试仅应在可丢弃、隔离的测试资源上启用。
+
+**PR #42 / #43 的未发布安全收紧：普通 CLI 对外部 API 的主动 PATCH / PUT 均阻断。** 即使显式开启写入、配置 allowlist、field_map 和 `consistency: strong`，缺少可运行的权威状态核验能力仍会在写入前报告 `INCONCLUSIVE`；dry-run 同样显示阻断原因。现有参数和配置继续解析，不能用配置解除这项保护。PUT 完整替换与恢复调用链仅在持有独立实际存储的内部测试夹具中验收，不能据此宣称通用外部 PUT 可安全执行。
+内置 `granttrace demo` 通过直接核对它自己持有的可丢弃数据库保留主动演示；普通 HTTP 200、缓存请求头、重复 GET 或一致性声明不能证明新鲜度与恢复成功。
+[原独立复核](docs/pr42-independent-review.md) 的风险记录保留；[本次 fail-closed 复核](docs/pr42-state-authority-review.md) 给出两个原始反例、修复证据和兼容性影响。
 
 ## Windows 用户：解压后双击体验
 
@@ -45,8 +49,8 @@ granttrace demo
 ## 为什么是 GrantTrace / Why GrantTrace
 
 - **Compare identities**：比较 Owner / Visitor / Anonymous 等身份访问同一资源的结果。
-- **Verify real side effects**：通过独立读回验证状态是否真正持久化，不只看 HTTP 状态码。
-- **Restore safely**：主动 PATCH 测试使用显式 allowlist、原始状态快照、恢复与恢复验证。
+- **Verify real side effects**：内部演示将读回与自己持有的实际数据库核对；普通 GET、HTTP 200 或一致性声明不构成权威实际状态证据。
+- **Restore safely**：内部主动测试使用显式 allowlist、完整原始快照及权威恢复核验；恢复失败或无法核验时停止该 auditor 后续写入。
 
 ## 10 秒看懂 GrantTrace
 
@@ -55,9 +59,9 @@ flowchart TD
     A["OpenAPI Spec + Owner / Visitor / Anonymous"] --> B["GrantTrace"]
     B --> C["只读身份差异比较（默认）"]
     C --> R["HTML / JSON（可选 SARIF）"]
-    B -->|显式开启并满足写入安全条件| W["PATCH 测试"]
-    W --> D["独立 GET 读回"]
-    D --> E["恢复并验证"]
+    B -->|内部可丢弃存储具备权威核验| W["主动写测试"]
+    W --> D["读回与独立实际存储核对"]
+    D --> E["恢复与权威核验"]
     E --> R
 ```
 
@@ -104,9 +108,29 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
   --config config.local.json --export-json result.local.json
 ```
 
-6. **以后需要时再考虑主动 PATCH**：只有在专用可丢弃资源、独立 GET readback、字段映射、一致性和恢复路径均经人工确认后，才配置明确的 `write_allowlist` 并在真实扫描中单独添加 `--allow-write-tests`。允许清单存在不表示写测试已开启，运行时仍须满足写入与恢复条件。
+6. **当前外部 API 保持只读**：普通 CLI 没有通用权威状态核验能力。添加 `--allow-write-tests`、`write_allowlist` 或独立 GET readback 均不能解除外部 PATCH / PUT 的写前阻断。需要主动演示时使用自己持有可丢弃存储的内置 `granttrace demo`。
 
 OpenAPI 和离线验证不能证明资源归属、业务授权策略、合法测试权限、生产读回一致性或实际恢复能力；检查通过只代表配置结构及支持的语义通过当前检查。账户、API Key / Cookie、合法共享和管理员访问见 [配置指南](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md)，输出与自动化兼容性见 [命令行说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。支持的数组、布尔值及 `style` / `explode` 编码见 [参数规则](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md)。接入实测前请核对 [安全边界](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md)。
+
+当前分支新增的只读证据配置位于原有 `bola` 按操作配置中。例如：
+
+```json
+{
+  "bola": {
+    "GET /admin/settings": {
+      "private_data_paths": ["settings.secret_name"],
+      "required_role": "administrator",
+      "owner_role": "administrator",
+      "visitor_role": "reader"
+    },
+    "GET /orders": {"private_data_paths": ["[0].private_note"]}
+  }
+}
+```
+
+`private_data_paths` 是操作员对所选 Owner 实际值的私有性声明，须先人工核对，不从字段名或 Owner ID 自动推断。路径须指向非空字符串或有限数值；布尔值、null、空值不能作为 Owner 私有数据证据。配置后还须取得有效 Owner 基线并在未授权响应中精确匹配对应私有值，才可确认泄漏。匿名检测遵循 OpenAPI 全局 `security`、操作级覆盖和匿名访问备选项。BFLA 另需明确所需角色、有效特权基线及不含业务数据的匿名拒绝；Owner 不自动表示管理员，管理路径关键词只产生候选线索。集合响应缺少 Owner ID、仅返回不同数据或未匹配某个私有路径，都不能单独证明隔离，证据不足时为 `INCONCLUSIVE`。
+
+一个端点可产生多个检测项和多个确认漏洞。请求尝试覆盖率按唯一操作计数；确定性覆盖率要求该操作每种已选主检查均有确定结论，不能用一次匿名拒绝掩盖同一端点的集合 BOLA 证据不足。确认数量按确认检测项计数；这些比例不是系统总体安全率。
 
 ## SARIF 导出
 
@@ -117,11 +141,11 @@ granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.ex
   --export-json result.local.json --export-sarif granttrace.sarif -o report.html
 ```
 
-SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#sarif-导出)。
+SARIF 2.1.0 **只包含 CONFIRMED 的 BOLA / IDOR、Broken Authentication、BFLA 与 Mass Assignment**；SUSPICIOUS / INCONCLUSIVE 不升级为漏洞，完整状态仍见 HTML / JSON。SARIF 始终脱敏且不导出原始响应或 headers，不能与 `--dry-run` 同用；各输出路径须独立。当前工作目录内的真实 OpenAPI spec 会作为相对 artifact location，不伪造源码行号，API endpoint 仍放在 message / properties。在 GitHub Actions 中从 checkout 的仓库根目录运行，再用 `upload-sarif` 上传；workspace 外的 spec 省略 location，绝不导出本机绝对路径，其结果无法展示为 GitHub Code Scanning alert。详见 [兼容说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#sarif-导出)。
 
 ## cURL 复现模板
 
-HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮。所有认证值均为 Visitor 占位符，即使使用 `--include-sensitive-evidence` 也不会放入模板。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#curl-复现模板)。
+HTML 确认漏洞卡片可提供安全的 POSIX shell cURL 模板和“复制 cURL”按钮。认证值均为 Visitor 占位符；匿名访问模板省略凭据，即使使用 `--include-sensitive-evidence` 也不会放入真实认证值。PUT 暂不生成复现模板：仅包含注入字段的局部请求会删除完整替换资源中的其余字段。请只在明确授权的测试环境中填入自己的测试凭据；脱敏值需人工补全，信息不足时不提供按钮。离线报告支持复制 fallback，也可直接选择命令文本。详见 [复现说明](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#curl-复现模板)。
 
 ## 从源码开发 / 运行仓库 mock
 
@@ -140,17 +164,20 @@ python mock_server/server.py
 granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --export-json result.local.json
 ```
 
-用浏览器打开默认生成的 **`granttrace_report.html`**：先查看发现与修复建议，再按状态筛选端点、展开证据。预期结果为 **1 个 CONFIRMED、1 个 PUBLIC、1 个 SECURE、2 个 SKIPPED**，确定性覆盖率 **60%**。两个 PATCH 因默认只读而跳过。JSON 结果写入 `result.local.json`；两个本地产物均由 `.gitignore` 忽略。
+用浏览器打开默认生成的 **`granttrace_report.html`**：先查看发现与修复建议，再按状态筛选检查项、展开证据。两个 PATCH 因默认只读而跳过；检测项数量与覆盖率取决于本分支所选证据策略，以实际 HTML / JSON 为准。JSON 结果写入 `result.local.json`；两个本地产物均由 `.gitignore` 忽略。
 
-在这个可丢弃的本地靶场体验写测试和恢复核验：
+即使对手工启动的本机 mock 添加写入开关，普通 CLI 仍缺少权威状态核验能力：
 
 ```bash
 granttrace --spec openapi.json --target http://127.0.0.1:8080 --config config.example.json --allow-write-tests --export-json result.local.json
 ```
 
-再次打开 **`granttrace_report.html`**。预期 **2 个 CONFIRMED、1 个 PUBLIC、2 个 SECURE**，确定性覆盖率 **100%**，批量赋值发现的 `rollback_verified` 为 `true`。本次扫描更新同名 HTML / JSON 文件；这些结果只属于内置五个演示端点。
+再次打开 **`granttrace_report.html`**，允许清单内的主动检查应在写前被阻断为 `INCONCLUSIVE`，不能取得已验证恢复的声明。本次扫描更新同名 HTML / JSON 文件。需要包含实际存储核验的主动 PATCH 演示时运行 `granttrace demo`。
 
 ## 验证与边界
+
+当前能力、未检测场景、覆盖率口径与维护验收对比见 [2.5.x 检测能力审计](docs/authorization-coverage-audit.md)。
+该记录区分确认漏洞、可疑线索和安全阻断，并评估尚未实现的相邻授权能力。
 
 ```bash
 python -m unittest discover -s tests
@@ -160,6 +187,6 @@ python scripts/verify_install.py
 
 测试直接使用仓库中的 `config.example.json`，无需创建本地凭据文件。[业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md) 单独记录团队共享、管理员读取、跨租户拒绝和故意越权的真值、误报与漏报；[验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md) 标明实际测试环境和范围。
 
-“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。仅在具备专用测试账户、独立读回和恢复方案的隔离环境启用写测试。远程 `$ref`、GraphQL、gRPC、自动 OAuth / mTLS 登录以及 POST / PUT 主动测试尚未实现。更多规则与迁移说明见 [操作指南](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。
+“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。当前普通外部 PATCH / PUT 主动测试保持阻断，内部夹具的权威观察能力不能泛化到外部 API。远程 `$ref`、GraphQL、gRPC、自动 OAuth / mTLS 登录和 POST 主动测试尚未实现；缺少明确私有值或角色边界的匿名 / BFLA 确认、无充分 Owner 基线的集合隔离结论也不支持。更多规则与迁移说明见 [操作指南](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。
 
 Apache License 2.0。

@@ -44,12 +44,18 @@ class SarifReportTests(unittest.TestCase):
 
     def test_rules_describe_only_supported_checks_and_cwes(self):
         rules = self.generate()["runs"][0]["tool"]["driver"]["rules"]
-        self.assertEqual({rule["id"] for rule in rules}, {"GT-BOLA-001", "GT-MASS-001"})
+        self.assertEqual({rule["id"] for rule in rules}, {"GT-BOLA-001", "GT-MASS-001", "GT-AUTH-001", "GT-BFLA-001"})
+        cwe_map = {
+            "GT-BOLA-001": "CWE-639",
+            "GT-MASS-001": "CWE-915",
+            "GT-AUTH-001": "CWE-306",
+            "GT-BFLA-001": "CWE-285",
+        }
         for rule in rules:
             with self.subTest(rule=rule["id"]):
                 for key in ("name", "shortDescription", "fullDescription", "help"):
                     self.assertTrue(rule[key])
-                cwe = "CWE-639" if rule["id"] == "GT-BOLA-001" else "CWE-915"
+                cwe = cwe_map[rule["id"]]
                 self.assertIn("security", rule["properties"]["tags"])
                 self.assertIn(cwe, rule["properties"]["tags"])
 

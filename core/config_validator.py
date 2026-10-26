@@ -116,6 +116,10 @@ class ConfigValidator:
         "expected_public",
         "expected_visitor_access",
         "resource_id_paths",
+        "private_data_paths",
+        "required_role",
+        "owner_role",
+        "visitor_role",
     }
 
     VALID_CONSISTENCY_VALUES = ("strong", "weak", "eventual")
@@ -943,7 +947,7 @@ class ConfigValidator:
             issues.append(
                 ConfigIssue(
                     path="write_allowlist",
-                    message="'write_allowlist' must be a list of 'PATCH /path' strings",
+                    message="'write_allowlist' must be a list of 'PATCH /path' or 'PUT /path' strings",
                     expected="list of strings",
                     actual=safe_diagnostic_value(allowlist),
                 )
@@ -962,11 +966,11 @@ class ConfigValidator:
                         suggestion="Ensure method is uppercase 'PATCH' followed by a space and a path starting with '/'",
                     )
                 )
-            elif method != "PATCH":
+            elif method not in ("PATCH", "PUT"):
                 issues.append(
                     ConfigIssue(
                         path=f"write_allowlist[{index}]",
-                        message=f"Write allowlist only supports 'PATCH' operations (got '{method}')",
+                        message=f"Write allowlist only supports 'PATCH' and 'PUT' operations (got '{method}')",
                         expected="'PATCH /path'",
                         actual=safe_diagnostic_value(item),
                         suggestion="Change method to 'PATCH'",
@@ -1006,11 +1010,11 @@ class ConfigValidator:
                         actual=safe_diagnostic_value(op_key),
                     )
                 )
-            elif method != "PATCH":
+            elif method not in ("PATCH", "PUT"):
                 issues.append(
                     ConfigIssue(
                         path=f"readbacks.{op_key}",
-                        message=f"Readback keys must strictly be 'PATCH /path' operations (got '{method}')",
+                        message=f"Readback keys must strictly be 'PATCH /path' or 'PUT /path' operations (got '{method}')",
                         expected="'PATCH /path'",
                         actual=safe_diagnostic_value(op_key),
                     )
@@ -1588,3 +1592,45 @@ class ConfigValidator:
                                     actual=safe_diagnostic_value(p),
                                 )
                             )
+
+            if "private_data_paths" in policy:
+                private_paths = policy["private_data_paths"]
+                if not isinstance(private_paths, list) or any(not isinstance(p, str) for p in private_paths):
+                    issues.append(
+                        ConfigIssue(
+                            path=f"bola.{ep_key}.private_data_paths",
+                            message="'private_data_paths' must be a list of exact Owner-private scalar field paths",
+                            expected="list of dot/bracket paths, e.g. items[0].private_note",
+                            actual=safe_diagnostic_value(private_paths),
+                        )
+                    )
+                else:
+                    for private_path in private_paths:
+                        try:
+                            if private_path != private_path.strip():
+                                raise ValueError("leading or trailing whitespace is unsupported")
+                            path_parts(private_path)
+                        except ValueError as exc:
+                            issues.append(
+                                ConfigIssue(
+                                    path=f"bola.{ep_key}.private_data_paths",
+                                    message=f"Invalid path expression in private_data_paths: {exc}",
+                                    expected="exact dot/bracket path with numeric array indexes; no wildcards",
+                                    actual=safe_diagnostic_value(private_path),
+                                )
+                            )
+
+            for role_key in ("required_role", "owner_role", "visitor_role"):
+                if role_key not in policy:
+                    continue
+                role = policy[role_key]
+                if (not isinstance(role, str) or not role or role != role.strip()
+                        or any(ord(char) < 32 or ord(char) == 127 for char in role)):
+                    issues.append(
+                        ConfigIssue(
+                            path=f"bola.{ep_key}.{role_key}",
+                            message=f"'{role_key}' must be an explicit nonempty role name without control characters",
+                            expected="nonempty string with no surrounding whitespace or control characters",
+                            actual=safe_diagnostic_value(role),
+                        )
+                    )

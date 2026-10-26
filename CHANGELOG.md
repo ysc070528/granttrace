@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased - 2.5.x maintenance
+
+### Fixed
+
+- Fail closed before external CLI PATCH tests when authoritative resource state
+  cannot be independently observed; write flags, mappings and a declared strong
+  readback cannot supply that proof. Existing CLI/config syntax remains accepted.
+- Check initial, post-write and restored HTTP documents against actual backing
+  state in the owned disposable Demo. Retain global write halt on unavailable
+  or contradictory restoration evidence, including queued concurrent callers.
+- Preserve and retest both original unmarked-cache counterexamples; distinguish
+  generic HTTP blocking from state-backed fixture detection statistics.
+
+- PR #42 follow-up review: reject explicitly aged/stale state evidence, require
+  previously observed business structure before confirming persistence, and
+  serialize direct write-audit calls so waiting callers observe recovery failures.
+- Add independent adversarial regressions and disclose two unresolved unmarked
+  stale-response probes; distinguish statement, branch and combined code coverage.
+- Require complete HTTP 200 JSON state readbacks without Content-Range before
+  using them as PATCH snapshots, persistence evidence or restoration evidence.
+  Preserve generic write acknowledgement handling, recovery and fail-closed write halting.
+- Retain strong Owner-object matches in 4xx/5xx response bodies as suspicious
+  leads only, without changing confirmation or SARIF export requirements.
+- Include explicitly readOnly fields with ordinary names in mutation candidates;
+  configured field mappings, write opt-in, allowlists and reversible snapshots still gate execution.
+- Prefer a declared JSON consumes format for Swagger 2 bodies and explain more
+  existing preflight exclusions in offline plans.
+- Add fixed-truth loopback acceptance scenarios, regression tests and a source-linked
+  capability audit with before/after measurements. No new vulnerability class is implemented.
+
 ## 2.5.3 - 2026-10-15
 
 ### Fixed

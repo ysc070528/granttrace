@@ -229,16 +229,16 @@ def main():
             )
             active = json.loads(active_file.read_text(encoding="utf-8"))
             restored = before == TargetMockHandler.DATABASE
-            rollback = next(
-                finding for finding in active["findings"] if finding["cwe"] == "CWE-915"
-            )["evidence"]["rollback_verified"]
-            if (active["tool_version"] != __version__ or active["stats"]["confirmed"] != 2
-                    or active["stats"]["error_count"] != 0
-                    or active["stats"]["conclusive_coverage_pct"] != 100.0
-                    or RecordingHandler.patch_requests == 0
-                    or not restored or not rollback
+            writes = [item for item in active["results"] if item["check"] == "MASS_ASSIGNMENT"]
+            rollback = False  # No write occurred; do not claim a restoration.
+            if (active["tool_version"] != __version__ or active["stats"]["confirmed"] != 1
+                    or active["stats"]["error_count"] != 0 or active["stats"]["inconclusive_count"] != 2
+                    or active["stats"]["conclusive_coverage_pct"] != 60.0
+                    or RecordingHandler.patch_requests != 0 or not restored
+                    or len(writes) != 2 or any(item["evidence"].get("rollback_verified") or
+                        item["evidence"].get("safety_signal") != "unverified_state_authority" for item in writes)
                     or f">v{__version__}</span>" not in report_file.read_text(encoding="utf-8")):
-                raise RuntimeError("Installed active scan or complete mock restoration failed")
+                raise RuntimeError("Installed generic active CLI did not block unverified resource state")
             if not RecordingHandler.user_agents or set(RecordingHandler.user_agents) != {
                 f"GrantTrace/{__version__}"
             }:
@@ -311,7 +311,7 @@ def main():
             "installed_cli_and_reporter_defaults_checked": True,
             "installed_readonly_scan": "passed",
             "installed_readonly_patch_requests": readonly_patch_requests,
-            "installed_active_scan": "passed",
+            "installed_active_scan": "blocked: no state authority",
             "installed_active_patch_requests": RecordingHandler.patch_requests,
             "installed_user_agent_checked": True,
             "installed_active_rollback_verified": rollback,

@@ -1,4 +1,6 @@
 import json
+import copy
+from urllib.parse import urlsplit
 import tempfile
 import threading
 import unittest
@@ -33,7 +35,7 @@ class AuditorIntegrationTests(unittest.TestCase):
         TargetMockHandler.reset_database()
 
     def make_auditor(self, allow_write_tests=False):
-        return APISentinelAuditor(
+        auditor = APISentinelAuditor(
             spec_path=str(ROOT / "openapi.json"),
             target_base_url=self.target,
             max_workers=3,
@@ -44,6 +46,10 @@ class AuditorIntegrationTests(unittest.TestCase):
             allow_write_tests=allow_write_tests,
             write_allowlist=self.config["write_allowlist"],
         )
+
+        auditor._authoritative_patch_state = lambda ep, url, mapping: copy.deepcopy(
+            TargetMockHandler.DATABASE["users"][urlsplit(url).path.split("/")[3]])
+        return auditor
 
     def test_default_mode_is_read_only_and_reports_skips(self):
         auditor = self.make_auditor(allow_write_tests=False)
@@ -215,7 +221,11 @@ class RollbackSafetyTests(unittest.TestCase):
         ]
         writes = []
 
+        state = {"role": "user"}
+        auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
+
         def fake_write(method, url, data=None, identity_name="anonymous"):
+            state.update(data)
             writes.append(data)
             return HTTPResult(200, '{"ok":true}')
 

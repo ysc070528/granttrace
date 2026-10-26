@@ -1,0 +1,2554 @@
+{
+  "audit_date": "2026-10-26",
+  "base_commit": "80c7202fdfd203e298a924bf77e5c154671123ff",
+  "scope": "Fixed local synthetic fixtures; no external API or Windows acceptance in this run",
+  "metric_definitions": {
+    "known_vulnerability_detection_rate": "CONFIRMED / all independently declared vulnerable fixtures, including safely blocked or opt-out cases",
+    "false_negative": "Known vulnerable fixture without CONFIRMED; SUSPICIOUS is still not a confirmation",
+    "executed": "Primary check attempted at least one HTTP request; initial readback counts as execution, not a PATCH"
+  },
+  "measurements": {
+    "before": {
+      "scope": "Fixed synthetic loopback fixtures; not production detection rates",
+      "metric_definitions": {
+        "known_vulnerability_detection_rate": "CONFIRMED / all independently declared vulnerable fixtures, including safely blocked or opt-out cases",
+        "false_negative": "Known vulnerable fixture without CONFIRMED; SUSPICIOUS is still not a confirmation",
+        "executed": "Primary check attempted at least one HTTP request; initial readback counts as execution, not a PATCH"
+      },
+      "scenario_count": 36,
+      "executed_scenarios": 29,
+      "eligible_target_scenarios": 29,
+      "executed_eligible_targets": 26,
+      "control_only_names": [
+        "no_object_selector",
+        "patch_default_readonly",
+        "patch_initial_202",
+        "patch_initial_206",
+        "patch_initial_content_range",
+        "patch_not_allowlisted",
+        "unsafe_read"
+      ],
+      "verdict_counts": {
+        "SECURE": 6,
+        "CONFIRMED": 13,
+        "AUTHORIZED": 2,
+        "INCONCLUSIVE": 9,
+        "SUSPICIOUS": 1,
+        "SKIPPED": 5
+      },
+      "known_vulnerable_scenarios": 25,
+      "confirmed_known_vulnerabilities": 13,
+      "known_vulnerability_detection_rate": 52.0,
+      "false_positives": 0,
+      "false_negatives": 12,
+      "safety_or_expectation_failures": 12,
+      "unrestored_resources": 5,
+      "false_restoration_claims": 4,
+      "source_commit": "80c7202fdfd203e298a924bf77e5c154671123ff",
+      "source_tree_dirty": false,
+      "runtime_source_sha256": "6196c7974fcfd51813429311050c9d8ccdf8604a6291608d8f906954e7ef382c",
+      "fixture_script_sha256": "8ce8961c5d84e1ec74ce3710b5f281ba46bcff495d744f2c5fa20d5ce826318f",
+      "scenarios": [
+        {
+          "name": "ordinary_denial",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SECURE",
+              "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_user_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_tenant_denial",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SECURE",
+              "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_tenant_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "team_sharing",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "AUTHORIZED",
+              "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "tenant_admin",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "AUTHORIZED",
+              "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "shared_but_denied",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor should have access to this selected Owner resource, but was denied; verify the identity and sharing/admin policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "Configured Visitor should have access to this selected Owner resource, but was denied; verify the identity and sharing/admin policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "caller_self_instead_of_owner",
+          "expected": "SUSPICIOUS",
+          "vulnerable": false,
+          "actual": "SUSPICIOUS",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "跨资源响应与访客自有资源基线一致或更接近，无法证明返回的是所有者资源。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SUSPICIOUS",
+              "reason": "跨资源响应与访客自有资源基线一致或更接近，无法证明返回的是所有者资源。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "nested_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "array_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "paged_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "query_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "masked_404_denial",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_500_owner_data",
+          "expected": "SUSPICIOUS",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict"
+          ],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_404_owner_data",
+          "expected": "SUSPICIOUS",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict"
+          ],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_500_generic",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "truncated_owner_response",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "A response was truncated; authorization comparison is incomplete",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "A response was truncated; authorization comparison is incomplete",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "no_object_selector",
+          "expected": "SKIPPED",
+          "vulnerable": null,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "unsafe_read",
+          "expected": "SKIPPED",
+          "vulnerable": null,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Read-only safety policy blocked an operation with explicit state-changing semantics; no request was sent",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}/delete",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "Read-only safety policy blocked an operation with explicit state-changing semantics; no request was sent",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_persist_restore",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_no_persistence",
+          "kind": "patch",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 3,
+          "patch_requests": 1,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "Strongly consistent readback showed no persistence for all configured fields",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_nested_restore",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'profile.role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'profile.role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_custom_readonly",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict"
+          ],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "server_marker: no mutation case was generated",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "server_marker: no mutation case was generated",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_nested_readonly",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict"
+          ],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "profile.server_marker: no mutation case was generated",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "profile.server_marker: no mutation case was generated",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_swagger_json_alternative",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "SKIPPED",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict"
+          ],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Only object application/json and application/merge-patch+json are supported; JSON Patch operation arrays and arbitrary vendor formats are not implemented",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Only object application/json and application/merge-patch+json are supported; JSON Patch operation arrays and arbitrary vendor formats are not implemented",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_restore_failure",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": false,
+          "recovery_sent": true,
+          "later_writes_halted": true,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "ROLLBACK",
+              "verdict": "ERROR",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 4
+            },
+            {
+              "endpoint": "PATCH /later",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_202",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "A write was sent despite an unusable baseline or write gate"
+          ],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_206",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "A write was sent despite an unusable baseline or write gate"
+          ],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_content_range",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "A write was sent despite an unusable baseline or write gate"
+          ],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_202",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "SECURE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "Disposable resource was not restored"
+          ],
+          "requests": 3,
+          "patch_requests": 1,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": true,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "Strongly consistent readback showed no persistence for all configured fields",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_203",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "SECURE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "Disposable resource was not restored"
+          ],
+          "requests": 3,
+          "patch_requests": 1,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": true,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "Strongly consistent readback showed no persistence for all configured fields",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_206",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "SECURE",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Unexpected primary verdict",
+            "Disposable resource was not restored"
+          ],
+          "requests": 3,
+          "patch_requests": 1,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": true,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "Strongly consistent readback showed no persistence for all configured fields",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_restore_202",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": false,
+          "oracle_failures": [
+            "Failed/ambiguous restoration was trusted",
+            "Later write was not halted"
+          ],
+          "requests": 8,
+          "patch_requests": 3,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            },
+            {
+              "endpoint": "PATCH /later",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_invalid_after",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "role: invalid read-after-write; original snapshot restored",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: invalid read-after-write; original snapshot restored",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_default_readonly",
+          "kind": "patch",
+          "expected": "SKIPPED",
+          "vulnerable": true,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "State-changing checks are disabled; pass --allow-write-tests to opt in",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "State-changing checks are disabled; pass --allow-write-tests to opt in",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_not_allowlisted",
+          "kind": "patch",
+          "expected": "SKIPPED",
+          "vulnerable": true,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Endpoint is not in the explicit, case-sensitive write-test allowlist",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Endpoint is not in the explicit, case-sensitive write-test allowlist",
+              "requests_attempted": 0
+            }
+          ]
+        }
+      ]
+    },
+    "after": {
+      "scope": "Fixed synthetic loopback fixtures; not production detection rates",
+      "metric_definitions": {
+        "known_vulnerability_detection_rate": "CONFIRMED / all independently declared vulnerable fixtures, including safely blocked or opt-out cases",
+        "false_negative": "Known vulnerable fixture without CONFIRMED; SUSPICIOUS is still not a confirmation",
+        "executed": "Primary check attempted at least one HTTP request; initial readback counts as execution, not a PATCH"
+      },
+      "scenario_count": 36,
+      "executed_scenarios": 32,
+      "eligible_target_scenarios": 29,
+      "executed_eligible_targets": 29,
+      "control_only_names": [
+        "no_object_selector",
+        "patch_default_readonly",
+        "patch_initial_202",
+        "patch_initial_206",
+        "patch_initial_content_range",
+        "patch_not_allowlisted",
+        "unsafe_read"
+      ],
+      "verdict_counts": {
+        "SECURE": 3,
+        "CONFIRMED": 13,
+        "AUTHORIZED": 2,
+        "INCONCLUSIVE": 11,
+        "SUSPICIOUS": 3,
+        "SKIPPED": 4
+      },
+      "known_vulnerable_scenarios": 25,
+      "confirmed_known_vulnerabilities": 13,
+      "known_vulnerability_detection_rate": 52.0,
+      "false_positives": 0,
+      "false_negatives": 12,
+      "safety_or_expectation_failures": 0,
+      "unrestored_resources": 2,
+      "false_restoration_claims": 0,
+      "source_commit": "80c7202fdfd203e298a924bf77e5c154671123ff",
+      "source_tree_dirty": true,
+      "runtime_source_sha256": "8fa918687541a9f24d8264e5c87fd07043514f4e1fb1087b716321ad8a775e02",
+      "fixture_script_sha256": "8ce8961c5d84e1ec74ce3710b5f281ba46bcff495d744f2c5fa20d5ce826318f",
+      "scenarios": [
+        {
+          "name": "ordinary_denial",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SECURE",
+              "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_user_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_tenant_denial",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SECURE",
+              "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "cross_tenant_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "team_sharing",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "AUTHORIZED",
+              "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "tenant_admin",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "AUTHORIZED",
+              "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "shared_but_denied",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Configured Visitor should have access to this selected Owner resource, but was denied; verify the identity and sharing/admin policy",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "Configured Visitor should have access to this selected Owner resource, but was denied; verify the identity and sharing/admin policy",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "caller_self_instead_of_owner",
+          "expected": "SUSPICIOUS",
+          "vulnerable": false,
+          "actual": "SUSPICIOUS",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "跨资源响应与访客自有资源基线一致或更接近，无法证明返回的是所有者资源。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SUSPICIOUS",
+              "reason": "跨资源响应与访客自有资源基线一致或更接近，无法证明返回的是所有者资源。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "nested_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "array_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "paged_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "query_resource_leak",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records",
+              "check": "BOLA",
+              "verdict": "CONFIRMED",
+              "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "masked_404_denial",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 客户端错误状态码 404，不能据此证明访问控制生效",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_500_owner_data",
+          "expected": "SUSPICIOUS",
+          "vulnerable": true,
+          "actual": "SUSPICIOUS",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SUSPICIOUS",
+              "reason": "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_404_owner_data",
+          "expected": "SUSPICIOUS",
+          "vulnerable": true,
+          "actual": "SUSPICIOUS",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "SUSPICIOUS",
+              "reason": "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "error_500_generic",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": false,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "访客跨资源请求未得到可判定响应：HTTP 服务端错误状态码 500",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "truncated_owner_response",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 4,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "A response was truncated; authorization comparison is incomplete",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}",
+              "check": "BOLA",
+              "verdict": "INCONCLUSIVE",
+              "reason": "A response was truncated; authorization comparison is incomplete",
+              "requests_attempted": 4
+            }
+          ]
+        },
+        {
+          "name": "no_object_selector",
+          "expected": "SKIPPED",
+          "vulnerable": null,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "unsafe_read",
+          "expected": "SKIPPED",
+          "vulnerable": null,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": null,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Read-only safety policy blocked an operation with explicit state-changing semantics; no request was sent",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /records/{record_id}/delete",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "Read-only safety policy blocked an operation with explicit state-changing semantics; no request was sent",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_persist_restore",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_no_persistence",
+          "kind": "patch",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 3,
+          "patch_requests": 1,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "Strongly consistent readback showed no persistence for all configured fields",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SECURE",
+              "reason": "Strongly consistent readback showed no persistence for all configured fields",
+              "requests_attempted": 3
+            }
+          ]
+        },
+        {
+          "name": "patch_nested_restore",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'profile.role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'profile.role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_custom_readonly",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'server_marker' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'server_marker' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_nested_readonly",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'profile.server_marker' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'profile.server_marker' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_swagger_json_alternative",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_restore_failure",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": false,
+          "recovery_sent": true,
+          "later_writes_halted": true,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "ROLLBACK",
+              "verdict": "ERROR",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 4
+            },
+            {
+              "endpoint": "PATCH /later",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_202",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 1,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+              "requests_attempted": 1
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_206",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 1,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+              "requests_attempted": 1
+            }
+          ]
+        },
+        {
+          "name": "patch_initial_content_range",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 1,
+          "patch_requests": 0,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": false,
+          "later_writes_halted": false,
+          "primary_reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: readback requires a complete HTTP 200 JSON object without Content-Range",
+              "requests_attempted": 1
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_202",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "role: invalid read-after-write; original snapshot restored",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: invalid read-after-write; original snapshot restored",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_203",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "role: invalid read-after-write; original snapshot restored",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: invalid read-after-write; original snapshot restored",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_stale_206",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "role: invalid read-after-write; original snapshot restored",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: invalid read-after-write; original snapshot restored",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_restore_202",
+          "kind": "patch",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": false,
+          "rollback_verified": false,
+          "recovery_sent": true,
+          "later_writes_halted": true,
+          "primary_reason": "Privilege field 'role' persisted after mutation",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "CONFIRMED",
+              "reason": "Privilege field 'role' persisted after mutation",
+              "requests_attempted": 5
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "ROLLBACK",
+              "verdict": "ERROR",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 4
+            },
+            {
+              "endpoint": "PATCH /later",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Recovery could not be guaranteed; later write tests stopped. Inspect the dedicated test resource before retrying.",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_invalid_after",
+          "kind": "patch",
+          "expected": "INCONCLUSIVE",
+          "vulnerable": true,
+          "actual": "INCONCLUSIVE",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 5,
+          "patch_requests": 2,
+          "executed": true,
+          "resource_restored": true,
+          "rollback_verified": true,
+          "recovery_sent": true,
+          "later_writes_halted": false,
+          "primary_reason": "role: invalid read-after-write; original snapshot restored",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "INCONCLUSIVE",
+              "reason": "role: invalid read-after-write; original snapshot restored",
+              "requests_attempted": 5
+            }
+          ]
+        },
+        {
+          "name": "patch_default_readonly",
+          "kind": "patch",
+          "expected": "SKIPPED",
+          "vulnerable": true,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "State-changing checks are disabled; pass --allow-write-tests to opt in",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "State-changing checks are disabled; pass --allow-write-tests to opt in",
+              "requests_attempted": 0
+            }
+          ]
+        },
+        {
+          "name": "patch_not_allowlisted",
+          "kind": "patch",
+          "expected": "SKIPPED",
+          "vulnerable": true,
+          "actual": "SKIPPED",
+          "matches_expectation": true,
+          "oracle_failures": [],
+          "requests": 0,
+          "patch_requests": 0,
+          "executed": false,
+          "resource_restored": true,
+          "rollback_verified": null,
+          "recovery_sent": null,
+          "later_writes_halted": false,
+          "primary_reason": "Endpoint is not in the explicit, case-sensitive write-test allowlist",
+          "recorded_outcomes": [
+            {
+              "endpoint": "GET /profile",
+              "check": "BOLA",
+              "verdict": "SKIPPED",
+              "reason": "No object selector was found; this operation is not applicable to the current object-level detector",
+              "requests_attempted": 0
+            },
+            {
+              "endpoint": "PATCH /profile",
+              "check": "MASS_ASSIGNMENT",
+              "verdict": "SKIPPED",
+              "reason": "Endpoint is not in the explicit, case-sensitive write-test allowlist",
+              "requests_attempted": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "verification": {
+    "environment": {
+      "os": "Linux",
+      "python": "3.12.14"
+    },
+    "before": {
+      "unittest_count": 634,
+      "unittest_seconds": 92.625,
+      "unittest_passed": true,
+      "coverage_totals": {
+        "covered_lines": 4404,
+        "num_statements": 4971,
+        "percent_covered": 86.49223004383052,
+        "percent_covered_display": "86.49",
+        "missing_lines": 567,
+        "excluded_lines": 0,
+        "percent_statements_covered": 88.59384429692214,
+        "percent_statements_covered_display": "88.59",
+        "num_branches": 2558,
+        "num_partial_branches": 318,
+        "covered_branches": 2108,
+        "missing_branches": 450,
+        "percent_branches_covered": 82.40813135261924,
+        "percent_branches_covered_display": "82.41"
+      }
+    },
+    "after": {
+      "unittest_count": 650,
+      "unittest_seconds": 94.112,
+      "unittest_passed": true,
+      "coverage_totals": {
+        "covered_lines": 4427,
+        "num_statements": 4984,
+        "percent_covered": 86.73550436854647,
+        "percent_covered_display": "86.74",
+        "missing_lines": 557,
+        "excluded_lines": 0,
+        "percent_statements_covered": 88.82423756019261,
+        "percent_statements_covered_display": "88.82",
+        "num_branches": 2570,
+        "num_partial_branches": 313,
+        "covered_branches": 2125,
+        "missing_branches": 445,
+        "percent_branches_covered": 82.68482490272373,
+        "percent_branches_covered_display": "82.68"
+      }
+    },
+    "ruff": "All checks passed (exit 0); command: python -m ruff check .",
+    "mypy": "Success: no issues found in 19 source files",
+    "examples": [
+      {
+        "mode": "readonly",
+        "exit_code": 0,
+        "confirmed": 1,
+        "status_counts": {
+          "CONFIRMED": 1,
+          "PUBLIC": 1,
+          "SECURE": 1,
+          "SKIPPED": 2
+        },
+        "conclusive_coverage_pct": 60.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      },
+      {
+        "mode": "active-json",
+        "exit_code": 1,
+        "confirmed": 2,
+        "status_counts": {
+          "CONFIRMED": 2,
+          "PUBLIC": 1,
+          "SECURE": 2
+        },
+        "conclusive_coverage_pct": 100.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      },
+      {
+        "mode": "active-yaml",
+        "exit_code": 1,
+        "confirmed": 2,
+        "status_counts": {
+          "CONFIRMED": 2,
+          "PUBLIC": 1,
+          "SECURE": 2
+        },
+        "conclusive_coverage_pct": 100.0,
+        "default_report": "granttrace_report.html",
+        "default_report_created_without_output_option": true,
+        "tool_version": "2.5.3",
+        "full_database_restored": true
+      }
+    ],
+    "installation": {
+      "wheel": "granttrace-2.5.3-py3-none-any.whl",
+      "python": "3.12.14",
+      "version": "GrantTrace 2.5.3",
+      "project_version": "2.5.3",
+      "wheel_metadata_version": "2.5.3",
+      "installed_metadata_version": "2.5.3",
+      "installed_runtime_version": "2.5.3",
+      "demo_resources_in_wheel": [
+        "core/demo_assets/demo-config.json",
+        "core/demo_assets/mock-data.json",
+        "core/demo_assets/openapi.json"
+      ],
+      "installed_demo_without_checkout_files": true,
+      "installed_demo_bola_confirmed": 1,
+      "installed_demo_mass_assignment_confirmed": 1,
+      "installed_demo_rollback_verified": true,
+      "installed_demo_database_restored": true,
+      "installed_demo_server_stopped": true,
+      "installed_demo_environment_proxy_bypassed": true,
+      "installed_demo_readonly_patch_requests": 0,
+      "version_consistency": true,
+      "fresh_build_directory": true,
+      "supplied_release_wheel": false,
+      "installed_import_checked": true,
+      "installed_default_report": "granttrace_report.html",
+      "installed_cli_and_reporter_defaults_checked": true,
+      "installed_readonly_scan": "passed",
+      "installed_readonly_patch_requests": 0,
+      "installed_active_scan": "passed",
+      "installed_active_patch_requests": 3,
+      "installed_user_agent_checked": true,
+      "installed_active_rollback_verified": true,
+      "installed_full_database_restored": true,
+      "installed_html_json_versions_checked": true,
+      "declared_pyyaml_dependency_installed": true,
+      "config_validation": "passed",
+      "json_yaml_plan_equivalence": true,
+      "offline_plan_requests_sent": 0,
+      "draft_created_and_blocked": true,
+      "run_outside_source_tree": true,
+      "dependency_install_mode": "pip dependency resolution"
+    },
+    "business_scenarios": {
+      "scope": "Six local model fixtures; not production API detection rates",
+      "scenarios": [
+        {
+          "name": "team_sharing",
+          "relationship": "shared_team",
+          "policy": "allow",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy"
+        },
+        {
+          "name": "tenant_admin",
+          "relationship": "tenant_admin",
+          "policy": "allow",
+          "expected": "AUTHORIZED",
+          "vulnerable": false,
+          "actual": "AUTHORIZED",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "Configured Visitor is authorized to read this selected Owner resource; observed access matches this pair's explicit policy"
+        },
+        {
+          "name": "unshared_same_tenant",
+          "relationship": "unshared",
+          "policy": "deny",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403"
+        },
+        {
+          "name": "cross_tenant_isolation",
+          "relationship": "cross_tenant",
+          "policy": "deny",
+          "expected": "SECURE",
+          "vulnerable": false,
+          "actual": "SECURE",
+          "matches_expectation": true,
+          "finding_count": 0,
+          "reason": "访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：HTTP 鉴权拒绝状态码 403"
+        },
+        {
+          "name": "cross_tenant_leak",
+          "relationship": "cross_tenant",
+          "policy": "deny",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "finding_count": 1,
+          "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。"
+        },
+        {
+          "name": "same_tenant_leak",
+          "relationship": "unshared",
+          "policy": "deny",
+          "expected": "CONFIRMED",
+          "vulnerable": true,
+          "actual": "CONFIRMED",
+          "matches_expectation": true,
+          "finding_count": 1,
+          "reason": "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。"
+        }
+      ],
+      "false_positives": 0,
+      "false_negatives": 0,
+      "inconclusive": 0,
+      "matches_expectation": true
+    }
+  },
+  "spec_inventory": [
+    {
+      "spec": "openapi.json",
+      "version": "OpenAPI 3.0.3",
+      "operations": [
+        {
+          "endpoint": "GET /api/public/articles/{article_id}",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "GET /api/documents/{doc_uuid}",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "GET /api/users/{user_id}/profile",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "PATCH /api/users/{user_id}/settings",
+          "check": "MASS_ASSIGNMENT",
+          "writes_enabled": false,
+          "content_type": "application/json",
+          "readback_path": "/api/users/{user_id}/profile",
+          "configured_fields": [
+            "role"
+          ],
+          "readback_consistency": "strong"
+        },
+        {
+          "endpoint": "PATCH /api/users/{user_id}/nickname",
+          "check": "MASS_ASSIGNMENT",
+          "writes_enabled": false,
+          "content_type": "application/json",
+          "readback_path": "/api/users/{user_id}/profile",
+          "configured_fields": [
+            "role"
+          ],
+          "readback_consistency": "strong"
+        }
+      ]
+    },
+    {
+      "spec": "core/demo_assets/openapi.json",
+      "version": "OpenAPI 3.0.3",
+      "operations": [
+        {
+          "endpoint": "GET /api/public/articles/{article_id}",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "GET /api/documents/{doc_uuid}",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "GET /api/users/{user_id}/profile",
+          "check": "BOLA",
+          "writes_enabled": false
+        },
+        {
+          "endpoint": "PATCH /api/users/{user_id}/settings",
+          "check": "MASS_ASSIGNMENT",
+          "writes_enabled": false,
+          "content_type": "application/json",
+          "readback_path": "/api/users/{user_id}/profile",
+          "configured_fields": [
+            "role"
+          ],
+          "readback_consistency": "strong"
+        },
+        {
+          "endpoint": "PATCH /api/users/{user_id}/nickname",
+          "check": "MASS_ASSIGNMENT",
+          "writes_enabled": false,
+          "content_type": "application/json",
+          "readback_path": "/api/users/{user_id}/profile",
+          "configured_fields": [
+            "role"
+          ],
+          "readback_consistency": "strong"
+        }
+      ]
+    }
+  ]
+}

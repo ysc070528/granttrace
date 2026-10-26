@@ -33,6 +33,8 @@ BUSINESS_CONTENT_KEYS = {"title", "department", "content"}
 BODY_KEYS = {"body", "response_body", "request_body", "raw_body"}
 PAYLOAD_KEYS = {"payload", "request_payload", "response_payload"}
 URL_KEYS = {"url", "uri", "target", "endpoint_url", "request_url", "response_url", "error_url"}
+FIELD_PATH_KEYS = {"private_data_paths", "owner_private_data_paths", "matched_private_data_paths"}
+_FIELD_PATH = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_]*|\[\d+\])(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*")
 
 _URL_PATTERN = re.compile(
     r"(?i)\b(?:https?|wss?)://[^\s<>\"']+|(?<!\w)/[^\s<>\"']*\?[^\s<>\"']*"
@@ -192,13 +194,13 @@ class _Sanitizer:
         except (ValueError, UnicodeError):
             return "[URL OMITTED]"
 
-    def text(self, text: str, depth: int = 0, business_payload: bool = False) -> str:
+    def text(self, text: str, depth: int = 0, business_payload: bool = False, field_path: bool = False) -> str:
         if not self.include_sensitive:
             stripped = text.lstrip()
             # A result field can itself hold an encoded JSON object. Redact it
             # structurally rather than allowing quoted sensitive keys through.
             looks_like_array = re.match(r'\[\s*(?:[\[{"\d-]|true\b|false\b|null\b|\])', stripped)
-            if stripped.startswith("{") or looks_like_array:
+            if (stripped.startswith("{") or looks_like_array) and not (field_path and _FIELD_PATH.fullmatch(text)):
                 try:
                     parsed = json.loads(text)
                 except (ValueError, RecursionError):
@@ -227,7 +229,7 @@ class _Sanitizer:
         rendered = json.dumps(self.payload(parsed, depth + 1, True), ensure_ascii=False, sort_keys=True)
         return self._limit_text(rendered, max_chars)
 
-    def payload(self, value: Any, depth: int = 0, business_payload: bool = False) -> Any:
+    def payload(self, value: Any, depth: int = 0, business_payload: bool = False, field_paths: bool = False) -> Any:
         if depth > MAX_DEPTH:
             return "[DEPTH_LIMIT]"
         if self.nodes_remaining <= 0:
@@ -252,7 +254,8 @@ class _Sanitizer:
                     self.nodes_remaining -= 1
                     dict_result[safe_key] = self._limit_text(self.url(item))
                 else:
-                    dict_result[safe_key] = self.payload(item, depth + 1, business_payload or normalized in PAYLOAD_KEYS)
+                    dict_result[safe_key] = self.payload(item, depth + 1, business_payload or normalized in PAYLOAD_KEYS,
+                                                        normalized in FIELD_PATH_KEYS and not business_payload)
             return dict_result
         if isinstance(value, (list, tuple)):
             list_result: list[object] = []
@@ -260,10 +263,10 @@ class _Sanitizer:
                 if index >= MAX_CONTAINER_ITEMS or self.nodes_remaining <= 0:
                     list_result.append("[ITEM_LIMIT]")
                     break
-                list_result.append(self.payload(item, depth + 1, business_payload))
+                list_result.append(self.payload(item, depth + 1, business_payload, field_paths))
             return list_result
         if isinstance(value, str):
-            return self.text(value, depth, business_payload)
+            return self.text(value, depth, business_payload, field_paths)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             # JSON can turn an echoed numeric credential into a number, so
             # string-only substitution cannot protect this output boundary.

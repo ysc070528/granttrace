@@ -24,6 +24,7 @@ from types import MappingProxyType
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Tuple, Union
 
 from core import __version__
+from core.authorization import AuthorizationEvidence
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
 from core.evidence import body_sha256, sanitize_body, sanitize_evidence
@@ -50,10 +51,9 @@ class _ReadSafetyCache:
 
 
 class APISentinelAuditor:
-    # PATCH has reversible partial-update semantics. POST and PUT require an
-    # operation-specific compensation/full-snapshot design that this release
-    # deliberately does not attempt to guess.
-    WRITE_METHODS = {"PATCH"}
+    # Both methods require independent actual-state authority. PUT additionally
+    # requires an unambiguous full root-document replacement snapshot.
+    WRITE_METHODS = {"PATCH", "PUT"}
     AUTH_DENIAL_STATUSES = {401, 403}
     INVALID_TEST_STATUSES = {400, 404, 405, 409, 415, 422}
 
@@ -109,8 +109,8 @@ class APISentinelAuditor:
         for item in write_allowlist or []:
             c_key = _canonical_op_key(item)
             is_valid, method, path, canonical, err_msg = parse_operation_key(c_key)
-            if not is_valid or method != "PATCH":
-                raise ValueError("write_allowlist entries must be 'PATCH /case-sensitive-path'")
+            if not is_valid or method not in self.WRITE_METHODS:
+                raise ValueError("write_allowlist entries must be 'PATCH /case-sensitive-path' or 'PUT /case-sensitive-path'")
             self.write_allowlist.add(canonical)
         self._writes_halted_reason: Optional[str] = None
 
@@ -121,6 +121,7 @@ class APISentinelAuditor:
         self._rate_lock = threading.Lock()
         self._next_request_at = 0.0
         self._result_lock = threading.Lock()
+        self._write_lock = threading.RLock()
         self._request_accounting = threading.local()
         self._resource_locks: Dict[str, threading.Lock] = {}
         self._resource_locks_guard = threading.Lock()
@@ -159,6 +160,9 @@ class APISentinelAuditor:
             "confirmed": 0,
             "bola_confirmed": 0,
             "mass_assignment_confirmed": 0,
+            "broken_auth_confirmed": 0,
+            "bfla_confirmed": 0,
+            "transport_attempts": 0,
             "public_endpoints": 0,
             "authorized_endpoints": 0,
             "secure_endpoints": 0,
@@ -364,6 +368,8 @@ class APISentinelAuditor:
                 encoded_data = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
             request = urllib.request.Request(url, data=encoded_data, method=method, headers=headers)
             self._request_accounting.attempts = (getattr(self._request_accounting, "attempts", None) or 0) + 1
+            with self._result_lock:
+                self.stats["transport_attempts"] += 1
             try:
                 response = self._opener.open(request, timeout=self.request_timeout)
             except urllib.error.HTTPError as exc:
@@ -474,19 +480,35 @@ class APISentinelAuditor:
             url += "?" + "&".join(name + "=" + value for name, value in query_pairs)
         return url
 
-    def _safe_body(self, result: HTTPResult) -> Dict[str, Any]:
-        return {
+    def _safe_body(self, result: HTTPResult, private_values: Iterable[str] = ()) -> Dict[str, Any]:
+        secrets = (*self._secret_values, *private_values)
+        return sanitize_evidence({
             "status": result.status,
             "body": sanitize_body(
                 result.body,
                 include_sensitive=self.include_sensitive_evidence,
                 max_chars=min(self.max_response_bytes, 4096),
-                secret_values=self._secret_values,
+                secret_values=secrets,
             ),
             "sha256": body_sha256(result.body),
             "truncated": result.truncated,
             "error": result.error,
-        }
+        }, self.include_sensitive_evidence, secrets)
+
+    @staticmethod
+    def _private_evidence_values(owner: HTTPResult, policy: Dict[str, Any]) -> Tuple[str, ...]:
+        # Redact configured private values from every identity's stored body,
+        # including echoes at other paths. Evaluation still uses original HTTP.
+        try:
+            document = strict_json_loads(owner.body)
+        except (TypeError, ValueError, RecursionError):
+            return ()
+        values = []
+        for path in policy.get("private_data_paths", []):
+            exists, value = get_path(document, path)
+            if exists and ((isinstance(value, str) and value) or type(value) in (int, float)):
+                values.append(str(value))
+        return tuple(values)
 
     def _record_result(
         self,
@@ -571,6 +593,10 @@ class APISentinelAuditor:
                 self.stats["error_count"] += 1
             if finding:
                 self.findings.append(finding)
+                if check == "BROKEN_AUTH" and verdict == Verdict.CONFIRMED:
+                    self.stats["broken_auth_confirmed"] += 1
+                elif check == "BFLA" and verdict == Verdict.CONFIRMED:
+                    self.stats["bfla_confirmed"] += 1
         return result
 
     @staticmethod
@@ -601,20 +627,15 @@ class APISentinelAuditor:
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
             return
-        path = ep["path"]
-        parameters = ep.get("parameters", [])
-        has_selector = "{" in path or any(item.get("in") == "query" for item in parameters)
-        if not has_selector:
-            self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found; this operation is not applicable to the current object-level detector",
-                                evidence={"reason_category": "not_applicable", "requests_attempted": 0})
-            return
-
         policy = self.bola_config.get(self._operation_key(ep), {})
         validation = ConfigValidator.validate({"bola": {self._operation_key(ep): policy}})
         if not validation.is_valid:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
                                 "BOLA operation policy is invalid; run offline configuration validation; no request was sent",
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+            return
+        if not self._has_object_selector(ep) or ("{" not in ep["path"] and policy.get("private_data_paths")):
+            self._audit_collection(ep, policy)
             return
         expected_access = policy.get("expected_visitor_access", "deny")
         try:
@@ -647,11 +668,12 @@ class APISentinelAuditor:
         if visitor_self is not None:
             request_results["visitor_self"] = visitor_self
         transport_errors = [f"{name}: {item.error}" for name, item in request_results.items() if item.error]
+        private_values = self._private_evidence_values(owner, policy)
         evidence: Dict[str, Any] = {
             "requests_attempted": len(request_results),
             "target_url": owner_url,
             "visitor_self_url": visitor_self_url if visitor_self is not None else None,
-            **{name: self._safe_body(item) for name, item in request_results.items()},
+            **{name: self._safe_body(item, private_values) for name, item in request_results.items()},
         }
         if any(item.truncated for item in request_results.values()):
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
@@ -718,10 +740,157 @@ class APISentinelAuditor:
             evidence=evidence,
             finding=finding,
         )
+        # Legacy object checks retain their evidence model and result count.
+        # Extra detection items are selected by explicit new policy; incidental
+        # anonymous access and admin words remain leads in the existing evidence.
+        if policy.get("private_data_paths") or policy.get("required_role"):
+            self._record_expanded_read_checks(ep, policy, owner, visitor_cross, anonymous, evidence)
+
+    @staticmethod
+    def _is_admin_endpoint(ep: Dict[str, Any]) -> bool:
+        tokens = {"admin", "administrator", "system", "management", "internal", "privileged"}
+        path = set(str(ep.get("path", "")).lower().strip("/").split("/"))
+        metadata = " ".join(str(ep.get(key, "")) for key in ("tags", "operation_id", "summary")).lower()
+        return bool(path.intersection(tokens)) or any(token in metadata for token in tokens)
+
+    def _record_expanded_read_checks(
+        self, ep: Dict[str, Any], policy: Dict[str, Any], owner: HTTPResult,
+        visitor: HTTPResult, anonymous: HTTPResult, evidence: Dict[str, Any], *, collection: bool = False,
+    ) -> None:
+        security = ep.get("security", [])
+        requires_auth = bool(security) and {} not in security
+        expected_public = policy.get("expected_public") is True or (
+            ep.get("security_declared", False) and (security == [] or {} in security))
+        private_paths = policy.get("private_data_paths", [])
+        decisions = []
+        if collection:
+            collection_policy = dict(policy, expected_public=expected_public)
+            decisions.append(("BOLA", "CWE-639", AuthorizationEvidence.evaluate_collection(
+                owner, visitor, anonymous, policy=collection_policy, requires_auth=requires_auth)))
+        if requires_auth or private_paths:
+            decisions.append(("BROKEN_AUTH", "CWE-306", AuthorizationEvidence.evaluate_auth(
+                owner, anonymous, requires_auth=requires_auth, expected_public=expected_public,
+                private_data_paths=private_paths)))
+        candidate = self._is_admin_endpoint(ep)
+        if candidate or policy.get("required_role"):
+            decisions.append(("BFLA", "CWE-285", AuthorizationEvidence.evaluate_bfla(
+                owner, visitor, anonymous, role_policy=dict(policy, expected_public=expected_public), private_data_paths=private_paths,
+                candidate=candidate)))
+        # All results describe the same observations, not additional HTTP traffic.
+        group_id = self._operation_key(ep) + ":read"
+        for check, cwe, decision in decisions:
+            decision_evidence = dict(evidence)
+            decision_evidence.update({"observation_group": group_id, "shared_observations": True,
+                                      "decision_evidence": decision["evidence"]})
+            verdict = decision["verdict"]
+            finding = None
+            if verdict == Verdict.CONFIRMED:
+                finding = {"type": {"BOLA": "BOLA (Collection Private Data Exposure)",
+                                    "BROKEN_AUTH": "Broken Authentication (Private Data Exposure)",
+                                    "BFLA": "Broken Function Level Authorization"}[check],
+                           "cwe": cwe, "severity": "High", "endpoint": self._operation_key(ep),
+                           "target_url": evidence.get("target_url"), "details": decision["reason"],
+                           "evidence": decision_evidence}
+                if check == "BOLA":
+                    with self._result_lock:
+                        self.stats["bola_confirmed"] += 1
+            self._record_result(ep, check, verdict, decision["reason"], decision_evidence, finding)
+
+    def _audit_collection(self, ep: Dict[str, Any], policy: Dict[str, Any]) -> None:
+        security = ep.get("security", [])
+        if not (bool(security) and {} not in security or self._is_admin_endpoint(ep)
+                or policy.get("private_data_paths") or policy.get("required_role")):
+            self._record_result(ep, "BOLA", Verdict.SKIPPED,
+                                "No object selector or selected collection evidence policy was found",
+                                evidence={"reason_category": "not_applicable", "requests_attempted": 0})
+            return
+        collection_selected = not ("resource_id_paths" in policy and "private_data_paths" not in policy)
+        if not collection_selected:
+            # An existing resource-identifier policy selects the object detector;
+            # it does not declare Owner-private collection values. Preserve that
+            # detector's not-applicable result when there is no object selector.
+            # Authentication/function probes are separate selected checks; they
+            # cannot turn missing collection comparison evidence into isolation.
+            self._record_result(ep, "BOLA", Verdict.SKIPPED,
+                                "Object identifier policy has no object selector; no private-data collection policy was supplied",
+                                evidence={"reason_category": "not_applicable", "requests_attempted": 0})
+        try:
+            url = self._build_url(ep, "owner")
+        except ParameterSerializationError as exc:
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
+                                evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+            return
+        risk = self._read_request_risk("GET", url)
+        if risk:
+            self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0, **risk})
+            return
+        owner = self._http_request("GET", url, identity_name="owner")
+        visitor = self._http_request("GET", url, identity_name="visitor")
+        anonymous = self._http_request("GET", url, identity_name="anonymous")
+        # Capture once before recording resets this worker's accounting.
+        attempts = getattr(self._request_accounting, "attempts", None)
+        private_values = self._private_evidence_values(owner, policy)
+        evidence = {"target_url": url, "requests_attempted": 3 if attempts is None else attempts,
+                    "owner": self._safe_body(owner, private_values), "visitor_cross": self._safe_body(visitor, private_values),
+                    "anonymous": self._safe_body(anonymous, private_values)}
+        self._record_expanded_read_checks(ep, policy, owner, visitor, anonymous, evidence, collection=collection_selected)
+
+    @staticmethod
+    def _has_object_selector(ep: Dict[str, Any]) -> bool:
+        return "{" in ep["path"] or any(item.get("in") == "query" for item in ep.get("parameters", []))
+
+    def _authoritative_patch_state(
+        self, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """No generic HTTP observation can establish authoritative resource state.
+
+        The bundled in-process Demo overrides this with direct database access.
+        This is an internal integration seam, never a configuration assertion or
+        a cache-header heuristic. External CLI targets have no implementation.
+        """
+        return None
+
+    def _has_patch_state_authority(self) -> bool:
+        implementation = getattr(self._authoritative_patch_state, "__func__", None)
+        return implementation is not APISentinelAuditor._authoritative_patch_state
+
+    def _verified_patch_document(
+        self, result: HTTPResult, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        document = self._json_object(result)
+        if document is None:
+            return None
+        try:
+            authority = self._authoritative_patch_state(ep, mutation_url, readback)
+        except Exception:
+            return None
+        # Exact complete-document equality is required before ignoring volatile
+        # paths for restoration comparison. Matching HTTP content alone is not proof.
+        if not isinstance(authority, dict) or not json_values_equal(document, authority):
+            return None
+        return document
 
     @staticmethod
     def _json_object(result: HTTPResult) -> Optional[Dict[str, Any]]:
-        if not result.ok or result.truncated:
+        # HTTP shape checks only; callers must separately verify state authority.
+        # Generic 2xx includes pending, transformed and partial representations;
+        # those cannot certify snapshots, persistence or restoration.
+        if result.error is not None or result.status != 200 or result.truncated:
+            return None
+        headers = {name.lower(): value for name, value in result.headers.items()}
+        if "content-range" in headers:
+            return None
+        # Explicitly aged/stale representations cannot support a state claim,
+        # even when a gateway gives them HTTP 200. Absence of these headers is
+        # not proof of freshness; active transactions separately require authority.
+        if "age" in headers:
+            try:
+                if int(headers["age"]) != 0:
+                    return None
+            except ValueError:
+                return None
+        if re.search(r"(?:^|,)\s*11[01]\s", headers.get("warning", "")):
             return None
         try:
             value = strict_json_loads(result.body)
@@ -939,7 +1108,8 @@ class APISentinelAuditor:
         for attempt in range(attempts):
             try:
                 _, restored_http = self._readback_result(ep, readback, "visitor")
-                verified = snapshot.matches(self._json_object(restored_http))
+                verified = snapshot.matches(self._verified_patch_document(
+                    restored_http, ep, mutation_url, readback))
             except Exception as exc:
                 restored_http = HTTPResult(0, "", error=f"{type(exc).__name__}: {exc}")
             # A response that cannot be decoded, or async restoration, is not a safe success.
@@ -967,12 +1137,14 @@ class APISentinelAuditor:
             attempts, delay = self._poll_settings(readback)
             for attempt in range(attempts):
                 _, after_http = self._readback_result(ep, readback, "visitor")
-                after = self._json_object(after_http)
+                after = self._verified_patch_document(after_http, ep, mutation_url, readback)
+                if after is not None and not snapshot.covers_document(after):
+                    after = None
                 if (after is not None and not snapshot.matches(after)) or attempt + 1 == attempts:
                     break
                 time.sleep(delay)
-            # Only an explicitly strongly consistent, complete observation allows
-            # skipping a redundant restore. Weak/stale reads must not bypass recovery.
+            # Only an independently checked complete state allows skipping a
+            # redundant restore; a configured consistency label is not proof.
             recovery_needed = not (
                 readback.get("consistency") == "strong"
                 and snapshot.matches(after)
@@ -1013,9 +1185,17 @@ class APISentinelAuditor:
     def audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
-        if str(ep.get("method", "")).upper() != "PATCH":
+        # Keep the halt check and entire transaction under one gate, including
+        # direct library calls. A waiting caller must observe an earlier failure.
+        with self._write_lock:
+            self._audit_endpoint_mass_assignment(ep, all_endpoints)
+
+    def _audit_endpoint_mass_assignment(
+        self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
+    ) -> None:
+        if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
-                                "Only explicitly allowlisted reversible PATCH checks are supported; no method substitution or request was made",
+                                "Only explicitly allowlisted reversible PATCH/PUT checks are supported; no method substitution or request was made",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "safety_signal": "method"})
             return
@@ -1039,8 +1219,10 @@ class APISentinelAuditor:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "No request schema is available; no write was sent")
             return
-        content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].lower()
-        if content_type not in {"application/json", "application/merge-patch+json"}:
+        content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].strip().lower()
+        allowed_types = {"application/json"} if ep["method"].upper() == "PUT" else {
+            "application/json", "application/merge-patch+json"}
+        if content_type not in allowed_types:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only object application/json and application/merge-patch+json are supported; "
                                 "JSON Patch operation arrays and arbitrary vendor formats are not implemented",
@@ -1092,6 +1274,15 @@ class APISentinelAuditor:
                                           "requests_sent": 0, **risk})
             return
 
+        if not self._has_patch_state_authority():
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                                "Authoritative resource state cannot be verified; no write was sent. "
+                                "Ordinary HTTP readbacks and consistency declarations are insufficient.",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, "rollback_verified": False,
+                                          "recovery_sent": False, "safety_signal": "unverified_state_authority"})
+            return
+
         with self._resource_lock(mutation_url):
             for case in cases:
                 field_path = case["field_path"]
@@ -1105,12 +1296,13 @@ class APISentinelAuditor:
                                         f"Read-before-write failed: {before_http.error}",
                                         evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
                     return
-                before = self._json_object(before_http)
+                before = self._verified_patch_document(before_http, ep, mutation_url, readback)
                 if before is None:
-                    unverified.append(f"{field_path}: readback was not a complete successful JSON object")
+                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
                     continue
                 try:
-                    snapshot = prepare_patch(before, case, readback)
+                    snapshot = (prepare_patch(before, case, readback, method="PUT")
+                                if ep["method"].upper() == "PUT" else prepare_patch(before, case, readback))
                     if not snapshot.matches(before):
                         raise ValueError("original readback snapshot cannot be verified")
                     # Merge Patch null members remove fields; they cannot restore an
@@ -1127,6 +1319,11 @@ class APISentinelAuditor:
                     unverified.append(f"{field_path}: {exc}; no write was sent")
                     continue
 
+                # Recheck the authority immediately before transport; it may
+                # become unavailable while preparing the reversible snapshot.
+                if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
+                    unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
+                    continue
                 tested.append(field_path)
                 transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
                 mutation = transaction["mutation"]
@@ -1143,7 +1340,7 @@ class APISentinelAuditor:
                         else str(ep.get("request_content_type") or "application/json")
                     ),
                     "snapshot_fields": list(snapshot.restore),
-                    "verification_scope": "Full readback document except explicitly ignored volatile paths",
+                    "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
                     "ignored_readback_paths": readback.get("ignore_readback_paths", []),
                     "mutation": self._safe_body(mutation),
                     "after": self._safe_body(transaction["after_http"]),
@@ -1237,16 +1434,25 @@ class APISentinelAuditor:
         endpoint_results = [item for item in self.results if item["check"] != "ROLLBACK"]
         attempted_keys = {item["endpoint"] for item in endpoint_results
                           if item.get("evidence", {}).get("requests_attempted", 0) > 0}
-        conclusive_keys = {item["endpoint"] for item in endpoint_results
-                           if item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
-                               Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value
-                           }}
+        # Multiple detection items on one endpoint share a coverage denominator.
+        # Every selected item must have a conclusive attempted observation. Legacy
+        # repeated results for the same item retain their existing any-result rule.
+        item_states: Dict[str, Dict[str, bool]] = {}
+        for item in endpoint_results:
+            states = item_states.setdefault(item["endpoint"], {})
+            conclusive_item = item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
+                Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
+            states[item["check"]] = states.get(item["check"], False) or conclusive_item
+        conclusive_keys = {endpoint for endpoint, states in item_states.items() if all(states.values())}
         attempted = len(attempted_keys)
         conclusive = len(conclusive_keys)
         self.stats["attempted_endpoints"] = attempted
         self.stats["conclusive_endpoints"] = conclusive
         self.stats["coverage_pct"] = round(attempted * 100.0 / total, 1)
         self.stats["conclusive_coverage_pct"] = round(conclusive * 100.0 / total, 1)
+        self.stats["confirmed_endpoints"] = len({item["endpoint"] for item in endpoint_results
+                                                 if item["verdict"] == Verdict.CONFIRMED.value})
+        self.stats["detection_items"] = sum(len(states) for states in item_states.values())
 
     def build_plan(self) -> Dict[str, Any]:
         """Inspect local specification/configuration only; this never makes requests."""
@@ -1258,24 +1464,42 @@ class APISentinelAuditor:
             if ep["method"] == "GET":
                 entry["check"] = "BOLA"
                 risk = read_only_risk(ep)
+                parameter_error = None
                 if not risk:
                     try:
                         risk = (self._read_request_risk("GET", self._build_url(ep, "owner"))
                                 or self._read_request_risk("GET", self._build_url(ep, "visitor")))
-                    except ParameterSerializationError:
-                        pass  # Execution still rejects invalid parameters before transport.
+                    except ParameterSerializationError as exc:
+                        parameter_error = str(exc)
                 if risk:
                     entry.update({"safety_blocked": True, "reason_category": "safety_policy",
                                   "reason": risk["safety_reason"], "safety_signal": risk["safety_signal"]})
-            elif ep["method"] == "PATCH":
+                elif not self._has_object_selector(ep) and (
+                    ep.get("security") or self._is_admin_endpoint(ep)
+                    or self.bola_config.get(key, {}).get("private_data_paths")
+                    or self.bola_config.get(key, {}).get("required_role")
+                ):
+                    entry.update({"check": "COLLECTION_AUTHORIZATION",
+                                  "reason": "Read-only evidence comparison; missing private-data or role policy remains inconclusive"})
+                elif not self._has_object_selector(ep):
+                    entry.update({"reason_category": "not_applicable",
+                                  "reason": "No object selector was found; this operation is not applicable to the current object-level detector"})
+                elif parameter_error:
+                    entry.update({"reason_category": "invalid_input", "reason": parameter_error})
+            elif ep["method"] in self.WRITE_METHODS:
                 entry.update({
                     "check": "MASS_ASSIGNMENT",
-                    "writes_enabled": self.allow_write_tests and key in self.write_allowlist,
+                    "writes_enabled": (self.allow_write_tests and key in self.write_allowlist
+                                       and self._has_patch_state_authority()),
                     "content_type": ep.get("request_content_type"),
                     "readback_path": readback.get("path"),
                     "configured_fields": list(readback.get("field_map", {})),
                     "readback_consistency": readback.get("consistency", "unspecified"),
                 })
+                if self.allow_write_tests and key in self.write_allowlist and not self._has_patch_state_authority():
+                    entry.update({"safety_blocked": True, "reason_category": "safety_policy",
+                                  "safety_signal": "unverified_state_authority",
+                                  "reason": "Authoritative resource state cannot be verified; no write will be sent"})
                 if isinstance(readback, dict) and readback.get("path"):
                     read_ep = self._readback_endpoint(ep, readback)
                     risk = read_only_risk(read_ep)
@@ -1288,6 +1512,9 @@ class APISentinelAuditor:
                         entry.update({"writes_enabled": False, "safety_blocked": True,
                                       "reason_category": "safety_policy", "reason": "Unsafe readback: " + risk["safety_reason"],
                                       "safety_signal": risk["safety_signal"]})
+            else:
+                entry.update({"reason_category": "detector_unimplemented",
+                              "reason": f"No detector is implemented for {ep['method']}"})
             entries.append(entry)
         return sanitize_evidence({"mode": "DRY_RUN", "requests_sent": 0,
                                   "note": "Local plan only; not a successful scan or a recovery guarantee",
@@ -1302,7 +1529,8 @@ class APISentinelAuditor:
         print(f"Specification: {self.parser.version} | endpoints: {len(endpoints)}")
         print(
             "Write tests: "
-            + ("ENABLED with rollback verification" if self.allow_write_tests else "DISABLED (read-only mode)")
+            + ("ENABLED with independent state authority" if self.allow_write_tests and self._has_patch_state_authority()
+               else "BLOCKED (no state authority)" if self.allow_write_tests else "DISABLED (read-only mode)")
         )
         print("=" * 68)
 

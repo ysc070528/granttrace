@@ -37,18 +37,44 @@ _RULES: tuple[dict[str, object], ...] = (
         "name": "MassAssignment",
         "shortDescription": {"text": "Mass Assignment"},
         "fullDescription": {
-            "text": "An unauthorized property change persisted and was confirmed through independent GET readback."
+            "text": "An unauthorized property change was confirmed by readback checked against independently authoritative state."
         },
         "help": {
             "text": "Explicitly allow writable fields and authorize each change before persisting it."
         },
         "properties": {"tags": ["security", "mass-assignment", "CWE-915"]},
     },
+    {
+        "id": "GT-AUTH-001",
+        "name": "BrokenAuthentication",
+        "shortDescription": {"text": "Broken Authentication"},
+        "fullDescription": {
+            "text": "An authenticated operation exposed explicitly configured Owner-private values to Anonymous, with a valid Owner baseline."
+        },
+        "help": {
+            "text": "Enforce authentication checks and reject unauthenticated requests with HTTP 401/403."
+        },
+        "properties": {"tags": ["security", "authentication", "CWE-306"]},
+    },
+    {
+        "id": "GT-BFLA-001",
+        "name": "BrokenFunctionLevelAuthorization",
+        "shortDescription": {"text": "Broken Function Level Authorization"},
+        "fullDescription": {
+            "text": "An identity lacking the explicitly required role received configured protected Owner data, with privileged and anonymous-denial baselines."
+        },
+        "help": {
+            "text": "Enforce strict role-based access control (RBAC) on administrative endpoints and reject unauthorized users with HTTP 403."
+        },
+        "properties": {"tags": ["security", "authorization", "privilege-escalation", "CWE-285"]},
+    },
 )
 
 _CHECK_RULES = {
     "BOLA": (0, "GT-BOLA-001", "CWE-639", "Confirmed broken object level authorization"),
     "MASS_ASSIGNMENT": (1, "GT-MASS-001", "CWE-915", "Confirmed mass assignment"),
+    "BROKEN_AUTH": (2, "GT-AUTH-001", "CWE-306", "Confirmed broken authentication"),
+    "BFLA": (3, "GT-BFLA-001", "CWE-285", "Confirmed broken function level authorization"),
 }
 
 

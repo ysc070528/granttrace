@@ -87,7 +87,15 @@ class SarifCliTests(unittest.TestCase):
         output = self.folder / "active.sarif"
         with demo.DemoServer(self.database) as server:
             before = copy.deepcopy(server.handler.DATABASE)
-            completed = self.subprocess_cli([*self.arguments(server.target, output), "--allow-write-tests"])
+            previous = Path.cwd()
+            try:
+                os.chdir(self.folder)
+                with patch.object(api_sentinel, "APISentinelAuditor", side_effect=
+                                  lambda **kwargs: demo._LocalDemoAuditor(demo_server=server, **kwargs)):
+                    code, stdout, stderr = self.call_cli([*self.arguments(server.target, output), "--allow-write-tests"])
+            finally:
+                os.chdir(previous)
+            completed = subprocess.CompletedProcess([], code, stdout, stderr)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             self.assertEqual(server.handler.DATABASE, before)
             requests = server.handler.requests
@@ -109,6 +117,21 @@ class SarifCliTests(unittest.TestCase):
         for result in results:
             self.assertEqual(result["locations"],
                              [{"physicalLocation": {"artifactLocation": {"uri": "spec.json"}}}])
+
+    def test_generic_active_cli_is_blocked_and_sarif_contains_only_confirmed_bola(self):
+        output = self.folder / "blocked.sarif"
+        with demo.DemoServer(self.database) as server:
+            completed = self.subprocess_cli([*self.arguments(server.target, output), "--allow-write-tests"])
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+            self.assertFalse(any(r["method"] == "PATCH" for r in server.handler.requests))
+            self.assertEqual(self.database, server.handler.DATABASE)
+        report = self.read_json()
+        writes = [r for r in report["results"] if r["check"] == "MASS_ASSIGNMENT"]
+        self.assertEqual(2, len(writes))
+        self.assertTrue(all(r["verdict"] == "INCONCLUSIVE" for r in writes))
+        self.assertTrue(all(r["evidence"]["safety_signal"] == "unverified_state_authority" for r in writes))
+        self.assertFalse(any(r["evidence"].get("rollback_verified") for r in writes))
+        self.assertEqual(["GT-BOLA-001"], [r["ruleId"] for r in json.loads(output.read_text())["runs"][0]["results"]])
 
     def test_dry_run_sarif_is_rejected_before_auditor_files_or_network(self):
         output = self.folder / "must-not-exist.sarif"

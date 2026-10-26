@@ -1,4 +1,4 @@
-"""Prepare reversible object PATCH bodies from observed resource state.
+"""Prepare reversible PATCH bodies and complete PUT replacement documents.
 
 Generated/example values select fields, but never become ordinary business
 values sent to the server. Nested containers and arrays are copied in full.
@@ -95,11 +95,41 @@ class PatchSnapshot:
         return result
 
     def matches(self, document: Any) -> bool:
+        """Compare values only; callers must independently establish state authority."""
         if not isinstance(document, dict):
             return False
         return (all(get_path(document, path) == (True, value) for path, value in self.guards)
                 and json_values_equal(self._comparison_document(document),
                                       self._comparison_document(self.document)))
+
+    def covers_document(self, document: Any) -> bool:
+        """Reject known missing business structure before claiming persistence.
+
+        The selected field may legitimately change shape, but its full target
+        value is separately compared by the detector. Other observed fields and
+        array records must still be represented; ignored volatile paths are exempt.
+        This is only a structure comparison, not an authority/freshness proof.
+        It cannot discover fields hidden by the initial readback itself.
+        """
+        if not isinstance(document, dict):
+            return False
+
+        def covers(reference: Any, value: Any, path: Tuple[Any, ...]) -> bool:
+            if path == self.read_path:
+                return True
+            if isinstance(reference, dict):
+                return isinstance(value, dict) and all(
+                    key in value and covers(child, value[key], path + (key,))
+                    for key, child in reference.items()
+                )
+            if isinstance(reference, list):
+                return isinstance(value, list) and len(reference) == len(value) and all(
+                    covers(child, value[index], path + (index,))
+                    for index, child in enumerate(reference)
+                )
+            return not isinstance(value, (dict, list))
+
+        return covers(self._comparison_document(self.document), self._comparison_document(document), ())
 
 
 def ensure_reversible_merge_patch(snapshot: PatchSnapshot) -> None:
@@ -123,7 +153,7 @@ def ensure_reversible_merge_patch(snapshot: PatchSnapshot) -> None:
         raise ValueError("Merge Patch probe cannot be reversed by the original snapshot")
 
 
-def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[str, Any]) -> PatchSnapshot:
+def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[str, Any], method: str = "PATCH") -> PatchSnapshot:
     if not isinstance(before, dict) or not json_values_equal(before, before):
         raise ValueError("original snapshot must be a finite, JSON-serializable object")
     mutation_path = path_parts(case.get("path", case["field_path"]))
@@ -134,6 +164,43 @@ def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[st
     target = copy.deepcopy(case["value"])
     if json_values_equal(target, original):
         raise ValueError("probe equals the original value; a distinct probe is required")
+    if str(method).upper() == "PUT":
+        # Replacement semantics require the exact complete root document. A
+        # projection, envelope or renamed field mapping cannot establish the
+        # request representation, even when its HTTP values match a readback.
+        # Callers must still independently establish authoritative actual state.
+        if mapping.get("snapshot_path"):
+            raise ValueError("PUT requires the complete root snapshot, not an envelope")
+        if (not isinstance(mapping.get("ignore_readback_paths", []), list)
+                or mapping.get("ignore_readback_paths")):
+            raise ValueError("PUT cannot ignore any replacement-document field")
+        if mapping.get("baseline_payload", {}) != {}:
+            raise ValueError("PUT does not accept baseline payload overrides")
+        if (mutation_path != read_path or mutation_path != path_parts(case["field_path"])
+                or not isinstance(mutation_path[0], str)):
+            raise ValueError("PUT requires identical request and readback field paths")
+        field_map = mapping.get("field_map", {})
+        if not isinstance(field_map, dict) or any(
+            path_parts(field) != path_parts(source) for field, source in field_map.items()
+        ):
+            raise ValueError("PUT requires one-to-one root field mappings")
+        container_map = mapping.get("snapshot_field_map", {})
+        if not isinstance(container_map, dict) or any(
+            not isinstance(key, str) or key not in before or path_parts(source) != (key,)
+            for key, source in container_map.items()
+        ):
+            raise ValueError("PUT cannot remap replacement-document containers")
+        if any(not isinstance(key, str) for key in before):
+            raise ValueError("PUT replacement-document keys must be strings")
+        put_restore = copy.deepcopy(before)
+        put_mutation = copy.deepcopy(before)
+        replace_path(put_mutation, mutation_path, target)
+        put_guards = [((key,), copy.deepcopy(value)) for key, value in before.items()]
+        put_snapshot = PatchSnapshot(put_mutation, put_restore, put_guards, read_path, copy.deepcopy(original), target,
+                                     copy.deepcopy(before), [])
+        if not put_snapshot.matches(before) or not json_values_equal(put_mutation, put_mutation):
+            raise ValueError("PUT snapshot and replacement payload must be verifiable finite JSON")
+        return put_snapshot
     template = copy.deepcopy(case.get("payload") or {})
     baseline = mapping.get("baseline_payload", {})
     if not isinstance(template, dict) or not isinstance(baseline, dict):

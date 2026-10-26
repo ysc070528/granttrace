@@ -67,11 +67,12 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         return reports[0], json.loads(reports[0].read_text(encoding="utf-8"))
 
-    def make_auditor(self, target):
+    def make_auditor(self, target, demo_server=None):
         spec, config, _ = demo.load_assets()
         spec_path = self.folder / "temporary-spec.json"
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
         return demo._LocalDemoAuditor(
+            demo_server=demo_server,
             spec_path=str(spec_path), target_base_url=target,
             identities_config=config["identities"],
             parameter_values=config["parameter_values"],
@@ -79,6 +80,26 @@ class DemoTests(unittest.TestCase):
             write_allowlist=config["write_allowlist"],
             bola_config=config["bola"], request_delay=0,
         )
+
+    def test_state_authority_requires_exact_owned_live_server_not_just_loopback(self):
+        _, _, database = demo.load_assets()
+        with demo.DemoServer(database) as first, demo.DemoServer(database) as other:
+            url = first.target + "/api/users/1002/settings"
+            for server in (None, other):
+                auditor = self.make_auditor(first.target, demo_server=server)
+                auditor.allow_write_tests = True
+                auditor.run()
+                self.assertFalse(any(r["method"] == "PATCH" for r in first.handler.requests))
+                self.assertEqual(database, first.handler.DATABASE)
+                self.assertFalse(auditor.stats["mass_assignment_confirmed"])
+                self.assertIsNone(auditor._authoritative_patch_state({}, url, {}))
+            auditor = self.make_auditor(first.target, demo_server=first)
+            observation = auditor._authoritative_patch_state({}, url, {})
+            self.assertEqual(database["users"]["1002"], observation)
+            observation["role"] = "changed-copy"
+            self.assertEqual("user", first.handler.DATABASE["users"]["1002"]["role"])
+            self.assertIsNone(auditor._authoritative_patch_state({}, other.target + "/api/users/1002/settings", {}))
+        self.assertIsNone(auditor._authoritative_patch_state({}, url, {}))
 
     def test_resources_are_packaged_and_valid_without_credentials(self):
         assets = resources.files("core.demo_assets")
