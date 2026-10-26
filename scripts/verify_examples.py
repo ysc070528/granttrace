@@ -91,30 +91,30 @@ def main():
                 data = json.loads(report.read_text(encoding="utf-8"))
                 stats = data["stats"]
                 status_counts = Counter(item["verdict"] for item in data["results"])
-                expected_counts = Counter({"CONFIRMED": 2, "PUBLIC": 1, "SECURE": 2} if active else {
+                expected_counts = Counter({"CONFIRMED": 1, "PUBLIC": 1, "SECURE": 1, "INCONCLUSIVE": 2} if active else {
                     "CONFIRMED": 1, "PUBLIC": 1, "SECURE": 1, "SKIPPED": 2,
                 })
                 expected_stats = {
                     "total_endpoints": 5,
                     "total_checks": 5,
-                    "audited_count": 5 if active else 3,
-                    "conclusive_count": 5 if active else 3,
-                    "confirmed": 2 if active else 1,
+                    "audited_count": 3,
+                    "conclusive_count": 3,
+                    "confirmed": 1,
                     "bola_confirmed": 1,
-                    "mass_assignment_confirmed": 1 if active else 0,
+                    "mass_assignment_confirmed": 0,
                     "public_endpoints": 1,
                     "authorized_endpoints": 0,
-                    "secure_endpoints": 2 if active else 1,
+                    "secure_endpoints": 1,
                     "skipped_count": 0 if active else 2,
                     "suspicious_count": 0,
                     "error_count": 0,
-                    "inconclusive_count": 0,
-                    "coverage_pct": 100.0 if active else 60.0,
-                    "conclusive_coverage_pct": 100.0 if active else 60.0,
+                    "inconclusive_count": 2 if active else 0,
+                    "coverage_pct": 60.0,
+                    "conclusive_coverage_pct": 60.0,
                 }
                 restored = before == TargetMockHandler.DATABASE
                 if (
-                    exit_code != (1 if active else 0)
+                    exit_code != (2 if active else 0)
                     or status_counts != expected_counts
                     or any(stats.get(key) != value for key, value in expected_stats.items())
                     or data["tool_version"] != __version__
@@ -123,10 +123,12 @@ def main():
                     raise RuntimeError(
                         f"Unexpected {name} results: {stats}; restoration={restored}; exit={exit_code}"
                     )
-                if active and not next(
-                    item for item in data["findings"] if item["cwe"] == "CWE-915"
-                )["evidence"]["rollback_verified"]:
-                    raise RuntimeError("Mass-assignment rollback was not independently verified")
+                if active:
+                    writes = [item for item in data["results"] if item["check"] == "MASS_ASSIGNMENT"]
+                    if len(writes) != 2 or any(item["evidence"].get("rollback_verified") or
+                            item["evidence"].get("requests_sent") != 0 or
+                            item["evidence"].get("safety_signal") != "unverified_state_authority" for item in writes):
+                        raise RuntimeError("Generic active CLI must block unverified state authority")
                 results.append({
                     "mode": name,
                     "exit_code": exit_code,

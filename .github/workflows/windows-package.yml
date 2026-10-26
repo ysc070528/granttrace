@@ -23,6 +23,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Setup fixed Windows x64 Python
         uses: actions/setup-python@v7

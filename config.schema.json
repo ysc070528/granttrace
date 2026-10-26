@@ -236,6 +236,29 @@
           "items": {
             "type": "string"
           }
+        },
+        "private_data_paths": {
+          "type": "array",
+          "description": "Exact scalar field paths in the selected Owner baseline whose concrete values the operator has verified are Owner-private and unauthorized for Anonymous. Visitor access defaults to deny; explicit pair sharing or required-role policy may authorize this Visitor. Required as positive evidence for new data-exposure detections. Numeric array indexes only, e.g. items[0].private_note; no wildcards. These paths do not establish state authority or freshness.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required_role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Explicit role required by this operation for the configured identity pair. Naming keywords and OpenAPI authentication schemes do not establish this role boundary."
+        },
+        "owner_role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Operator-verified role of the configured Owner identity for this operation; must equal required_role to establish the privileged baseline."
+        },
+        "visitor_role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Operator-verified role of the configured Visitor identity. Role comparison is exact, without inferring a role hierarchy."
         }
       }
     }

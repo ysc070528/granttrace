@@ -205,7 +205,10 @@ def build_reproduction_templates(
             if method != "GET":
                 continue
         elif cwe == "CWE-915":
-            if method not in {"PATCH", "PUT"}:
+            # Findings record the injected field probe, not the complete PUT
+            # replacement and restore documents. A partial PUT template would
+            # delete omitted fields on a conforming server; omit it.
+            if method != "PATCH":
                 continue
         else:
             continue
@@ -223,8 +226,8 @@ def build_reproduction_templates(
         lines = ["curl --globoff -X " + shlex.quote(method) + " " + shlex.quote(safe_url)]
         if cwe != "CWE-306":
             lines.extend("-H " + shlex.quote(name + ": " + placeholder) for name, placeholder in headers
-                         if method not in {"PATCH", "PUT"} or name.lower() != "content-type")
-        if method in {"PATCH", "PUT"}:
+                         if method != "PATCH" or name.lower() != "content-type")
+        if method == "PATCH":
             content_type = evidence.get("request_content_type")
             if (not isinstance(content_type, str) or not _CONTENT_TYPE.fullmatch(content_type)
                     or sanitize_text(content_type, secret_values=secrets) != content_type
@@ -237,7 +240,8 @@ def build_reproduction_templates(
             redacted = redacted or payload_redacted
             lines.extend(("-H " + shlex.quote("Content-Type: " + content_type),
                           "--data " + shlex.quote(rendered)))
-        note = _NOTE + (" 部分值已脱敏，请补全测试值。" if redacted else "")
+        note = ("POSIX shell；匿名复现不包含身份凭据。" if cwe == "CWE-306" else _NOTE)
+        note += " 部分值已脱敏，请补全测试值。" if redacted else ""
         command = " ".join(lines)
         templates[index] = CurlTemplate(command, redacted, note)
     return templates

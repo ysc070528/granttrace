@@ -1,5 +1,7 @@
 # 配置指南
 
+> PR #42 / #43 未发布安全收紧：外部 CLI 的主动 PATCH / PUT 缺少权威状态核验实现，现有写开关、allowlist、field_map 和 `consistency: strong` 配置不能解除阻断。参数仍可解析；结果为 `INCONCLUSIVE`、不发 PATCH / PUT。内置 Demo 直接核对自有数据库，仅演示已有 PATCH。见 [复核与兼容性说明](pr42-state-authority-review.md) 和 [整合验收](pr43-integration-review.md)。
+
 [返回项目首页](../README.md)
 
 ## 推荐首次接入流程
@@ -57,6 +59,39 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 该配置仅适用于本次身份与资源组合。相同操作检查不获授权的用户或另一租户时，要更换测试配置并设为 `deny`。工具不会由团队名或角色名自动推断权限。真值与统计见 [业务场景验收](business-scenarios.md)。
 
+## 新增只读检测的证据策略
+
+以下示例仍属于按操作配置的 `bola` 节。`private_data_paths` 表示业务方已核定所选 Owner 基准中这些**具体值属于 Owner 私有数据**；不能仅因字段名敏感或响应中出现 Owner ID 就填写。不要配置公共商品名、通用状态或共享值。
+
+```json
+{
+  "bola": {
+    "GET /orders": {
+      "private_data_paths": ["items[0].private_note"],
+      "expected_visitor_access": "deny"
+    },
+    "GET /admin/settings": {
+      "private_data_paths": ["deployment_secret"],
+      "required_role": "administrator",
+      "owner_role": "administrator",
+      "visitor_role": "member"
+    }
+  }
+}
+```
+
+认证暴露确认要求有效 Owner 基准、规范确实要求认证、匿名有效响应与经核定的私有值精确匹配。公共响应、错误包装、空集合和 HTTP 200 本身不构成高危确认。错误/拒绝正文中的私有匹配仅保留为线索。全局 `security` 被操作级声明覆盖；`security: []` 和包含 `{}` 的可选认证允许匿名，不能据此确认认证缺失。
+
+BFLA 的角色仅做精确比较，不推断角色继承。Owner 必须具有明确要求的角色，Visitor 必须不具有该角色，且存在受保护业务数据证据和干净匿名拒绝基线。管理路径、tag、operationId 和 summary 只能选择候选检查；无权限策略时不能确认严重越权。公开策略与所需角色或私有值策略冲突时保守输出 `INCONCLUSIVE`。
+
+无选择器的认证集合会进行只读比较；缺少私有值策略时，Visitor 的 200 响应和“没有 Owner ID”都不能证明隔离。明确配置私有路径的无路径占位符集合也支持分页等 query 参数。精确数组索引不跟踪重排或分页中的其他记录；值改名、换索引或未配置的字段可能漏检，不能从未匹配推导安全。Visitor 干净拒绝且 Owner 基准有效时才可在该拒绝范围判为 `SECURE`。明确允许共享仍需正向数据证据与干净匿名拒绝，结论仅为所选身份对的 `AUTHORIZED`。
+
+已有对象选择器默认维持 BOLA 证据模型；显式新增私有值或角色策略后才增加独立检测项。同一组 GET 观察可以支持多项检查，不会为每项重复发送请求。端点按方法加规范路径去重；确认漏洞按检测项计数；确定性端点要求每种已选检查均有确定且实际尝试过的结果。
+
+已有 `resource_id_paths` 只声明对象标识证据，不声明整个集合的所有权；无对象选择器且只有该旧策略时，原 BOLA 项仍为 `SKIPPED`。认证和功能检查单独记录；添加经过人工核定的 `private_data_paths` 才选择新的集合证据模型。
+
+PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状态门阻断。仅内部直接观察实际状态的受控集成支持 `application/json` 全根文档替换：拒绝 envelope、非恒等字段映射、忽略字段和 baseline overrides；完整原快照用于恢复。该夹具能力不能作为通用外部 API 的证明。PUT 不导出仅含探针字段的 cURL 命令。
+
 ## 参数值与编码
 
 优先使用参数声明对应的原生 JSON 类型；历史标量字符串仅按下述规则兼容。数组和布尔值统一按规范序列化，独立读回使用同一编码器。支持范围与明确拒绝的格式见 [参数规则](parameter-serialization.md)。
@@ -71,9 +106,9 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 - `identities`：Owner、Visitor 和 Anonymous 的 ID、令牌、请求头及身份参数。
 - `parameter_values`：按 `METHOD /path` 为非身份参数提供确定的有效资源值。
-- `write_allowlist`：允许主动检查的 PATCH 操作；未配置时不会发送写请求。
+- `write_allowlist`：声明 PATCH / PUT 检查范围；仍受权威状态验证门控制，普通外部 API 不会因该声明解锁写入。
 - `readbacks`：写接口对应的独立 GET 路径、字段映射及一致性约定。
-- `bola`（可选）：按操作配置 `expected_public`、`resource_id_paths`。
+- `bola`（可选）：按操作配置公开/共享策略、资源标识、私有数据证据路径和明确的功能权限边界。
 
 简化示例：
 

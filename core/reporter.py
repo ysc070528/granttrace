@@ -92,6 +92,8 @@ class SecurityReportGenerator:
             signals = signals if isinstance(signals, list) else []
             confirmations = [signal_labels[signal] for signal in signals
                              if isinstance(signal, str) and signal in signal_labels]
+            if decision.get("owner_baseline_valid") is True and decision.get("matched_private_data_paths"):
+                confirmations.append("Visitor 响应包含操作员明确指定为 Owner 私有的相同业务值")
             if verdict == "CONFIRMED" and confirmations:
                 verification = "已确认对象级越权：" + "；".join(confirmations) + "。"
             elif verdict == "CONFIRMED":
@@ -119,6 +121,9 @@ class SecurityReportGenerator:
                 "visitor_cross_response": "有效 Visitor 跨资源响应",
                 "owner_resource_match": "响应与 Owner 资源相符的具体证据",
                 "public_response_equivalence": "公开访问响应等价性证据",
+                "configured_owner_private_data": "操作员明确指定且实际存在的 Owner 私有数据",
+                "owner_private_data_match": "响应中的 Owner 私有值匹配",
+                "explicit_privilege_boundary": "明确的操作所需角色与两个身份角色",
             }
             missing = decision.get("missing_evidence")
             if verdict in {"SUSPICIOUS", "INCONCLUSIVE"} and isinstance(missing, list):
@@ -148,17 +153,21 @@ class SecurityReportGenerator:
                 summary = "写入检查：核对配置字段是否被持久保存；具体变更字段未记录。"
             after = evidence.get("after")
             readback_recorded = isinstance(after, dict) and isinstance(after.get("status"), int) and 200 <= after["status"] < 300
-            if verdict == "CONFIRMED" and field and readback_recorded:
-                verification = "独立读回确认该字段的测试值已持久保存。"
+            authority_recorded = str(evidence.get("verification_scope", "")).startswith("Authoritatively checked")
+            if verdict == "CONFIRMED" and field and readback_recorded and authority_recorded:
+                verification = "记录显示独立读回确认该字段的测试值已持久保存，并与独立权威状态核对。"
+            elif verdict == "CONFIRMED" and field and readback_recorded:
+                verification = "独立读回确认需要权威状态证据；当前摘要只有成功响应，不能单独证明持久变化。"
             elif verdict == "CONFIRMED":
                 verification = "报告结论为字段持久变化；当前记录的独立读回摘要不足，请复核下方证据。"
             elif verdict == "SECURE":
-                verification = "本次强一致读回未发现配置字段持久变化；结论仅限已执行的字段。"
+                verification = "记录结论为所测字段未出现持久变化；需核对权威状态证据，普通 GET 和一致性声明不能单独支持该结论。"
             else:
                 verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
             rollback = evidence.get("rollback_verified")
             if rollback is True:
-                verification += "原状态已通过读回核验。"
+                verification += ("记录显示原状态已通过读回核验，并与独立权威状态核对。" if authority_recorded else
+                                 "记录称原状态已通过读回核验；该声明仍需独立权威状态证据支持，普通 GET 或恢复请求 ACK 不构成证明。")
                 if evidence.get("ignored_readback_paths"):
                     verification += "核验范围不含配置中忽略的易变字段。"
             elif rollback is False:
@@ -172,17 +181,22 @@ class SecurityReportGenerator:
                 "summary": summary, "verification": verification,
                 "remediation": "为当前身份明确允许更新的字段；在服务端拒绝或忽略权限、角色等未授权字段，并按业务策略校验更新权限。",
                 "retest": [
-                    "仅在可恢复的测试资源上复验；先保存完整原状态，确认独立读回和恢复路径可用。恢复未核验时先处理恢复问题。",
-                    "用 Visitor 提交该字段的最小测试修改，再由独立读取接口核对持久状态；未授权字段应保持原值，允许更新的字段应正常工作。",
-                    "恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。",
+                    "仅在自己持有且可丢弃的内部测试资源上复验；先确认独立权威状态观察能力、完整原状态和恢复路径可用。普通外部 API 的 PATCH / PUT 保持阻断。",
+                    "核对该字段的测试值、完整快照和独立权威实际状态；PUT 必须使用完整替换文档，不能复制局部字段作为 PUT 请求。",
+                    "恢复原状态并核对独立权威实际状态；若结果不一致或无法核验，保留 rollback_verified=false 并暂停后续写入测试。",
                 ],
             }
         if check == "BROKEN_AUTH" or cwe == "CWE-306":
-            summary = f"未授权访问检查：匿名（Anonymous）请求访问声明需认证的端点：{resource}。"
-            if verdict == "CONFIRMED":
-                verification = "已确认未授权访问：未携带有效凭据的匿名请求获得 HTTP 200 及有效业务数据。"
+            summary = f"匿名访问检查：核对 Anonymous 响应与配置的认证要求；目标：{resource}。"
+            decision = evidence.get("decision_evidence")
+            decision = decision if isinstance(decision, dict) else {}
+            if (verdict == "CONFIRMED" and decision.get("owner_baseline_valid") is True
+                    and decision.get("requires_auth") is True and decision.get("matched_private_data_paths")):
+                verification = "匿名有效响应包含操作员明确指定为 Owner 私有的相同业务值；已核对有效 Owner 基线与接口认证要求。"
+            elif verdict == "CONFIRMED":
+                verification = "报告结论为确认漏洞；当前私有数据与认证边界摘要不足，HTTP 200 或合法 JSON 不能单独证明未授权敏感数据暴露。"
             elif verdict == "SECURE":
-                verification = "未授权访问被服务端正确拒绝（HTTP 401/403）。"
+                verification = "匿名访问被干净拒绝，响应不含业务数据；状态码见证据。"
             else:
                 verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
             return {
@@ -194,20 +208,31 @@ class SecurityReportGenerator:
                 ],
             }
         if check == "BFLA" or cwe == "CWE-285":
-            summary = f"功能级垂直越权检查：普通访客（Visitor）尝试访问特权/管理功能端点：{resource}。"
-            if verdict == "CONFIRMED":
-                verification = "已确认功能级越权：普通访客身份成功调用管理端点并获得有效业务响应。"
+            summary = f"功能级权限检查：核对 Visitor 角色、操作所需角色与受保护数据；目标：{resource}。"
+            decision = evidence.get("decision_evidence")
+            decision = decision if isinstance(decision, dict) else {}
+            roles = decision.get("role_policy")
+            roles = roles if isinstance(roles, dict) else {}
+            if (verdict == "CONFIRMED" and roles.get("required_role")
+                    and roles.get("owner_role") == roles["required_role"]
+                    and roles.get("visitor_role") and roles["visitor_role"] != roles["required_role"]
+                    and decision.get("owner_baseline_valid") is True
+                    and decision.get("anonymous_denial_body_clean") is True
+                    and decision.get("matched_private_data_paths")):
+                verification = "记录显示 Visitor 不具备配置所需角色，却取得特权 Owner 的指定私有值；已核对角色边界、Owner 基线与匿名无数据拒绝。"
+            elif verdict == "CONFIRMED":
+                verification = "报告结论为确认漏洞；当前角色边界与受保护数据摘要不足，管理路径关键词或成功响应不能单独证明垂直越权。"
             elif verdict == "SECURE":
-                verification = "管理功能访问控制生效：普通访客身份的调用被服务端正确拒绝（HTTP 401/403）。"
+                verification = "Visitor 访问被干净拒绝，响应不含业务数据；角色边界与状态码见证据。"
             else:
                 verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
             return {
                 "summary": summary, "verification": verification,
-                "remediation": "在服务端业务层或网关中实施细粒度的角色访问控制（RBAC/ABAC）；严格限制仅允许具有管理员或相应权限角色的身份访问特权端点，对普通用户一律返回 403 Forbidden。",
+                "remediation": "在服务端业务层或网关中按实际业务角色实施访问控制（RBAC/ABAC）；仅允许具备操作所需角色或相应权限的身份访问，拒绝未获授权的用户。",
                 "retest": [
-                    "使用普通用户（Visitor）的有效凭据向该管理端点发起请求。",
-                    "核对服务端返回 HTTP 403 Forbidden，禁止普通用户读取系统配置或执行管理操作。",
-                    "再使用管理员身份（Owner）发起请求，确认合法管理操作正常可用。",
+                    "先明确该操作所需角色及 Owner、Visitor 实际角色；Owner 身份本身不表示管理员。",
+                    "核对具有所需角色的 Owner 能访问指定受保护数据，匿名被拒绝且正文不含这些数据。",
+                    "用不具备所需角色的 Visitor 读取同一目标，核对拒绝及数据隔离；另验证具有所需角色的 Visitor 按策略可访问。",
                 ],
             }
         return {
@@ -274,7 +299,7 @@ class SecurityReportGenerator:
             "端点按 HTTP 方法与规范路径的组合计数；结果记录数可以多于端点数。"
             "尝试覆盖率按至少尝试一次 HTTP 请求的端点计算，包含网络失败；"
             "请求前的安全拦截、配置或参数失败不算请求尝试。"
-            "确定性覆盖率仅计 CONFIRMED、SECURE、PUBLIC 和 AUTHORIZED，"
+            "确定性覆盖率要求端点上每种已选主检查均有 CONFIRMED、SECURE、PUBLIC 或 AUTHORIZED 结论，"
             "SUSPICIOUS 与 INCONCLUSIVE 不计入。两种覆盖率均以全部规范端点为分母，"
             "确认漏洞数量不代表检测成功率。"
         )

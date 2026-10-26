@@ -37,7 +37,7 @@ _RULES: tuple[dict[str, object], ...] = (
         "name": "MassAssignment",
         "shortDescription": {"text": "Mass Assignment"},
         "fullDescription": {
-            "text": "An unauthorized property change persisted and was confirmed through independent GET readback."
+            "text": "An unauthorized property change was confirmed by readback checked against independently authoritative state."
         },
         "help": {
             "text": "Explicitly allow writable fields and authorize each change before persisting it."
@@ -49,7 +49,7 @@ _RULES: tuple[dict[str, object], ...] = (
         "name": "BrokenAuthentication",
         "shortDescription": {"text": "Broken Authentication"},
         "fullDescription": {
-            "text": "An endpoint requiring authentication returned successful business data to an unauthenticated request."
+            "text": "An authenticated operation exposed explicitly configured Owner-private values to Anonymous, with a valid Owner baseline."
         },
         "help": {
             "text": "Enforce authentication checks and reject unauthenticated requests with HTTP 401/403."
@@ -61,7 +61,7 @@ _RULES: tuple[dict[str, object], ...] = (
         "name": "BrokenFunctionLevelAuthorization",
         "shortDescription": {"text": "Broken Function Level Authorization"},
         "fullDescription": {
-            "text": "An unprivileged identity accessed an administrative or privileged operation without authorization denial."
+            "text": "An identity lacking the explicitly required role received configured protected Owner data, with privileged and anonymous-denial baselines."
         },
         "help": {
             "text": "Enforce strict role-based access control (RBAC) on administrative endpoints and reject unauthorized users with HTTP 403."
