@@ -480,19 +480,35 @@ class APISentinelAuditor:
             url += "?" + "&".join(name + "=" + value for name, value in query_pairs)
         return url
 
-    def _safe_body(self, result: HTTPResult) -> Dict[str, Any]:
-        return {
+    def _safe_body(self, result: HTTPResult, private_values: Iterable[str] = ()) -> Dict[str, Any]:
+        secrets = (*self._secret_values, *private_values)
+        return sanitize_evidence({
             "status": result.status,
             "body": sanitize_body(
                 result.body,
                 include_sensitive=self.include_sensitive_evidence,
                 max_chars=min(self.max_response_bytes, 4096),
-                secret_values=self._secret_values,
+                secret_values=secrets,
             ),
             "sha256": body_sha256(result.body),
             "truncated": result.truncated,
             "error": result.error,
-        }
+        }, self.include_sensitive_evidence, secrets)
+
+    @staticmethod
+    def _private_evidence_values(owner: HTTPResult, policy: Dict[str, Any]) -> Tuple[str, ...]:
+        # Redact configured private values from every identity's stored body,
+        # including echoes at other paths. Evaluation still uses original HTTP.
+        try:
+            document = strict_json_loads(owner.body)
+        except (TypeError, ValueError, RecursionError):
+            return ()
+        values = []
+        for path in policy.get("private_data_paths", []):
+            exists, value = get_path(document, path)
+            if exists and ((isinstance(value, str) and value) or type(value) in (int, float)):
+                values.append(str(value))
+        return tuple(values)
 
     def _record_result(
         self,
@@ -652,11 +668,12 @@ class APISentinelAuditor:
         if visitor_self is not None:
             request_results["visitor_self"] = visitor_self
         transport_errors = [f"{name}: {item.error}" for name, item in request_results.items() if item.error]
+        private_values = self._private_evidence_values(owner, policy)
         evidence: Dict[str, Any] = {
             "requests_attempted": len(request_results),
             "target_url": owner_url,
             "visitor_self_url": visitor_self_url if visitor_self is not None else None,
-            **{name: self._safe_body(item) for name, item in request_results.items()},
+            **{name: self._safe_body(item, private_values) for name, item in request_results.items()},
         }
         if any(item.truncated for item in request_results.values()):
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
@@ -813,9 +830,10 @@ class APISentinelAuditor:
         anonymous = self._http_request("GET", url, identity_name="anonymous")
         # Capture once before recording resets this worker's accounting.
         attempts = getattr(self._request_accounting, "attempts", None)
+        private_values = self._private_evidence_values(owner, policy)
         evidence = {"target_url": url, "requests_attempted": 3 if attempts is None else attempts,
-                    "owner": self._safe_body(owner), "visitor_cross": self._safe_body(visitor),
-                    "anonymous": self._safe_body(anonymous)}
+                    "owner": self._safe_body(owner, private_values), "visitor_cross": self._safe_body(visitor, private_values),
+                    "anonymous": self._safe_body(anonymous, private_values)}
         self._record_expanded_read_checks(ep, policy, owner, visitor, anonymous, evidence, collection=collection_selected)
 
     @staticmethod

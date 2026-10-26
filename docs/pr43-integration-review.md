@@ -71,7 +71,8 @@ Relevant tests:
 - `tests/test_pr43_put_safety.py`: replacement semantics, snapshots, ACK/no-op,
   opaque HTTP claims, authority loss, another resource and concurrent stop-write.
 - `tests/test_pr43_evidence_paths.py`: readable array evidence paths without
-  disabling credential, business-body or JSON redaction.
+  disabling credential, business-body or JSON redaction; arbitrary configured
+  private strings/numbers are redacted across results, findings, HTML and SARIF.
 - `tests/test_expanded_report_boundaries.py`: cautious summaries, confirmed-only
   SARIF and refusal to generate unsafe partial PUT reproduction commands.
 
@@ -145,14 +146,19 @@ green workflow. Local wheel validation uses an offline wheelhouse and an externa
 temporary environment; no package is published. Windows CI remains automated
 portable acceptance and does not replace manual desktop/browser/USB acceptance.
 
-Local candidate validation before the integration commit: 769 full-suite tests
+Initial candidate validation before the integration commit: 769 full-suite tests
 passed; Mypy passed all 20 product source files; Ruff passed. Coverage was
 4765/5342 statements (89.20%), 2307/2768 branches (83.35%), and 7072/8110 combined
 (87.20%). The combined measure is not mislabeled as pure branch coverage.
 Original 28 adversarial tests, both 36-scene modes, JSON/YAML restoration checks,
 business scenarios and source-external offline wheel installation passed. The
-additional independent PR43 runner selects all 88 new/expanded tests, including
+additional independent PR43 runner selects all 89 new/expanded tests, including
 report/export boundaries, and separately observes eight actual PUT state machines.
+Final review added one private-value export regression: explicitly configured
+Owner-private values are redacted from all identity bodies and echoed transport
+errors before storage, including fields absent from the general sensitive-key
+table. Evaluation uses original responses. Final clean-HEAD counts and coverage
+include this follow-up and are recorded in the final artifacts and delivery.
 
 ## Remaining limitations and merge conclusion
 
