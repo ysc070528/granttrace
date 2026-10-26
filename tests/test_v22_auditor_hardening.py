@@ -53,6 +53,7 @@ class TransactionHardeningTests(unittest.TestCase):
             allow_write_tests=True, write_allowlist=["PATCH /users/{user_id}", "PATCH /later"],
             readback_config={"PATCH /users/{user_id}": mapping, "PATCH /later": mapping},
         )
+        auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
         writes = []
         case = case or {"field_path": "role", "path": ("role",), "value": "admin",
                         "payload": {"display_name": "GENERATED", "role": "admin"}}

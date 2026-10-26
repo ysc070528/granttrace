@@ -72,7 +72,7 @@ CONTROL_ONLY_NAMES = {
 }
 
 
-def run_scenario(scenario):
+def run_scenario(scenario, *, authority=True):
     from core.auditor import APISentinelAuditor
     from core.config_validator import ConfigValidator
 
@@ -232,26 +232,35 @@ def run_scenario(scenario):
             spec_path.write_text(json.dumps(spec), encoding="utf-8")
             with patch("urllib.request.getproxies", return_value={}):
                 auditor = APISentinelAuditor(str(spec_path), f"http://127.0.0.1:{server.server_port}", **kwargs)
+            # Preserve all original 36 truths using actual backing-state access.
+            # This is fixture-only; generic external CLI scans have no authority.
+            if authority:
+                auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
             with contextlib.redirect_stdout(io.StringIO()):
                 auditor.run()
             primary = next(item for item in auditor.results if item["endpoint"] == target_key and item["check"] != "ROLLBACK")
             evidence = primary["evidence"]
             failures = []
-            if primary["verdict"] != scenario["expected"]:
+            expected = ("INCONCLUSIVE" if is_patch and not authority and
+                        name not in {"patch_default_readonly", "patch_not_allowlisted"} else scenario["expected"])
+            if primary["verdict"] != expected:
                 failures.append("Unexpected primary verdict")
             if is_patch:
                 if not failed_restore and state != original:
                     failures.append("Disposable resource was not restored")
-                if failed_restore and (evidence.get("rollback_verified") is not False
+                if authority and failed_restore and (evidence.get("rollback_verified") is not False
                                        or not auditor._writes_halted_reason):
                     failures.append("Failed/ambiguous restoration was trusted")
-                if failed_restore and not any(item["endpoint"] == "PATCH /later" and item["verdict"] == "SKIPPED"
+                if authority and failed_restore and not any(item["endpoint"] == "PATCH /later" and item["verdict"] == "SKIPPED"
                                               for item in auditor.results):
                     failures.append("Later write was not halted")
+                if not authority and (patch_count or evidence.get("rollback_verified") is True):
+                    failures.append("Generic HTTP lacked authority but wrote or claimed restoration")
                 if name.startswith("patch_initial_") or name in {"patch_default_readonly", "patch_not_allowlisted"}:
                     if patch_count:
                         failures.append("A write was sent despite an unusable baseline or write gate")
-            return {**scenario, "actual": primary["verdict"], "oracle_failures": failures,
+            return {**scenario, "authority": "direct fixture state" if authority else "unavailable",
+                    "safety_expected": expected, "actual": primary["verdict"], "oracle_failures": failures,
                     "matches_expectation": not failures, "requests": len(calls), "patch_requests": patch_count,
                     "executed": evidence.get("requests_attempted", 0) > 0,
                     "resource_restored": state == original if is_patch else None,
@@ -265,13 +274,14 @@ def run_scenario(scenario):
         thread.join(timeout=2)
 
 
-def run_scenarios():
-    outcomes = [run_scenario(scenario) for scenario in SCENARIOS]
+def run_scenarios(*, authority=True):
+    outcomes = [run_scenario(scenario, authority=authority) for scenario in SCENARIOS]
     known = [item for item in outcomes if item["vulnerable"] is True]
     eligible = [item for item in outcomes if item["name"] not in CONTROL_ONLY_NAMES]
     confirmed = sum(item["actual"] == "CONFIRMED" for item in known)
     return {
         "scope": "Fixed synthetic loopback fixtures; not production detection rates",
+        "state_authority": "direct fixture state" if authority else "unavailable: generic HTTP",
         "metric_definitions": {
             "known_vulnerability_detection_rate": "CONFIRMED / all independently declared vulnerable fixtures, including safely blocked or opt-out cases",
             "false_negative": "Known vulnerable fixture without CONFIRMED; SUSPICIOUS is still not a confirmation",
@@ -298,9 +308,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, default=ROOT)
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "authorization-coverage.json")
+    parser.add_argument("--generic-http", action="store_true", help="No fixture authority: verify safe blocking without removing original truths")
     args = parser.parse_args()
     sys.path.insert(0, str(args.source_root.resolve()))
-    result = run_scenarios()
+    result = run_scenarios(authority=not args.generic_http)
     result["source_root"] = str(args.source_root.resolve())
     result["source_commit"] = subprocess.check_output(
         ["git", "-C", str(args.source_root), "rev-parse", "HEAD"], text=True

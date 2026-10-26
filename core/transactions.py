@@ -95,6 +95,7 @@ class PatchSnapshot:
         return result
 
     def matches(self, document: Any) -> bool:
+        """Compare values only; callers must independently establish state authority."""
         if not isinstance(document, dict):
             return False
         return (all(get_path(document, path) == (True, value) for path, value in self.guards)
@@ -107,7 +108,8 @@ class PatchSnapshot:
         The selected field may legitimately change shape, but its full target
         value is separately compared by the detector. Other observed fields and
         array records must still be represented; ignored volatile paths are exempt.
-        This cannot discover fields hidden by the initial readback itself.
+        This is only a structure comparison, not an authority/freshness proof.
+        It cannot discover fields hidden by the initial readback itself.
         """
         if not isinstance(document, dict):
             return False

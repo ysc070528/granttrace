@@ -375,6 +375,8 @@ class CurlReportIntegrationTests(unittest.TestCase):
         exported = self.directory / "report.json"
         original = SecurityReportGenerator.generate
         with demo.DemoServer(database) as server, \
+                patch.object(api_sentinel, "APISentinelAuditor", side_effect=
+                             lambda **kwargs: demo._LocalDemoAuditor(demo_server=server, **kwargs)), \
                 patch.object(api_sentinel.SecurityReportGenerator, "generate", wraps=original) as reporter, \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = api_sentinel.main([
@@ -418,6 +420,7 @@ class CurlReportIntegrationTests(unittest.TestCase):
                 return original_patch(handler)
 
             auditor = demo._LocalDemoAuditor(
+                demo_server=server,
                 spec_path=str(spec_path), target_base_url=server.target,
                 identities_config=config["identities"], parameter_values=config["parameter_values"],
                 readback_config=config["readbacks"], write_allowlist=config["write_allowlist"],

@@ -6,6 +6,7 @@ import argparse
 import copy
 import io
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -108,12 +109,30 @@ class DemoServer:
 class _LocalDemoAuditor(APISentinelAuditor):
     """Keep the inherited detectors; constrain demo transport to its own server."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, demo_server: Optional[DemoServer] = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._demo_server = demo_server
         self._demo_origin = urlsplit(self.target_base_url)
         if self._demo_origin.scheme != "http" or self._demo_origin.hostname != "127.0.0.1":
             raise ValueError("Demo must use the bundled loopback server")
         self._opener = build_opener(ProxyHandler({}), _NoRedirectHandler())
+
+    def _authoritative_patch_state(
+        self, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        server = self._demo_server
+        if server is None or self.target_base_url.rstrip("/") != server.target or not server.thread.is_alive():
+            return None
+        selected = urlsplit(mutation_url)
+        if (selected.scheme, selected.netloc) != (self._demo_origin.scheme, self._demo_origin.netloc):
+            return None
+        match = re.fullmatch(r"/api/users/([^/?]+)/(?:settings|nickname)", selected.path)
+        if not match:
+            return None
+        # Direct access to the exact database owned by this disposable server;
+        # never infer authority from a loopback URL, HTTP status or configuration.
+        value = server.handler.DATABASE["users"].get(match.group(1))
+        return copy.deepcopy(value) if isinstance(value, dict) else None
 
     def _http_request(self, method: str, url: str, data: Optional[Dict[str, Any]] = None,
                       identity_name: str = "anonymous", content_type: str = "application/json") -> HTTPResult:
@@ -179,6 +198,7 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
                       "bundled disposable local data only, with readback and rollback."))
                 print("Running authorization audit...")
                 auditor = _LocalDemoAuditor(
+                    demo_server=server,
                     spec_path=str(spec_file), target_base_url=server.target,
                     max_workers=3, request_delay=0, request_timeout=3,
                     identities_config=config["identities"], parameter_values=config["parameter_values"],

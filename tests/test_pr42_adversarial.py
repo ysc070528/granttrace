@@ -23,7 +23,7 @@ OBSERVATIONS = []
 class AdversarialAPI:
     """Observe actual state separately from what the GET handler claims."""
 
-    def __init__(self, mode="honest", *, nested=False, writes=True, listed=True):
+    def __init__(self, mode="honest", *, nested=False, writes=True, listed=True, authority=True):
         self.mode = mode
         self.original = {"id": "account-7", "role": "user", "profile": {
             "server_marker": False, "display": "Original display"}, "counter": 0,
@@ -145,6 +145,11 @@ class AdversarialAPI:
                 readback_config=mappings,
                 bola_config={"GET /items/{id}": {"expected_visitor_access": "allow"}} if mode == "shared" else {},
             )
+        if authority:
+            # Observe the fixture's actual backing state, never its GET claims.
+            from urllib.parse import urlsplit
+            self.auditor._authoritative_patch_state = lambda ep, url, readback: copy.deepcopy(
+                self.states[urlsplit(url).path])
         self.endpoints = self.auditor.parser.get_endpoints()
 
     def __enter__(self):
@@ -159,6 +164,8 @@ class AdversarialAPI:
         result = {
             "case": self.mode, "state": copy.deepcopy(self.states),
             "patch_counts": dict(self.patch_counts),
+            "requests": copy.deepcopy(self.calls),
+            "initial_snapshot": copy.deepcopy(self.original),
             "halted": bool(self.auditor._writes_halted_reason),
             "verdicts": [{"endpoint": r["endpoint"], "check": r["check"], "verdict": r["verdict"],
                           "rollback_verified": r["evidence"].get("rollback_verified"),

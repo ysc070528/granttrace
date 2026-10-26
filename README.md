@@ -17,8 +17,9 @@ An OpenAPI authorization auditor that compares identities, verifies persisted ch
 
 仅对明确获得授权的系统进行测试；主动写测试仅应在可丢弃、隔离的测试资源上启用。
 
-主动写测试还依赖独立读回确实最新、完整；HTTP 200 或配置 `consistency: strong` 本身不能证明这些条件。
-无法从服务端实现或独立权威数据核实读回时，请保持只读。[PR #42 独立复核](docs/pr42-independent-review.md) 记录了已修复反例及仍未解决的新鲜度边界。
+**PR #42 的未发布安全收紧：普通 CLI 对外部 API 的主动 PATCH 暂停执行。** 即使显式开启写入、配置 allowlist、field_map 和 `consistency: strong`，缺少可运行的权威状态核验能力仍会在 PATCH 前阻断并报告 `INCONCLUSIVE`；dry-run 同样显示阻断原因。现有参数和配置继续解析，不能用配置解除这项保护。
+内置 `granttrace demo` 通过直接核对它自己持有的可丢弃数据库保留主动演示；普通 HTTP 200、缓存请求头、重复 GET 或一致性声明不能证明新鲜度与恢复成功。
+[原独立复核](docs/pr42-independent-review.md) 的风险记录保留；[本次 fail-closed 复核](docs/pr42-state-authority-review.md) 给出两个原始反例、修复证据和兼容性影响。
 
 ## Windows 用户：解压后双击体验
 

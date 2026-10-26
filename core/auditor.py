@@ -721,11 +721,42 @@ class APISentinelAuditor:
     def _has_object_selector(ep: Dict[str, Any]) -> bool:
         return "{" in ep["path"] or any(item.get("in") == "query" for item in ep.get("parameters", []))
 
+    def _authoritative_patch_state(
+        self, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """No generic HTTP observation can establish authoritative resource state.
+
+        The bundled in-process Demo overrides this with direct database access.
+        This is an internal integration seam, never a configuration assertion or
+        a cache-header heuristic. External CLI targets have no implementation.
+        """
+        return None
+
+    def _has_patch_state_authority(self) -> bool:
+        implementation = getattr(self._authoritative_patch_state, "__func__", None)
+        return implementation is not APISentinelAuditor._authoritative_patch_state
+
+    def _verified_patch_document(
+        self, result: HTTPResult, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        document = self._json_object(result)
+        if document is None:
+            return None
+        try:
+            authority = self._authoritative_patch_state(ep, mutation_url, readback)
+        except Exception:
+            return None
+        # Exact complete-document equality is required before ignoring volatile
+        # paths for restoration comparison. Matching HTTP content alone is not proof.
+        if not isinstance(authority, dict) or not json_values_equal(document, authority):
+            return None
+        return document
+
     @staticmethod
     def _json_object(result: HTTPResult) -> Optional[Dict[str, Any]]:
-        # Snapshot/persistence/restoration evidence must describe a complete,
-        # authoritative resource. Generic 2xx success also includes pending,
-        # transformed and partial representations; those cannot certify state.
+        # HTTP shape checks only; callers must separately verify state authority.
+        # Generic 2xx includes pending, transformed and partial representations;
+        # those cannot certify snapshots, persistence or restoration.
         if result.error is not None or result.status != 200 or result.truncated:
             return None
         headers = {name.lower(): value for name, value in result.headers.items()}
@@ -733,7 +764,7 @@ class APISentinelAuditor:
             return None
         # Explicitly aged/stale representations cannot support a state claim,
         # even when a gateway gives them HTTP 200. Absence of these headers is
-        # not proof of freshness: the operator's strong-read contract still matters.
+        # not proof of freshness; active transactions separately require authority.
         if "age" in headers:
             try:
                 if int(headers["age"]) != 0:
@@ -958,7 +989,8 @@ class APISentinelAuditor:
         for attempt in range(attempts):
             try:
                 _, restored_http = self._readback_result(ep, readback, "visitor")
-                verified = snapshot.matches(self._json_object(restored_http))
+                verified = snapshot.matches(self._verified_patch_document(
+                    restored_http, ep, mutation_url, readback))
             except Exception as exc:
                 restored_http = HTTPResult(0, "", error=f"{type(exc).__name__}: {exc}")
             # A response that cannot be decoded, or async restoration, is not a safe success.
@@ -986,14 +1018,14 @@ class APISentinelAuditor:
             attempts, delay = self._poll_settings(readback)
             for attempt in range(attempts):
                 _, after_http = self._readback_result(ep, readback, "visitor")
-                after = self._json_object(after_http)
+                after = self._verified_patch_document(after_http, ep, mutation_url, readback)
                 if after is not None and not snapshot.covers_document(after):
                     after = None
                 if (after is not None and not snapshot.matches(after)) or attempt + 1 == attempts:
                     break
                 time.sleep(delay)
-            # Only an explicitly strongly consistent, complete observation allows
-            # skipping a redundant restore. Weak/stale reads must not bypass recovery.
+            # Only an independently checked complete state allows skipping a
+            # redundant restore; a configured consistency label is not proof.
             recovery_needed = not (
                 readback.get("consistency") == "strong"
                 and snapshot.matches(after)
@@ -1121,6 +1153,15 @@ class APISentinelAuditor:
                                           "requests_sent": 0, **risk})
             return
 
+        if not self._has_patch_state_authority():
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                                "Authoritative resource state cannot be verified; no write was sent. "
+                                "Ordinary HTTP readbacks and consistency declarations are insufficient.",
+                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                          "requests_sent": 0, "rollback_verified": False,
+                                          "recovery_sent": False, "safety_signal": "unverified_state_authority"})
+            return
+
         with self._resource_lock(mutation_url):
             for case in cases:
                 field_path = case["field_path"]
@@ -1134,9 +1175,9 @@ class APISentinelAuditor:
                                         f"Read-before-write failed: {before_http.error}",
                                         evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
                     return
-                before = self._json_object(before_http)
+                before = self._verified_patch_document(before_http, ep, mutation_url, readback)
                 if before is None:
-                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object without partial or stale-cache evidence")
+                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
                     continue
                 try:
                     snapshot = prepare_patch(before, case, readback)
@@ -1156,6 +1197,11 @@ class APISentinelAuditor:
                     unverified.append(f"{field_path}: {exc}; no write was sent")
                     continue
 
+                # Recheck the authority immediately before transport; it may
+                # become unavailable while preparing the reversible snapshot.
+                if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
+                    unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
+                    continue
                 tested.append(field_path)
                 transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
                 mutation = transaction["mutation"]
@@ -1172,7 +1218,7 @@ class APISentinelAuditor:
                         else str(ep.get("request_content_type") or "application/json")
                     ),
                     "snapshot_fields": list(snapshot.restore),
-                    "verification_scope": "Full readback document except explicitly ignored volatile paths",
+                    "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
                     "ignored_readback_paths": readback.get("ignore_readback_paths", []),
                     "mutation": self._safe_body(mutation),
                     "after": self._safe_body(transaction["after_http"]),
@@ -1305,12 +1351,17 @@ class APISentinelAuditor:
             elif ep["method"] == "PATCH":
                 entry.update({
                     "check": "MASS_ASSIGNMENT",
-                    "writes_enabled": self.allow_write_tests and key in self.write_allowlist,
+                    "writes_enabled": (self.allow_write_tests and key in self.write_allowlist
+                                       and self._has_patch_state_authority()),
                     "content_type": ep.get("request_content_type"),
                     "readback_path": readback.get("path"),
                     "configured_fields": list(readback.get("field_map", {})),
                     "readback_consistency": readback.get("consistency", "unspecified"),
                 })
+                if self.allow_write_tests and key in self.write_allowlist and not self._has_patch_state_authority():
+                    entry.update({"safety_blocked": True, "reason_category": "safety_policy",
+                                  "safety_signal": "unverified_state_authority",
+                                  "reason": "Authoritative resource state cannot be verified; no write will be sent"})
                 if isinstance(readback, dict) and readback.get("path"):
                     read_ep = self._readback_endpoint(ep, readback)
                     risk = read_only_risk(read_ep)
@@ -1340,7 +1391,8 @@ class APISentinelAuditor:
         print(f"Specification: {self.parser.version} | endpoints: {len(endpoints)}")
         print(
             "Write tests: "
-            + ("ENABLED with rollback verification" if self.allow_write_tests else "DISABLED (read-only mode)")
+            + ("ENABLED with independent state authority" if self.allow_write_tests and self._has_patch_state_authority()
+               else "BLOCKED (no state authority)" if self.allow_write_tests else "DISABLED (read-only mode)")
         )
         print("=" * 68)
 

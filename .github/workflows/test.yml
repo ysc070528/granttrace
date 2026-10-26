@@ -82,6 +82,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify independent PATCH state-authority counterexamples
+        run: python scripts/verify_pr42_adversarial.py --output dist/pr42-state-authority.json
+
+      - name: Verify original authorization truths with direct fixture state and generic HTTP
+        run: |
+          python scripts/verify_authorization_coverage.py --output dist/authorization-authoritative.json
+          python scripts/verify_authorization_coverage.py --generic-http --output dist/authorization-generic-http.json
+
       - name: Verify business authorization scenarios
         run: python scripts/verify_business_scenarios.py
 
@@ -101,6 +109,9 @@ jobs:
             dist/coverage.txt
             dist/coverage.xml
             dist/coverage.json
+            dist/pr42-state-authority.json
+            dist/authorization-authoritative.json
+            dist/authorization-generic-http.json
             dist/business-scenarios.json
             dist/install-verification.json
             dist/mock-validation/

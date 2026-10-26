@@ -1,5 +1,7 @@
 # 配置指南
 
+> PR #42 未发布安全收紧：外部 CLI 的主动 PATCH 缺少权威状态核验实现，现有写开关、allowlist、field_map 和 `consistency: strong` 配置不能解除阻断。参数仍可解析；结果为 `INCONCLUSIVE`、不发 PATCH。内置 Demo 直接核对自有数据库。见 [复核与兼容性说明](pr42-state-authority-review.md)。
+
 [返回项目首页](../README.md)
 
 ## 推荐首次接入流程

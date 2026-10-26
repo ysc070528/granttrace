@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Fail closed before external CLI PATCH tests when authoritative resource state
+  cannot be independently observed; write flags, mappings and a declared strong
+  readback cannot supply that proof. Existing CLI/config syntax remains accepted.
+- Check initial, post-write and restored HTTP documents against actual backing
+  state in the owned disposable Demo. Retain global write halt on unavailable
+  or contradictory restoration evidence, including queued concurrent callers.
+- Preserve and retest both original unmarked-cache counterexamples; distinguish
+  generic HTTP blocking from state-backed fixture detection statistics.
+
 - PR #42 follow-up review: reject explicitly aged/stale state evidence, require
   previously observed business structure before confirming persistence, and
   serialize direct write-audit calls so waiting callers observe recovery failures.

@@ -98,6 +98,7 @@ class MergePatchRecoveryTests(unittest.TestCase):
                         identities_config=identities, allow_write_tests=True,
                         write_allowlist=config["write_allowlist"], readback_config=config["readbacks"],
                     )
+                auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
                 endpoints = auditor.parser.get_endpoints()
                 endpoint = next(item for item in endpoints if item["method"] == "PATCH")
                 auditor.audit_endpoint_mass_assignment(endpoint, endpoints)

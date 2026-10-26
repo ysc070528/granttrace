@@ -557,9 +557,27 @@ class OnboardingCLITests(unittest.TestCase):
         self.assertNotIn("[CAUTION]", stderr)
         self.assert_read_only_next_scan(stderr)
 
-    def test_allow_write_with_allowlist_warns_about_eligible_patch_but_suggests_read_only_scan(self):
+    def test_allow_write_with_allowlist_still_blocks_unverified_state_authority(self):
         self.enable_write_config()
         code, stdout, stderr = self.call_cli(self.selected_args("--dry-run", "--allow-write-tests"))
+        self.assertEqual(code, 0, stderr)
+        plan = self.parse_plan(stdout)
+        self.assertEqual(plan["requests_sent"], 0)
+        self.assertEqual(sum(operation["writes_enabled"] is True for operation in plan["operations"]), 0)
+        blocked = next(op for op in plan["operations"] if op["check"] == "MASS_ASSIGNMENT")
+        self.assertEqual("unverified_state_authority", blocked["safety_signal"])
+        self.assertIn("Write-enabled operations in this plan: 0", stderr)
+        self.assert_read_only_next_scan(stderr)
+
+    def test_allow_write_with_allowlist_warns_about_eligible_patch_but_suggests_read_only_scan(self):
+        self.enable_write_config()
+        class FixtureAuditor(APISentinelAuditor):
+            def _authoritative_patch_state(self, ep, mutation_url, readback):
+                # Plan-only control: owned in-memory state, no HTTP or mutation.
+                return {"role": "user"}
+
+        with patch("api_sentinel.APISentinelAuditor", FixtureAuditor):
+            code, stdout, stderr = self.call_cli(self.selected_args("--dry-run", "--allow-write-tests"))
         self.assertEqual(code, 0, stderr)
         plan = self.parse_plan(stdout)
         self.assertEqual(plan["requests_sent"], 0)

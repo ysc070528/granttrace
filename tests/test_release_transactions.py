@@ -31,6 +31,7 @@ class StrictReadbackTests(unittest.TestCase):
             allow_write_tests=True, write_allowlist=["PATCH " + endpoint["path"]],
             readback_config={"PATCH " + endpoint["path"]: mapping},
         )
+        auditor._authoritative_patch_state = lambda *args: {"role": "user"}
         return auditor, endpoint
 
     def test_valid_finite_numbers_and_literal_strings_are_preserved(self):
@@ -83,6 +84,7 @@ class StrictReadbackTests(unittest.TestCase):
     def test_invalid_postwrite_readback_still_restores_state(self):
         auditor, endpoint = self.make_auditor()
         state = {"role": "user"}
+        auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
         original = copy.deepcopy(state)
         writes = []
         read_count = 0
@@ -108,6 +110,7 @@ class StrictReadbackTests(unittest.TestCase):
     def test_valid_snapshot_still_confirms_and_restores(self):
         auditor, endpoint = self.make_auditor()
         state = {"role": "user", "telemetry": 1.25}
+        auditor._authoritative_patch_state = lambda *args: copy.deepcopy(state)
         original = copy.deepcopy(state)
         writes = []
 
