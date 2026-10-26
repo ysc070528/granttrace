@@ -11,7 +11,7 @@ Windows 便携版已正式提供；已发布版本与下载资产以官方 GitHu
 
 An OpenAPI authorization auditor that compares identities, verifies persisted changes, and reports restoration evidence.
 
-安全优先、证据驱动的 OpenAPI 权限审计工具。检查 BOLA / IDOR 与 Mass Assignment，输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
+安全优先、证据驱动的 OpenAPI 权限与授权审计工具。全面覆盖 OWASP API Top 10 核心风险：BOLA / IDOR、Broken Authentication（未授权数据暴露）、BFLA（功能级垂直越权）及 PATCH / PUT 批量赋值（Mass Assignment），输出身份对比、持久化变更及恢复核验的 HTML / JSON 报告。默认只读；主动写测试须显式开启并配置允许清单与独立读回。
 
 默认扫描会在请求前跳过具有明显状态变更语义的 GET，包括独立读回；静态规则无法保证发现所有副作用，仍需人工核对规范和计划。拒绝响应、授权证据及覆盖率的具体边界见 [授权审计加固说明](docs/authorization-audit-hardening.md)。
 
@@ -55,7 +55,7 @@ flowchart TD
     A["OpenAPI Spec + Owner / Visitor / Anonymous"] --> B["GrantTrace"]
     B --> C["只读身份差异比较（默认）"]
     C --> R["HTML / JSON（可选 SARIF）"]
-    B -->|显式开启并满足写入安全条件| W["PATCH 测试"]
+    B -->|显式开启并满足写入安全条件| W["PATCH / PUT 测试"]
     W --> D["独立 GET 读回"]
     D --> E["恢复并验证"]
     E --> R

@@ -43,7 +43,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^PATCH /"
+        "pattern": "^(PATCH|PUT) /"
       }
     },
     "readbacks": {

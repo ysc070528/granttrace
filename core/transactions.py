@@ -123,7 +123,7 @@ def ensure_reversible_merge_patch(snapshot: PatchSnapshot) -> None:
         raise ValueError("Merge Patch probe cannot be reversed by the original snapshot")
 
 
-def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[str, Any]) -> PatchSnapshot:
+def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[str, Any], method: str = "PATCH") -> PatchSnapshot:
     if not isinstance(before, dict) or not json_values_equal(before, before):
         raise ValueError("original snapshot must be a finite, JSON-serializable object")
     mutation_path = path_parts(case.get("path", case["field_path"]))
@@ -143,6 +143,10 @@ def prepare_patch(before: Dict[str, Any], case: Dict[str, Any], mapping: Dict[st
     if not isinstance(root, str):
         raise ValueError("only object PATCH bodies are supported")
     template.setdefault(root, None)
+    if str(method).upper() == "PUT":
+        for k in before:
+            if isinstance(k, str):
+                template.setdefault(k, None)
     container_map = mapping.get("snapshot_field_map", {})
     if not isinstance(container_map, dict):
         raise ValueError("snapshot_field_map must be an object")

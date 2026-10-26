@@ -943,7 +943,7 @@ class ConfigValidator:
             issues.append(
                 ConfigIssue(
                     path="write_allowlist",
-                    message="'write_allowlist' must be a list of 'PATCH /path' strings",
+                    message="'write_allowlist' must be a list of 'PATCH /path' or 'PUT /path' strings",
                     expected="list of strings",
                     actual=safe_diagnostic_value(allowlist),
                 )
@@ -962,11 +962,11 @@ class ConfigValidator:
                         suggestion="Ensure method is uppercase 'PATCH' followed by a space and a path starting with '/'",
                     )
                 )
-            elif method != "PATCH":
+            elif method not in ("PATCH", "PUT"):
                 issues.append(
                     ConfigIssue(
                         path=f"write_allowlist[{index}]",
-                        message=f"Write allowlist only supports 'PATCH' operations (got '{method}')",
+                        message=f"Write allowlist only supports 'PATCH' and 'PUT' operations (got '{method}')",
                         expected="'PATCH /path'",
                         actual=safe_diagnostic_value(item),
                         suggestion="Change method to 'PATCH'",
@@ -1006,11 +1006,11 @@ class ConfigValidator:
                         actual=safe_diagnostic_value(op_key),
                     )
                 )
-            elif method != "PATCH":
+            elif method not in ("PATCH", "PUT"):
                 issues.append(
                     ConfigIssue(
                         path=f"readbacks.{op_key}",
-                        message=f"Readback keys must strictly be 'PATCH /path' operations (got '{method}')",
+                        message=f"Readback keys must strictly be 'PATCH /path' or 'PUT /path' operations (got '{method}')",
                         expected="'PATCH /path'",
                         actual=safe_diagnostic_value(op_key),
                     )

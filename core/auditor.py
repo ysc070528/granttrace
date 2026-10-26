@@ -53,7 +53,7 @@ class APISentinelAuditor:
     # PATCH has reversible partial-update semantics. POST and PUT require an
     # operation-specific compensation/full-snapshot design that this release
     # deliberately does not attempt to guess.
-    WRITE_METHODS = {"PATCH"}
+    WRITE_METHODS = {"PATCH", "PUT"}
     AUTH_DENIAL_STATUSES = {401, 403}
     INVALID_TEST_STATUSES = {400, 404, 405, 409, 415, 422}
 
@@ -109,8 +109,8 @@ class APISentinelAuditor:
         for item in write_allowlist or []:
             c_key = _canonical_op_key(item)
             is_valid, method, path, canonical, err_msg = parse_operation_key(c_key)
-            if not is_valid or method != "PATCH":
-                raise ValueError("write_allowlist entries must be 'PATCH /case-sensitive-path'")
+            if not is_valid or method not in self.WRITE_METHODS:
+                raise ValueError("write_allowlist entries must be 'PATCH /case-sensitive-path' or 'PUT /case-sensitive-path'")
             self.write_allowlist.add(canonical)
         self._writes_halted_reason: Optional[str] = None
 
@@ -159,6 +159,8 @@ class APISentinelAuditor:
             "confirmed": 0,
             "bola_confirmed": 0,
             "mass_assignment_confirmed": 0,
+            "broken_auth_confirmed": 0,
+            "bfla_confirmed": 0,
             "public_endpoints": 0,
             "authorized_endpoints": 0,
             "secure_endpoints": 0,
@@ -571,6 +573,11 @@ class APISentinelAuditor:
                 self.stats["error_count"] += 1
             if finding:
                 self.findings.append(finding)
+                cwe = finding.get("cwe")
+                if cwe == "CWE-306":
+                    self.stats["broken_auth_confirmed"] = self.stats.get("broken_auth_confirmed", 0) + 1
+                elif cwe == "CWE-285":
+                    self.stats["bfla_confirmed"] = self.stats.get("bfla_confirmed", 0) + 1
         return result
 
     @staticmethod
@@ -588,6 +595,24 @@ class APISentinelAuditor:
         }
         return mapping.get(str(raw).upper(), Verdict.INCONCLUSIVE)
 
+    @staticmethod
+    def _is_admin_endpoint(ep: Dict[str, Any]) -> bool:
+        path = str(ep.get("path", "")).lower()
+        op_id = str(ep.get("operation_id", "")).lower()
+        tags = [str(t).lower() for t in ep.get("tags", [])]
+        summary = str(ep.get("summary", "")).lower()
+        admin_tokens = {"admin", "administrator", "system", "management", "internal", "privileged"}
+        path_segments = set(path.strip("/").split("/"))
+        if path_segments.intersection(admin_tokens):
+            return True
+        if any(any(tok in t for tok in admin_tokens) for t in tags):
+            return True
+        if any(tok in op_id for tok in admin_tokens):
+            return True
+        if any(tok in summary for tok in admin_tokens):
+            return True
+        return False
+
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         if str(ep.get("method", "")).upper() != "GET":
             self._record_result(ep, "BOLA", Verdict.SKIPPED,
@@ -604,9 +629,109 @@ class APISentinelAuditor:
         path = ep["path"]
         parameters = ep.get("parameters", [])
         has_selector = "{" in path or any(item.get("in") == "query" for item in parameters)
+        security = ep.get("security", [])
+        requires_auth = bool(security) and {} not in security
+        is_admin = self._is_admin_endpoint(ep)
+
         if not has_selector:
-            self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found; this operation is not applicable to the current object-level detector",
-                                evidence={"reason_category": "not_applicable", "requests_attempted": 0})
+            if not requires_auth and not is_admin:
+                if ep.get("security_declared", False) and security == []:
+                    self._record_result(ep, "BOLA", Verdict.PUBLIC, "Explicit public collection endpoint",
+                                        evidence={"reason_category": "conclusive", "requests_attempted": 0})
+                else:
+                    self._record_result(ep, "BOLA", Verdict.SKIPPED, "No object selector was found; this operation is not applicable to the current object-level detector",
+                                        evidence={"reason_category": "not_applicable", "requests_attempted": 0})
+                return
+            # Non-selector endpoint requiring auth or administrative: audit Broken Auth, BFLA and Collection Isolation
+            try:
+                coll_url = self._build_url(ep, "owner")
+            except ParameterSerializationError as exc:
+                self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
+                                    evidence={"reason_category": "invalid_input", "requests_attempted": 0})
+                return
+            risk = self._read_request_risk("GET", coll_url)
+            if risk:
+                self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
+                                    evidence={"reason_category": "safety_policy", "requests_attempted": 0, **risk})
+                return
+            owner_resp = self._http_request(ep["method"], coll_url, identity_name="owner")
+            visitor_resp = self._http_request(ep["method"], coll_url, identity_name="visitor")
+            anon_resp = self._http_request(ep["method"], coll_url, identity_name="anonymous")
+            coll_evidence = {
+                "requests_attempted": 3,
+                "target_url": coll_url,
+                "owner": self._safe_body(owner_resp),
+                "visitor": self._safe_body(visitor_resp),
+                "anonymous": self._safe_body(anon_resp),
+            }
+            # Check Broken Authentication
+            if requires_auth and anon_resp.status == 200 and not anon_resp.truncated and not anon_resp.error:
+                anon_kind = ResponseDiffEngine.classify_response(anon_resp.status, anon_resp.body).get("kind")
+                if anon_kind == ResponseDiffEngine.RESPONSE_VALID:
+                    auth_finding = {
+                        "type": "Broken Authentication (Unauthenticated Data Exposure)",
+                        "cwe": "CWE-306",
+                        "severity": "High",
+                        "endpoint": self._operation_key(ep),
+                        "target_url": coll_url,
+                        "details": f"Declared authenticated endpoint '{self._operation_key(ep)}' returned HTTP 200 to anonymous request",
+                        "evidence": dict(coll_evidence),
+                    }
+                    self._record_result(ep, "BROKEN_AUTH", Verdict.CONFIRMED,
+                                        "Authenticated endpoint returned HTTP 200 with valid data to anonymous request",
+                                        evidence=dict(coll_evidence), finding=auth_finding)
+            # Check BFLA
+            if is_admin:
+                if visitor_resp.status in self.AUTH_DENIAL_STATUSES:
+                    self._record_result(ep, "BFLA", Verdict.SECURE,
+                                        "Unprivileged visitor access to administrative endpoint was properly denied",
+                                        evidence=coll_evidence)
+                elif visitor_resp.status == 200 and not visitor_resp.truncated and not visitor_resp.error:
+                    vis_kind = ResponseDiffEngine.classify_response(visitor_resp.status, visitor_resp.body).get("kind")
+                    if vis_kind == ResponseDiffEngine.RESPONSE_VALID:
+                        bfla_finding = {
+                            "type": "Broken Function Level Authorization (Privilege Escalation)",
+                            "cwe": "CWE-285",
+                            "severity": "Critical",
+                            "endpoint": self._operation_key(ep),
+                            "target_url": coll_url,
+                            "details": f"Unprivileged visitor identity accessed administrative operation '{self._operation_key(ep)}' without denial",
+                            "evidence": dict(coll_evidence),
+                        }
+                        self._record_result(ep, "BFLA", Verdict.CONFIRMED,
+                                            "Unprivileged visitor accessed administrative endpoint",
+                                            evidence=dict(coll_evidence), finding=bfla_finding)
+                else:
+                    self._record_result(ep, "BFLA", Verdict.INCONCLUSIVE,
+                                        f"Administrative endpoint returned HTTP {visitor_resp.status} for visitor",
+                                        evidence=coll_evidence)
+                return
+            # Collection / Contextual BOLA isolation check
+            owner_id = str(self.identities.get("owner", {}).get("id") or "")
+            visitor_id = str(self.identities.get("visitor", {}).get("id") or "")
+            if visitor_resp.status in self.AUTH_DENIAL_STATUSES:
+                self._record_result(ep, "BOLA", Verdict.SECURE,
+                                    "Visitor access to collection endpoint was denied", evidence=coll_evidence)
+            elif owner_resp.status == 200 and visitor_resp.status == 200:
+                if owner_id and owner_id in visitor_resp.body and (not visitor_id or owner_id != visitor_id):
+                    coll_finding = {
+                        "type": "BOLA (Collection Data Isolation Leak)",
+                        "cwe": "CWE-639",
+                        "severity": "High",
+                        "endpoint": self._operation_key(ep),
+                        "target_url": coll_url,
+                        "details": f"Collection response for visitor contains owner's private identifier '{owner_id}'",
+                        "evidence": dict(coll_evidence),
+                    }
+                    self._record_result(ep, "BOLA", Verdict.CONFIRMED, coll_finding["details"],
+                                        evidence=coll_evidence, finding=coll_finding)
+                else:
+                    self._record_result(ep, "BOLA", Verdict.SECURE,
+                                        "Collection endpoint returned isolated response for visitor", evidence=coll_evidence)
+            else:
+                self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
+                                    f"Collection endpoint returned unexpected status: owner={owner_resp.status}, visitor={visitor_resp.status}",
+                                    evidence=coll_evidence)
             return
 
         policy = self.bola_config.get(self._operation_key(ep), {})
@@ -718,6 +843,43 @@ class APISentinelAuditor:
             evidence=evidence,
             finding=finding,
         )
+        # Check Broken Auth on selector endpoints
+        if requires_auth and anonymous.status == 200 and not anonymous.truncated and not anonymous.error:
+            anon_kind = ResponseDiffEngine.classify_response(anonymous.status, anonymous.body).get("kind")
+            if anon_kind == ResponseDiffEngine.RESPONSE_VALID:
+                auth_finding = {
+                    "type": "Broken Authentication (Unauthenticated Data Exposure)",
+                    "cwe": "CWE-306",
+                    "severity": "High",
+                    "endpoint": self._operation_key(ep),
+                    "target_url": owner_url,
+                    "details": f"Declared authenticated endpoint '{self._operation_key(ep)}' returned HTTP 200 to anonymous request",
+                    "evidence": dict(evidence),
+                }
+                self._record_result(ep, "BROKEN_AUTH", Verdict.CONFIRMED,
+                                    "Authenticated endpoint returned HTTP 200 with valid data to anonymous request",
+                                    evidence=dict(evidence), finding=auth_finding)
+        # Check BFLA on selector endpoints
+        if self._is_admin_endpoint(ep):
+            if visitor_cross.status in self.AUTH_DENIAL_STATUSES:
+                self._record_result(ep, "BFLA", Verdict.SECURE,
+                                    "Unprivileged visitor access to administrative endpoint was properly denied",
+                                    evidence=dict(evidence))
+            elif visitor_cross.status == 200 and not visitor_cross.truncated and not visitor_cross.error:
+                vis_kind = ResponseDiffEngine.classify_response(visitor_cross.status, visitor_cross.body).get("kind")
+                if vis_kind == ResponseDiffEngine.RESPONSE_VALID:
+                    bfla_finding = {
+                        "type": "Broken Function Level Authorization (Privilege Escalation)",
+                        "cwe": "CWE-285",
+                        "severity": "Critical",
+                        "endpoint": self._operation_key(ep),
+                        "target_url": owner_url,
+                        "details": f"Unprivileged visitor identity accessed administrative operation '{self._operation_key(ep)}' without denial",
+                        "evidence": dict(evidence),
+                    }
+                    self._record_result(ep, "BFLA", Verdict.CONFIRMED,
+                                        "Unprivileged visitor accessed administrative endpoint",
+                                        evidence=dict(evidence), finding=bfla_finding)
 
     @staticmethod
     def _json_object(result: HTTPResult) -> Optional[Dict[str, Any]]:
@@ -1013,9 +1175,9 @@ class APISentinelAuditor:
     def audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
-        if str(ep.get("method", "")).upper() != "PATCH":
+        if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
-                                "Only explicitly allowlisted reversible PATCH checks are supported; no method substitution or request was made",
+                                "Only explicitly allowlisted reversible PATCH and PUT checks are supported; no method substitution or request was made",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "safety_signal": "method"})
             return
@@ -1110,7 +1272,7 @@ class APISentinelAuditor:
                     unverified.append(f"{field_path}: readback was not a complete successful JSON object")
                     continue
                 try:
-                    snapshot = prepare_patch(before, case, readback)
+                    snapshot = prepare_patch(before, case, readback, method=ep['method'])
                     if not snapshot.matches(before):
                         raise ValueError("original readback snapshot cannot be verified")
                     # Merge Patch null members remove fields; they cannot restore an
@@ -1267,7 +1429,7 @@ class APISentinelAuditor:
                 if risk:
                     entry.update({"safety_blocked": True, "reason_category": "safety_policy",
                                   "reason": risk["safety_reason"], "safety_signal": risk["safety_signal"]})
-            elif ep["method"] == "PATCH":
+            elif ep["method"] in self.WRITE_METHODS:
                 entry.update({
                     "check": "MASS_ASSIGNMENT",
                     "writes_enabled": self.allow_write_tests and key in self.write_allowlist,

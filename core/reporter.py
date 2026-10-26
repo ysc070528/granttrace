@@ -177,6 +177,39 @@ class SecurityReportGenerator:
                     "恢复原状态并再次读取核验；若结果不一致或无法核验，暂停后续写入测试并人工恢复。",
                 ],
             }
+        if check == "BROKEN_AUTH" or cwe == "CWE-306":
+            summary = f"未授权访问检查：匿名（Anonymous）请求访问声明需认证的端点：{resource}。"
+            if verdict == "CONFIRMED":
+                verification = "已确认未授权访问：未携带有效凭据的匿名请求获得 HTTP 200 及有效业务数据。"
+            elif verdict == "SECURE":
+                verification = "未授权访问被服务端正确拒绝（HTTP 401/403）。"
+            else:
+                verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
+            return {
+                "summary": summary, "verification": verification,
+                "remediation": "在 API 网关或服务端中间件中强制校验认证凭据（Token/Session）；未携带凭据的请求应立即返回 HTTP 401 Unauthorized，禁止返回受保护的业务数据。",
+                "retest": [
+                    "在测试环境中不携带任何 Authorization 请求头或 Cookie，直接向该端点发送请求。",
+                    "验证服务端返回 HTTP 401 或 403，且响应正文中不包含任何敏感业务数据或资源信息。",
+                ],
+            }
+        if check == "BFLA" or cwe == "CWE-285":
+            summary = f"功能级垂直越权检查：普通访客（Visitor）尝试访问特权/管理功能端点：{resource}。"
+            if verdict == "CONFIRMED":
+                verification = "已确认功能级越权：普通访客身份成功调用管理端点并获得有效业务响应。"
+            elif verdict == "SECURE":
+                verification = "管理功能访问控制生效：普通访客身份的调用被服务端正确拒绝（HTTP 401/403）。"
+            else:
+                verification = "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "。"
+            return {
+                "summary": summary, "verification": verification,
+                "remediation": "在服务端业务层或网关中实施细粒度的角色访问控制（RBAC/ABAC）；严格限制仅允许具有管理员或相应权限角色的身份访问特权端点，对普通用户一律返回 403 Forbidden。",
+                "retest": [
+                    "使用普通用户（Visitor）的有效凭据向该管理端点发起请求。",
+                    "核对服务端返回 HTTP 403 Forbidden，禁止普通用户读取系统配置或执行管理操作。",
+                    "再使用管理员身份（Owner）发起请求，确认合法管理操作正常可用。",
+                ],
+            }
         return {
             "summary": "本项检查：" + str(item.get("check") or item.get("type") or "未记录检查类型") + "。",
             "verification": "本次结论：" + cls.VERDICT_LABELS.get(verdict, verdict) + "；身份、字段和恢复信息以已有证据为准。",
@@ -329,7 +362,7 @@ class SecurityReportGenerator:
             curl_html = (
                 cls._curl_html(template)
                 if template is not None and finding.get("verdict", "CONFIRMED") == "CONFIRMED"
-                and finding.get("cwe") in {"CWE-639", "CWE-915"} else ""
+                and finding.get("cwe") in {"CWE-639", "CWE-915", "CWE-306", "CWE-285"} else ""
             )
             finding_html_parts.append(
                 f"""

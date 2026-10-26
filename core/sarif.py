@@ -44,11 +44,37 @@ _RULES: tuple[dict[str, object], ...] = (
         },
         "properties": {"tags": ["security", "mass-assignment", "CWE-915"]},
     },
+    {
+        "id": "GT-AUTH-001",
+        "name": "BrokenAuthentication",
+        "shortDescription": {"text": "Broken Authentication"},
+        "fullDescription": {
+            "text": "An endpoint requiring authentication returned successful business data to an unauthenticated request."
+        },
+        "help": {
+            "text": "Enforce authentication checks and reject unauthenticated requests with HTTP 401/403."
+        },
+        "properties": {"tags": ["security", "authentication", "CWE-306"]},
+    },
+    {
+        "id": "GT-BFLA-001",
+        "name": "BrokenFunctionLevelAuthorization",
+        "shortDescription": {"text": "Broken Function Level Authorization"},
+        "fullDescription": {
+            "text": "An unprivileged identity accessed an administrative or privileged operation without authorization denial."
+        },
+        "help": {
+            "text": "Enforce strict role-based access control (RBAC) on administrative endpoints and reject unauthorized users with HTTP 403."
+        },
+        "properties": {"tags": ["security", "authorization", "privilege-escalation", "CWE-285"]},
+    },
 )
 
 _CHECK_RULES = {
     "BOLA": (0, "GT-BOLA-001", "CWE-639", "Confirmed broken object level authorization"),
     "MASS_ASSIGNMENT": (1, "GT-MASS-001", "CWE-915", "Confirmed mass assignment"),
+    "BROKEN_AUTH": (2, "GT-AUTH-001", "CWE-306", "Confirmed broken authentication"),
+    "BFLA": (3, "GT-BFLA-001", "CWE-285", "Confirmed broken function level authorization"),
 }
 
 

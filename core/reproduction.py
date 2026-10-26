@@ -198,10 +198,16 @@ def build_reproduction_templates(
         if "verdict" in finding and finding["verdict"] != "CONFIRMED":
             continue
         cwe = finding.get("cwe")
-        expected_method = "GET" if cwe == "CWE-639" else "PATCH" if cwe == "CWE-915" else None
         valid, method, path, _, _ = parse_operation_key(finding.get("endpoint"))
-        if (not valid or method != expected_method
-                or any(character == "\\" or not character.isprintable() for character in path)):
+        if not valid or any(character == "\\" or not character.isprintable() for character in path):
+            continue
+        if cwe in {"CWE-639", "CWE-306", "CWE-285"}:
+            if method != "GET":
+                continue
+        elif cwe == "CWE-915":
+            if method not in {"PATCH", "PUT"}:
+                continue
+        else:
             continue
         evidence = finding.get("evidence")
         evidence = evidence if isinstance(evidence, Mapping) else {}
@@ -215,9 +221,10 @@ def build_reproduction_templates(
             continue
         safe_url, redacted = url
         lines = ["curl --globoff -X " + shlex.quote(method) + " " + shlex.quote(safe_url)]
-        lines.extend("-H " + shlex.quote(name + ": " + placeholder) for name, placeholder in headers
-                     if method != "PATCH" or name.lower() != "content-type")
-        if method == "PATCH":
+        if cwe != "CWE-306":
+            lines.extend("-H " + shlex.quote(name + ": " + placeholder) for name, placeholder in headers
+                         if method not in {"PATCH", "PUT"} or name.lower() != "content-type")
+        if method in {"PATCH", "PUT"}:
             content_type = evidence.get("request_content_type")
             if (not isinstance(content_type, str) or not _CONTENT_TYPE.fullmatch(content_type)
                     or sanitize_text(content_type, secret_values=secrets) != content_type
