@@ -527,7 +527,7 @@ class ConfigValidator:
         if not isinstance(parameters, list):
             return
         for parameter in parameters:
-            if not isinstance(parameter, dict) or parameter.get("in") not in {"path", "query"}:
+            if not isinstance(parameter, dict) or parameter.get("in") not in {"path", "query", "header", "cookie"}:
                 continue
             name = parameter.get("name")
             if not isinstance(name, str) or name not in values:

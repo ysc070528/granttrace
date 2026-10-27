@@ -21,7 +21,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple, Union
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
@@ -33,7 +33,7 @@ from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
-from core.parameters import ParameterSerializationError, serialize_path_parameter, serialize_query_parameter
+from core.parameters import ParameterSerializationError, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
 
 
@@ -357,6 +357,7 @@ class APISentinelAuditor:
         data: Optional[Dict[str, Any]] = None,
         identity_name: str = "anonymous",
         content_type: str = "application/json",
+        headers: Optional[Dict[str, str]] = None,
     ) -> HTTPResult:
         if getattr(self._request_accounting, "attempts", None) is None:
             self._request_accounting.attempts = 0
@@ -365,16 +366,23 @@ class APISentinelAuditor:
             return HTTPResult(status=0, body="", error=risk["safety_reason"])
         self._throttle()
         try:
-            headers = {
-                "accept": "application/json",
-                "user-agent": f"GrantTrace/{__version__}",
-                **self._identity_headers(identity_name),
-            }
+            if headers is not None:
+                request_headers = {
+                    "accept": "application/json",
+                    "user-agent": f"GrantTrace/{__version__}",
+                    **headers,
+                }
+            else:
+                request_headers = {
+                    "accept": "application/json",
+                    "user-agent": f"GrantTrace/{__version__}",
+                    **self._identity_headers(identity_name),
+                }
             encoded_data = None
             if data is not None:
-                headers["content-type"] = content_type
+                request_headers["content-type"] = content_type
                 encoded_data = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            request = urllib.request.Request(url, data=encoded_data, method=method, headers=headers)
+            request = urllib.request.Request(url, data=encoded_data, method=method, headers=request_headers)
             self._request_accounting.attempts = (getattr(self._request_accounting, "attempts", None) or 0) + 1
             with self._result_lock:
                 self.stats["transport_attempts"] += 1
@@ -417,6 +425,127 @@ class APISentinelAuditor:
             values.update(identity_values)
         return values
 
+    def _build_request_headers(
+        self,
+        ep: Dict[str, Any],
+        resource_identity: str,
+        identity_name: str,
+        extra_values: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        req_headers = dict(self._identity_headers(identity_name))
+        parameters = ep.get("parameters", [])
+        if not isinstance(parameters, list):
+            return req_headers
+
+        swagger2 = str(ep.get("spec_version", self.parser.raw_spec.get("swagger", ""))).startswith("2.")
+        values = self._operation_parameter_values(ep, resource_identity)
+        if extra_values:
+            values.update(extra_values)
+
+        business_headers: Dict[str, str] = {}
+        emitted_headers: Set[str] = set()
+        cookie_pairs: List[Tuple[str, str]] = []
+        emitted_cookies: Set[str] = set()
+
+        for metadata in parameters:
+            if not isinstance(metadata, dict):
+                continue
+            location = metadata.get("in")
+            name = metadata.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+
+            normalized_name = name.lower()
+
+            if location == "header":
+                if not swagger2 and normalized_name in {"authorization", "accept", "content-type"}:
+                    continue
+                if self._is_auth_header(name):
+                    if all(self._identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
+                        continue
+                    raise ParameterSerializationError(
+                        f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
+                    )
+
+                if normalized_name in emitted_headers:
+                    raise ParameterSerializationError(
+                        "Different header parameters serialize to the same name; no request was sent"
+                    )
+                emitted_headers.add(normalized_name)
+
+                if normalized_name in req_headers:
+                    raise ParameterSerializationError(
+                        f"Business header parameter '{name}' conflicts with identity header; no request was sent"
+                    )
+
+                is_required = metadata.get("required") is True
+                if name in values:
+                    val = values[name]
+                elif is_required:
+                    raise ParameterSerializationError(f"Missing required header parameter '{name}'; no request was sent")
+                elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                    val = metadata.get("default", metadata.get("schema", {}).get("default"))
+                else:
+                    continue
+
+                hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
+                business_headers[hdr_name] = hdr_val
+
+            elif location == "cookie":
+                if swagger2:
+                    raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
+
+                is_required = metadata.get("required") is True
+                if name in values:
+                    val = values[name]
+                elif is_required:
+                    raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
+                elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                    val = metadata.get("default", metadata.get("schema", {}).get("default"))
+                else:
+                    continue
+
+                c_name, c_val = serialize_cookie_parameter(metadata, val, swagger2=swagger2)
+                if c_name in emitted_cookies:
+                    raise ParameterSerializationError(
+                        "Different cookie parameters serialize to the same name; no request was sent"
+                    )
+                emitted_cookies.add(c_name)
+                cookie_pairs.append((c_name, c_val))
+
+        if cookie_pairs:
+            identity_cookie_names: Set[str] = set()
+            existing_cookie_str = ""
+            for k, v in list(req_headers.items()):
+                if k.lower() == "cookie":
+                    existing_cookie_str = v
+                    break
+
+            if existing_cookie_str:
+                for part in existing_cookie_str.split(";"):
+                    part = part.strip()
+                    if part:
+                        c_key = part.split("=", 1)[0].strip()
+                        identity_cookie_names.add(c_key)
+
+            for c_name, _ in cookie_pairs:
+                if c_name in identity_cookie_names:
+                    raise ParameterSerializationError(
+                        f"Business cookie parameter '{c_name}' conflicts with identity authentication cookie; no request was sent"
+                    )
+
+            business_cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_pairs)
+            if existing_cookie_str:
+                merged_cookie = f"{existing_cookie_str.rstrip('; ')}; {business_cookie_str}"
+            else:
+                merged_cookie = business_cookie_str
+
+            cookie_key = next((k for k in req_headers if k.lower() == "cookie"), "cookie")
+            req_headers[cookie_key] = merged_cookie
+
+        req_headers.update(business_headers)
+        return req_headers
+
     def _build_url(
         self,
         ep: Dict[str, Any],
@@ -443,10 +572,16 @@ class APISentinelAuditor:
                 if (self._is_auth_header(name)
                         and all(self._identity_headers(role).get(normalized) for role in ("owner", "visitor"))):
                     continue  # Authentication comes only from the actual requester.
-            if location not in {"path", "query"}:
-                raise ParameterSerializationError("Header/cookie/formData parameter serialization is unsupported; configure authentication in identity headers; no request was sent")
+            if location not in {"path", "query", "header", "cookie"}:
+                raise ParameterSerializationError("Unsupported parameter location; no request was sent")
+            if swagger2 and location == "cookie":
+                raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
             supported.append(metadata)
         parameters = supported
+
+        # Validate header and cookie parameters for this resource identity
+        self._build_request_headers(ep, resource_identity, resource_identity, extra_values)
+
         values = self._operation_parameter_values(ep, resource_identity)
         if extra_values:
             values.update(extra_values)
@@ -727,8 +862,10 @@ class APISentinelAuditor:
                 for record in collection:
                     self._replace_evidence_in_place(record, self._property_safe_record(record))
 
-    def _read_observation(self, method: str, url: str, identity_name: str) -> HTTPResult:
-        result = self._http_request(method, url, identity_name=identity_name)
+    def _read_observation(
+        self, method: str, url: str, identity_name: str, headers: Optional[Dict[str, str]] = None
+    ) -> HTTPResult:
+        result = self._http_request(method, url, identity_name=identity_name, headers=headers)
         observations = getattr(self._bopla_local, "observations", None)
         if observations is not None:
             observations[(url, identity_name)] = result
@@ -791,7 +928,8 @@ class APISentinelAuditor:
             observations = self._bopla_local.observations
             for identity in ("owner", "visitor", "anonymous"):
                 if (url, identity) not in observations:
-                    self._read_observation("GET", url, identity)
+                    obs_headers = self._build_request_headers(ep, "owner", identity)
+                    self._read_observation("GET", url, identity, headers=obs_headers)
             owner = observations[(url, "owner")]
             for rule in policy["fields"]:
                 for identity in ("visitor", "anonymous"):
@@ -840,6 +978,10 @@ class APISentinelAuditor:
         try:
             owner_url = self._build_url(ep, "owner")
             visitor_self_url = self._build_url(ep, "visitor")
+            owner_headers = self._build_request_headers(ep, "owner", "owner")
+            visitor_cross_headers = self._build_request_headers(ep, "owner", "visitor")
+            anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
+            visitor_self_headers = self._build_request_headers(ep, "visitor", "visitor")
         except ParameterSerializationError as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
@@ -850,13 +992,13 @@ class APISentinelAuditor:
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
             return
-        owner = self._read_observation(ep["method"], owner_url, identity_name="owner")
-        visitor_cross = self._read_observation(ep["method"], owner_url, identity_name="visitor")
-        anonymous = self._read_observation(ep["method"], owner_url, identity_name="anonymous")
+        owner = self._read_observation(ep["method"], owner_url, identity_name="owner", headers=owner_headers)
+        visitor_cross = self._read_observation(ep["method"], owner_url, identity_name="visitor", headers=visitor_cross_headers)
+        anonymous = self._read_observation(ep["method"], owner_url, identity_name="anonymous", headers=anonymous_headers)
         visitor_self = None
-        if visitor_self_url != owner_url:
+        if visitor_self_url != owner_url or visitor_self_headers != visitor_cross_headers:
             visitor_self = self._read_observation(
-                ep["method"], visitor_self_url, identity_name="visitor"
+                ep["method"], visitor_self_url, identity_name="visitor", headers=visitor_self_headers
             )
 
         request_results = {
@@ -1016,6 +1158,9 @@ class APISentinelAuditor:
                                 evidence={"reason_category": "not_applicable", "requests_attempted": 0})
         try:
             url = self._build_url(ep, "owner")
+            owner_headers = self._build_request_headers(ep, "owner", "owner")
+            visitor_headers = self._build_request_headers(ep, "owner", "visitor")
+            anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
         except ParameterSerializationError as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
@@ -1025,9 +1170,9 @@ class APISentinelAuditor:
             self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0, **risk})
             return
-        owner = self._read_observation("GET", url, identity_name="owner")
-        visitor = self._read_observation("GET", url, identity_name="visitor")
-        anonymous = self._read_observation("GET", url, identity_name="anonymous")
+        owner = self._read_observation("GET", url, identity_name="owner", headers=owner_headers)
+        visitor = self._read_observation("GET", url, identity_name="visitor", headers=visitor_headers)
+        anonymous = self._read_observation("GET", url, identity_name="anonymous", headers=anonymous_headers)
         # Capture once before recording resets this worker's accounting.
         attempts = getattr(self._request_accounting, "attempts", None)
         private_values = self._private_evidence_values(owner, policy)
@@ -1271,7 +1416,8 @@ class APISentinelAuditor:
         risk = self._read_request_risk("GET", url)
         if risk:
             raise ParameterSerializationError(risk["safety_reason"])
-        return url, self._http_request(read_ep["method"], url, identity_name=identity_name)
+        headers = self._build_request_headers(read_ep, identity_name, identity_name, mapping.get("parameter_values"))
+        return url, self._http_request(read_ep["method"], url, identity_name=identity_name, headers=headers)
 
     def _resource_lock(self, key: str) -> threading.Lock:
         with self._resource_locks_guard:
