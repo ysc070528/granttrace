@@ -53,6 +53,16 @@
         "$ref": "#/definitions/readback_entry"
       }
     },
+    "bopla": {
+      "description": "Explicit read-only field authorization policies. Operation sharing/public access does not override field restrictions; no inference from field names or OpenAPI readOnly.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^GET /[^\\s\\u0000-\\u001f\\u007f]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/bopla_entry"
+      }
+    },
     "bola": {
       "description": "Per-operation BOLA exploration policies and resource ID path mappings",
       "type": "object",
@@ -213,6 +223,111 @@
         "baseline_payload": {
           "type": "object",
           "description": "Additional static payload fields merged into write requests"
+        }
+      }
+    },
+    "bopla_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "path",
+        "access"
+      ],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+        },
+        "baseline_representation": {
+          "const": "full_private_value",
+          "description": "Operator attestation that the Owner response holds a complete private representation, not a mask."
+        },
+        "value_is_resource_specific": {
+          "type": "boolean",
+          "description": "Explicit operator attestation that the full private value identifies the selected resource; false or omitted cannot confirm leakage."
+        },
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner"
+          ],
+          "properties": {
+            "owner": {
+              "const": "allow"
+            },
+            "visitor": {
+              "enum": [
+                "allow",
+                "deny"
+              ]
+            },
+            "anonymous": {
+              "enum": [
+                "allow",
+                "deny"
+              ]
+            }
+          },
+          "description": "Explicit permissions for the configured identity/context; omitted low-privilege permissions remain unknown."
+        }
+      }
+    },
+    "bopla_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "context_id",
+        "resource_binding",
+        "fields"
+      ],
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+        },
+        "context_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+        },
+        "resource_binding": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\s\\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^\\s\\u0000-\\u001f\\u007f])?$"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "description": "Exact JSON paths to operator-selected resource keys. All bindings must strictly match both Owner and a successful low-privilege response. Array fields require a same-item key; no automatic reordering."
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/bopla_field"
+          }
         }
       }
     },

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from decimal import Decimal, InvalidOperation
 from http.cookies import CookieError, SimpleCookie
 from typing import Any, Iterable
@@ -20,6 +21,7 @@ MAX_CONTAINER_ITEMS = 100
 MAX_NODES = 1000
 MAX_TOTAL_TEXT_CHARS = 65536
 REDACTED = "[REDACTED]"
+PROPERTY_EVIDENCE_LOCK = threading.RLock()
 
 SENSITIVE_KEYS = {
     "authorization", "password", "passwd", "secret", "cookie", "token", "api_key",
@@ -302,6 +304,157 @@ def sanitize_body(body: str, include_sensitive: bool = False, max_chars: int = M
 def sanitize_evidence(value: Any, include_sensitive: bool = False,
                       secret_values: Iterable[str] = ()) -> Any:
     return _Sanitizer(include_sensitive, secret_values).payload(value)
+
+
+def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str] = (), *,
+                             omit_responses: bool = False) -> dict[str, Any]:
+    """Keep tool facts separate from business data in mandatory private evidence.
+
+    Only the named record/evidence/decision schema has trusted keys. Arbitrary
+    business dictionaries still use the ordinary strict sanitizer; a key named
+    ``status`` in business data never receives a transport-metadata exemption.
+    The shared lock also lets report snapshots coordinate with in-place history
+    redaction without taking an auditor's result lock.
+    """
+    with PROPERTY_EVIDENCE_LOCK:
+        sanitizer = _Sanitizer(False, secret_values)
+        source_evidence = record.get("evidence")
+        pending = bool(isinstance(source_evidence, dict) and source_evidence.get("property_privacy_pending"))
+        identities = {"owner", "visitor", "visitor_cross", "visitor_self", "anonymous"}
+        observations = identities | {"before", "after", "mutation", "rollback", "restored"}
+        enums = {
+            "check": {"BOLA", "BOPLA", "BFLA", "BROKEN_AUTH", "MASS_ASSIGNMENT", "ROLLBACK", "UNSUPPORTED"},
+            "verdict": {"CONFIRMED", "SECURE", "PUBLIC", "AUTHORIZED", "SUSPICIOUS", "INCONCLUSIVE", "SKIPPED", "ERROR"},
+            "subject_identity": {"visitor", "anonymous"},
+            "field_access": {"allow", "deny"},
+            "expected_visitor_access": {"allow", "deny"},
+            "kind": {"VALID", "AUTH_DENIED", "APPLICATION_ERROR", "TRANSPORT_ERROR", "HTTP_CLIENT_ERROR",
+                     "SERVER_ERROR", "HTTP_ERROR", "EMPTY_RESPONSE", "INVALID_RESPONSE"},
+        }
+        counts = {"requests_attempted", "requests_sent", "transport_attempts", "http_requests_sent", "resource_group",
+                  "owner_meaningful_value_count", "visitor_meaningful_value_count", "shared_value_count",
+                  "owner_specific_shared_value_count", "shared_resource_identifier_count",
+                  "owner_only_shared_resource_identifier_count", "visitor_self_shared_resource_identifier_count"}
+        reason_categories = {"conclusive", "error", "not_applicable", "detector_unimplemented", "safety_policy",
+                             "invalid_input", "insufficient_evidence", "missing_baseline", "missing_resource_id"}
+        # These labels originate in local policy, not response values. Retain
+        # them so a private value equal to "owner" cannot invalidate proof IDs.
+        proof_identifiers = {"policy_id", "context_id", "rule_id"}
+        top_keys = {"endpoint", "operation_id", "check", "verdict", "reason", "evidence", "type", "cwe",
+                    "severity", "target_url", "details", "injected_payload"}
+        evidence_keys = counts | observations | {
+            "decision_evidence", "metrics", "target_url", "visitor_self_url", "observation_group", "shared_observations",
+            "reason_category", "property_privacy_pending", "leak_group", "duplicate_of", "rollback_verified",
+            "recovery_sent", "safety_signal", "readback_url", "request_content_type", "verification_scope",
+            "snapshot_fields", "ignored_readback_paths", "configured_fields", "tested_fields", "verified_fields",
+            "unverified_fields", "cases",
+        }
+        decision_keys = counts | proof_identifiers | set(enums) | {
+            "responses", "role_policy", "field_path", "policy_scope", "private_data_paths", "owner_private_data_paths",
+            "matched_private_data_paths", "missing_evidence", "confirmation_signals", "object_access_signals",
+            "trusted_resource_id_paths", "shared_resource_identifier_paths", "owner_only_shared_resource_identifier_paths",
+            "owner_specific_shared_value_paths", "owner_shared_nonpublic_value_paths",
+            "owner_baseline_valid", "resource_bound", "resource_binding_valid", "private_value_identifiable",
+            "other_response_valid", "denial_body_clean", "comparison_valid", "anonymous_denial_body_clean",
+            "visitor_denial_body_clean", "requires_auth", "expected_public", "privileged_candidate",
+            "anonymous_denied", "anonymous_exact_match", "anonymous_value_similarity", "structure_similarity",
+            "value_similarity", "exact_value_match", "visitor_self_provided", "visitor_self_exact_match",
+            "visitor_self_value_similarity", "visitor_cross_baseline_valid", "visitor_self_baseline_valid",
+            "owner_self_distinct", "denial_body_conflict", "anonymous_authentication_violation",
+            "anonymous_owner_value_match", "anonymous_owner_identifier_match",
+        }
+
+        def without_oracle(value: Any) -> Any:
+            if isinstance(value, str):
+                return re.sub(r"\[(?:UNPARSEABLE (?:BODY|JSON TEXT)|UNSTRUCTURED JSON STRING) OMITTED; sha256=[a-f0-9]{64}\]",
+                              REDACTED, value)
+            if isinstance(value, dict):
+                return {without_oracle(key): without_oracle(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [without_oracle(item) for item in value]
+            return value
+
+        def business(value: Any) -> Any:
+            return without_oracle(sanitizer.payload(value))
+
+        def mapping(source: Any, context: str, depth: int = 0) -> Any:
+            if not isinstance(source, dict) or depth > MAX_DEPTH:
+                return REDACTED if omit_responses and pending else business(source)
+            allowed = (top_keys if context == "record" else evidence_keys if context == "evidence" else
+                       decision_keys if context == "decision" else identities if context == "responses" else
+                       {"kind", "status_code", "is_auth_denial", "reason"} if context == "assessment" else
+                       {"status", "body", "sha256", "truncated", "error"} if context == "observation" else
+                       counts | observations | {"field", "readback_field", "persisted", "rollback_verified",
+                                                "recovery_sent", "target_url", "readback_url"} if context == "case" else
+                       {"required_role", "owner_role", "visitor_role"} if context == "roles" else
+                       {"confidence", "similarity"})
+            safe: dict[str, Any] = {}
+            for index, (key, value) in enumerate(source.items()):
+                if index >= MAX_CONTAINER_ITEMS or sanitizer.nodes_remaining <= 0:
+                    safe["_truncated_entries"] = len(source) - index
+                    break
+                if key not in allowed:
+                    if omit_responses and pending:
+                        # An unclassified extension can contain private values
+                        # in either its keys or its contents before any baseline.
+                        safe["_omitted_business_evidence"] = True
+                    else:
+                        safe.update(business({key: value}))
+                    continue
+                sanitizer.nodes_remaining -= 1
+                if key == "evidence" and context == "record":
+                    cleaned = mapping(value, "evidence", depth + 1)
+                elif key == "decision_evidence" and context == "evidence":
+                    cleaned = mapping(value, "decision", depth + 1)
+                elif key == "responses" and context == "decision":
+                    cleaned = mapping(value, "responses", depth + 1)
+                elif key == "role_policy" and context == "decision":
+                    cleaned = mapping(value, "roles", depth + 1)
+                elif context == "responses" and key in identities:
+                    cleaned = mapping(value, "assessment", depth + 1)
+                elif context in {"evidence", "case"} and key in observations:
+                    cleaned = mapping(value, "observation", depth + 1)
+                elif context == "evidence" and key == "cases" and isinstance(value, list):
+                    cleaned = [mapping(case, "case", depth + 1) for case in value[:MAX_CONTAINER_ITEMS]]
+                elif key == "metrics" and context == "evidence":
+                    cleaned = mapping(value, "metrics", depth + 1)
+                elif omit_responses and pending and context == "record" and key == "injected_payload":
+                    cleaned = REDACTED
+                elif omit_responses and pending and key in {"target_url", "visitor_self_url", "readback_url"}:
+                    # A future private baseline may match a concrete selector.
+                    # No secret list can classify those URLs while still pending.
+                    cleaned = None
+                elif omit_responses and pending and ((context == "record" and key in {"reason", "details"})
+                                                    or (context == "assessment" and key == "reason")):
+                    cleaned = "Property privacy boundary: response details omitted"
+                elif context == "observation" and key == "sha256":
+                    cleaned = None
+                elif context == "observation" and key == "body":
+                    cleaned = (REDACTED + " BOPLA response omitted" if omit_responses else business(value))
+                elif context == "observation" and key == "error" and omit_responses:
+                    cleaned = "Transport failed" if value else None
+                elif key in enums and isinstance(value, str) and value in enums[key]:
+                    cleaned = value
+                elif key in counts and type(value) is int and value >= 0:
+                    cleaned = value
+                elif context in {"observation", "assessment"} and key in {"status", "status_code"} and type(value) is int:
+                    cleaned = value
+                elif type(value) is bool:
+                    cleaned = value
+                elif context == "metrics" and key in {"confidence", "similarity"} and type(value) in (int, float):
+                    cleaned = value
+                elif key in proof_identifiers and isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+                    cleaned = value
+                elif key == "reason_category" and isinstance(value, str) and value in reason_categories:
+                    cleaned = value
+                elif key in {"leak_group", "duplicate_of"} and isinstance(value, str) and re.fullmatch(r"read-leak-\d+", value):
+                    cleaned = value
+                else:
+                    cleaned = business(value)
+                safe[key] = cleaned
+            return safe
+
+        return mapping(record, "record")
 
 
 def sanitize_log_text(text: Any) -> str:

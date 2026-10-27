@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from core.bopla import validate_bopla_policy
 from core.evidence import safe_diagnostic_value, sanitize_log_text, sanitize_text
 from core.generator import SmartDataGenerator
 from core.models import parse_operation_key
@@ -57,6 +58,7 @@ class ValidationSummary:
     readbacks_count: int = 0
     parameter_endpoints: int = 0
     bola_policies_count: int = 0
+    bopla_policies_count: int = 0
 
 
 @dataclass
@@ -87,6 +89,7 @@ class ConfigValidator:
         "write_allowlist",
         "readbacks",
         "bola",
+        "bopla",
     }
 
     KNOWN_IDENTITY_KEYS = {
@@ -210,7 +213,9 @@ class ConfigValidator:
 
         # Check for NaN / Infinity numbers
         try:
-            cls._check_no_nan_or_inf(config, "", issues)
+            # BOPLA diagnostics never echo policy keys or binding values. Its
+            # dedicated validator checks finite numbers without interpolating input.
+            cls._check_no_nan_or_inf({key: value for key, value in config.items() if key != "bopla"}, "", issues)
         except Exception as exc:
             issues.append(
                 ConfigIssue(
@@ -359,6 +364,9 @@ class ConfigValidator:
                     )
                 )
 
+        if "bopla" in config:
+            cls._validate_bopla_section(config["bopla"], issues, summary)
+
         checked_parameters: Set[Tuple[str, str]] = set()
         cls._validate_configured_readback_parameters(config, issues, checked_parameters)
         if raw_spec is not None:
@@ -411,6 +419,11 @@ class ConfigValidator:
             if isinstance(entries, dict):
                 for operation in entries:
                     cls._check_spec_operation(operation, f"{section}.{operation}", operations, issues)
+
+        bopla_entries = config.get("bopla")
+        if isinstance(bopla_entries, dict):
+            for index, operation in enumerate(bopla_entries):
+                cls._check_spec_operation(operation, f"bopla[{index}]", operations, issues)
 
         for operation, endpoint in operations.items():
             # Anonymous probes reuse the selected Owner URL; they do not select
@@ -1489,6 +1502,35 @@ class ConfigValidator:
                                 actual=safe_diagnostic_value(k),
                             )
                         )
+
+    @staticmethod
+    def _validate_bopla_section(
+        bopla: Any, issues: List[ConfigIssue], summary: ValidationSummary,
+    ) -> None:
+        # Use positional diagnostic paths: operation names, rule IDs, field
+        # paths and binding values may themselves contain private data.
+        if not isinstance(bopla, dict):
+            issues.append(ConfigIssue(
+                path="bopla", message="BOPLA policies must be an operation map",
+                expected="object indexed by GET operation keys", actual="invalid BOPLA section",
+            ))
+            return
+        for index, (operation, policy) in enumerate(bopla.items()):
+            valid, method, _, _, _ = parse_operation_key(operation)
+            if not valid or method != "GET":
+                issues.append(ConfigIssue(
+                    path=f"bopla[{index}]", message="BOPLA supports exact GET operation keys only",
+                    expected="GET /case-sensitive-path", actual="invalid BOPLA operation key",
+                ))
+            errors = validate_bopla_policy(policy)
+            for error in errors:
+                issues.append(ConfigIssue(
+                    path=f"bopla[{index}]", message=error,
+                    expected="explicit BOPLA field rules and selected-resource bindings",
+                    actual="invalid BOPLA policy",
+                ))
+            if valid and method == "GET" and not errors:
+                summary.bopla_policies_count += 1
 
     @classmethod
     def _validate_bola_section(

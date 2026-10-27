@@ -25,10 +25,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Tuple,
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
+from core.bopla import BOPLAEvidence, resource_scope, validate_bopla_policy
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
-from core.evidence import body_sha256, sanitize_body, sanitize_evidence
-from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
+from core.evidence import PROPERTY_EVIDENCE_LOCK, body_sha256, sanitize_body, sanitize_evidence, sanitize_property_record
+from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, path_parts, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
@@ -74,6 +75,7 @@ class APISentinelAuditor:
         max_response_bytes: int = 1024 * 1024,
         include_sensitive_evidence: bool = False,
         bola_config: Optional[Dict[str, Any]] = None,
+        bopla_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._validate_target(target_base_url, allow_http)
         self.parser = OpenAPIParser(spec_path)
@@ -105,6 +107,11 @@ class APISentinelAuditor:
             _canonical_op_key(k): v
             for k, v in (bola_config or {}).items()
         }
+        self.bopla_config = dict(bopla_config or {})
+        self._bopla_local = threading.local()
+        self._bopla_leak_groups: Dict[Tuple[Any, ...], str] = {}
+        self._bopla_resource_groups: Dict[Tuple[Any, ...], int] = {}
+        self._bopla_secret_values: set[str] = set()
         self.write_allowlist = set()
         for item in write_allowlist or []:
             c_key = _canonical_op_key(item)
@@ -163,6 +170,7 @@ class APISentinelAuditor:
             "broken_auth_confirmed": 0,
             "bfla_confirmed": 0,
             "transport_attempts": 0,
+            "http_requests_sent": 0,
             "public_endpoints": 0,
             "authorized_endpoints": 0,
             "secure_endpoints": 0,
@@ -375,6 +383,8 @@ class APISentinelAuditor:
             except urllib.error.HTTPError as exc:
                 response = exc
             with response:
+                with self._result_lock:
+                    self.stats["http_requests_sent"] += 1
                 body, truncated = self._read_limited(response)
                 return HTTPResult(
                     status=response.status, body=body, truncated=truncated,
@@ -481,7 +491,23 @@ class APISentinelAuditor:
         return url
 
     def _safe_body(self, result: HTTPResult, private_values: Iterable[str] = ()) -> Dict[str, Any]:
+        if getattr(self._bopla_local, "policy", None) is not None:
+            # Shared legacy observations must not persist property values or
+            # enumerable response hashes, even with sensitive evidence opt-in.
+            return {"status": result.status, "body": "[BOPLA RESPONSE OMITTED]",
+                    "sha256": None, "truncated": result.truncated,
+                    "error": "Transport failed" if result.error else None}
         secrets = (*self._secret_values, *private_values)
+        if self.bopla_config:
+            # A different worker may only discover a private reference later.
+            # Pending bodies stay internal for comparison compatibility; every
+            # public report omits them and no response digest is ever retained.
+            body = "[BOPLA RESPONSE OMITTED]" if self._bopla_secret_values else sanitize_body(
+                result.body, include_sensitive=False, max_chars=min(self.max_response_bytes, 4096),
+                secret_values=secrets)
+            body = re.sub(r"sha256=[0-9a-f]{64}", "digest omitted", body)
+            return {"status": result.status, "body": body, "sha256": None,
+                    "truncated": result.truncated, "error": "Transport failed" if result.error else None}
         return sanitize_evidence({
             "status": result.status,
             "body": sanitize_body(
@@ -565,17 +591,68 @@ class APISentinelAuditor:
             "reason": reason,
             "evidence": evidence,
         }
-        result = sanitize_evidence(result, self.include_sensitive_evidence, self._secret_values)
-        if finding:
-            finding = sanitize_evidence(finding, self.include_sensitive_evidence, self._secret_values)
-        with self._result_lock:
+        force_safe = self._operation_key(ep) in self.bopla_config
+        with self._result_lock, PROPERTY_EVIDENCE_LOCK:
+            duplicate = False
+            resource_group = None
+            if force_safe:
+                policy = self.bopla_config[self._operation_key(ep)]
+                proof = evidence.get("decision_evidence", {})
+                field_path = proof.get("field_path") if check == "BOPLA" else None
+                if isinstance(policy, dict) and not validate_bopla_policy(policy) and (field_path or finding):
+                    if check != "BOPLA":
+                        # A legacy collection/object finding can prove exposure
+                        # of the very field a property rule selects. Associate
+                        # that one finding with one actually matched resource;
+                        # other array resources retain independent leak groups.
+                        shared_paths = proof.get("matched_private_data_paths") or proof.get("owner_specific_shared_value_paths", ())
+                        matched_paths = set()
+                        for path in shared_paths:
+                            try:
+                                matched_paths.add(path_parts(path))
+                            except (TypeError, ValueError):
+                                continue  # Arbitrary JSON keys need not be valid policy paths.
+                        field_path = next((rule["path"] for rule in policy["fields"]
+                                           if path_parts(rule["path"]) in matched_paths), None)
+                    selected = (self._operation_key(ep), str(evidence.get("target_url", "")),
+                                str(policy["context_id"]), resource_scope(policy, field_path))
+                    resource_group = self._bopla_resource_groups.setdefault(selected, len(self._bopla_resource_groups) + 1)
+                    evidence["resource_group"] = resource_group
+            if force_safe and finding and verdict == Verdict.CONFIRMED:
+                identity = (evidence.get("decision_evidence", {}).get("subject_identity")
+                            if check == "BOPLA" else "anonymous" if check == "BROKEN_AUTH" else "visitor")
+                context = self.bopla_config[self._operation_key(ep)].get("context_id", "")
+                group_key = (self._operation_key(ep), str(evidence.get("target_url", "")),
+                             str(context), str(identity), resource_group)
+                group = self._bopla_leak_groups.get(group_key)
+                if group:
+                    duplicate = True
+                    result["evidence"]["duplicate_of"] = group
+                    finding = None
+                else:
+                    group = "read-leak-" + str(len(self._bopla_leak_groups) + 1)
+                    self._bopla_leak_groups[group_key] = group
+                result["evidence"]["leak_group"] = group
+            # The mandatory boundary covers all operations in a BOPLA scan.
+            # It preserves trusted control metadata while sanitizing business
+            # observations and prevents a concurrent append escaping late cleanup.
+            if self.bopla_config:
+                result["evidence"]["property_privacy_pending"] = True
+                result = self._property_safe_record(result)
+                if finding:
+                    finding.setdefault("evidence", {})["property_privacy_pending"] = True
+                    finding = self._property_safe_record(finding)
+            else:
+                result = sanitize_evidence(result, self.include_sensitive_evidence, self._secret_values)
+                if finding:
+                    finding = sanitize_evidence(finding, self.include_sensitive_evidence, self._secret_values)
             self.results.append(result)
             self.stats["total_checks"] += 1
             if primary and attempted:
                 self.stats["audited_count"] += 1
             if primary and attempted and conclusive:
                 self.stats["conclusive_count"] += 1
-            if verdict == Verdict.CONFIRMED:
+            if verdict == Verdict.CONFIRMED and not duplicate:
                 self.stats["confirmed"] += 1
             elif verdict == Verdict.SECURE:
                 self.stats["secure_endpoints"] += 1
@@ -593,10 +670,12 @@ class APISentinelAuditor:
                 self.stats["error_count"] += 1
             if finding:
                 self.findings.append(finding)
-                if check == "BROKEN_AUTH" and verdict == Verdict.CONFIRMED:
-                    self.stats["broken_auth_confirmed"] += 1
-                elif check == "BFLA" and verdict == Verdict.CONFIRMED:
-                    self.stats["bfla_confirmed"] += 1
+            # Per-detector counts measure confirmed decisions, even when their
+            # shared observation contributes only one independent finding.
+            if check == "BROKEN_AUTH" and verdict == Verdict.CONFIRMED:
+                self.stats["broken_auth_confirmed"] += 1
+            elif check == "BFLA" and verdict == Verdict.CONFIRMED:
+                self.stats["bfla_confirmed"] += 1
         return result
 
     @staticmethod
@@ -614,7 +693,127 @@ class APISentinelAuditor:
         }
         return mapping.get(str(raw).upper(), Verdict.INCONCLUSIVE)
 
+    def _property_safe_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        return sanitize_property_record(record, self._secret_values,
+                                        omit_responses=bool(self._bopla_secret_values))
+
+    @staticmethod
+    def _replace_evidence_in_place(current: Any, safe: Any) -> None:
+        # Callers can retain a record, a list, or a nested evidence dictionary.
+        # Replacing only the auditor's outer collection leaves those aliases live.
+        if isinstance(current, dict) and isinstance(safe, dict):
+            for key in list(current):
+                if key not in safe:
+                    del current[key]
+            for key, value in safe.items():
+                if key in current and isinstance(current[key], (dict, list)) and isinstance(value, type(current[key])):
+                    APISentinelAuditor._replace_evidence_in_place(current[key], value)
+                else:
+                    current[key] = value
+        elif isinstance(current, list) and isinstance(safe, list):
+            for index, value in enumerate(safe):
+                if index < len(current) and isinstance(current[index], (dict, list)) and isinstance(value, type(current[index])):
+                    APISentinelAuditor._replace_evidence_in_place(current[index], value)
+                elif index < len(current):
+                    current[index] = value
+                else:
+                    current.append(value)
+            del current[len(safe):]
+
+    def _redact_property_history(self) -> None:
+        # The result lock is held by callers, including registration and finalization.
+        with PROPERTY_EVIDENCE_LOCK:
+            for collection in (self.results, self.findings):
+                for record in collection:
+                    self._replace_evidence_in_place(record, self._property_safe_record(record))
+
+    def _read_observation(self, method: str, url: str, identity_name: str) -> HTTPResult:
+        result = self._http_request(method, url, identity_name=identity_name)
+        observations = getattr(self._bopla_local, "observations", None)
+        if observations is not None:
+            observations[(url, identity_name)] = result
+            # Register known values before recording any shared legacy evidence.
+            try:
+                document = strict_json_loads(result.body)
+                values = []
+                for rule in self._bopla_local.policy.get("fields", []):
+                    found, value = get_path(document, rule["path"])
+                    if found and ((isinstance(value, str) and value) or type(value) in (int, float)):
+                        values.append(str(value))
+            except (TypeError, ValueError, KeyError, RecursionError):
+                # Malformed observations remain available to the evaluator's
+                # conservative invalid-response decision. Redaction failures
+                # themselves must not be silently swallowed.
+                return result
+            with self._result_lock:
+                self._bopla_secret_values = self._bopla_secret_values.union(values)
+                # Replace sets atomically: other workers may be iterating an
+                # older snapshot while preserving the ordinary secret API.
+                self._secret_values = self._secret_values.union(values)
+                if values:
+                    self._redact_property_history()
+        return result
+
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
+        key = self._operation_key(ep)
+        if key not in self.bopla_config:
+            self._audit_endpoint_bola(ep)
+            return
+        policy = self.bopla_config[key]
+        if validate_bopla_policy(policy):
+            self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE,
+                                "Invalid property policy; run offline configuration validation; no request sent",
+                                {"requests_attempted": 0, "reason_category": "invalid_input"})
+            return
+        risk = read_only_risk(ep)
+        if str(ep.get("method", "")).upper() != "GET" or risk:
+            self._record_result(ep, "BOPLA", Verdict.SKIPPED,
+                                "Property checks require a safe GET; no request sent",
+                                {"requests_attempted": 0, "reason_category": "safety_policy"})
+            return
+        try:
+            url = self._build_url(ep, "owner")
+            self_url = self._build_url(ep, "visitor")
+        except ParameterSerializationError:
+            self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE,
+                                "Property resource parameters cannot be serialized; no request sent",
+                                {"requests_attempted": 0, "reason_category": "invalid_input"})
+            return
+        if self._read_request_risk("GET", url) or self._read_request_risk("GET", self_url):
+            self._record_result(ep, "BOPLA", Verdict.SKIPPED,
+                                "Property resource GET is unsafe; no request sent",
+                                {"requests_attempted": 0, "reason_category": "safety_policy"})
+            return
+        self._bopla_local.policy = policy
+        self._bopla_local.observations = {}
+        try:
+            self._audit_endpoint_bola(ep)
+            observations = self._bopla_local.observations
+            for identity in ("owner", "visitor", "anonymous"):
+                if (url, identity) not in observations:
+                    self._read_observation("GET", url, identity)
+            owner = observations[(url, "owner")]
+            for rule in policy["fields"]:
+                for identity in ("visitor", "anonymous"):
+                    decision = BOPLAEvidence.evaluate(
+                        owner, observations[(url, identity)], policy=policy,
+                        field=rule, identity=identity,
+                        visitor_self=observations.get((self_url, "visitor")) if self_url != url else None,
+                    )
+                    evidence = {"observation_group": key + ":read", "shared_observations": True,
+                                "target_url": url, "requests_attempted": len(observations),
+                                "decision_evidence": decision["evidence"]}
+                    finding = None
+                    if decision["verdict"] == Verdict.CONFIRMED:
+                        finding = {"check": "BOPLA", "type": "BOPLA (Broken Object Property Level Authorization)",
+                                   "cwe": "CWE-200", "severity": "High", "endpoint": key,
+                                   "target_url": url, "details": decision["reason"], "evidence": evidence}
+                    self._record_result(ep, "BOPLA", decision["verdict"], decision["reason"], evidence, finding)
+        finally:
+            self._bopla_local.policy = None
+            self._bopla_local.observations = None
+
+    def _audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         if str(ep.get("method", "")).upper() != "GET":
             self._record_result(ep, "BOLA", Verdict.SKIPPED,
                                 "BOLA read-only checks support GET only; no method substitution or request was made",
@@ -651,12 +850,12 @@ class APISentinelAuditor:
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
             return
-        owner = self._http_request(ep["method"], owner_url, identity_name="owner")
-        visitor_cross = self._http_request(ep["method"], owner_url, identity_name="visitor")
-        anonymous = self._http_request(ep["method"], owner_url, identity_name="anonymous")
+        owner = self._read_observation(ep["method"], owner_url, identity_name="owner")
+        visitor_cross = self._read_observation(ep["method"], owner_url, identity_name="visitor")
+        anonymous = self._read_observation(ep["method"], owner_url, identity_name="anonymous")
         visitor_self = None
         if visitor_self_url != owner_url:
-            visitor_self = self._http_request(
+            visitor_self = self._read_observation(
                 ep["method"], visitor_self_url, identity_name="visitor"
             )
 
@@ -680,7 +879,8 @@ class APISentinelAuditor:
                                 "A response was truncated; authorization comparison is incomplete", evidence=evidence)
             return
         if transport_errors:
-            self._record_result(ep, "BOLA", Verdict.ERROR, "; ".join(transport_errors), evidence=evidence)
+            reason = "A property observation failed transport" if self.bopla_config else "; ".join(transport_errors)
+            self._record_result(ep, "BOLA", Verdict.ERROR, reason, evidence=evidence)
             return
 
         security = ep.get("security", [])
@@ -825,9 +1025,9 @@ class APISentinelAuditor:
             self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0, **risk})
             return
-        owner = self._http_request("GET", url, identity_name="owner")
-        visitor = self._http_request("GET", url, identity_name="visitor")
-        anonymous = self._http_request("GET", url, identity_name="anonymous")
+        owner = self._read_observation("GET", url, identity_name="owner")
+        visitor = self._read_observation("GET", url, identity_name="visitor")
+        anonymous = self._read_observation("GET", url, identity_name="anonymous")
         # Capture once before recording resets this worker's accounting.
         attempts = getattr(self._request_accounting, "attempts", None)
         private_values = self._private_evidence_values(owner, policy)
@@ -1427,9 +1627,19 @@ class APISentinelAuditor:
             self._record_task_error(ep, "BOLA", exc)
 
     def _record_task_error(self, ep: Dict[str, Any], check: str, exc: BaseException) -> None:
-        self._record_result(ep, check, Verdict.ERROR, f"Unhandled {type(exc).__name__}: {exc}")
+        message = ("Property audit failed; response details omitted" if self.bopla_config
+                   else f"Unhandled {type(exc).__name__}: {exc}")
+        self._record_result(ep, check, Verdict.ERROR, message)
 
     def _finalise_coverage(self) -> None:
+        with self._result_lock, PROPERTY_EVIDENCE_LOCK:
+            self._finalise_coverage_locked()
+
+    def _finalise_coverage_locked(self) -> None:
+        if self._bopla_secret_values:
+            # Include observations recorded before another worker learned a
+            # protected value. Sensitive opt-in cannot remove this boundary.
+            self._redact_property_history()
         total = max(1, int(self.stats["total_endpoints"]))
         endpoint_results = [item for item in self.results if item["check"] != "ROLLBACK"]
         attempted_keys = {item["endpoint"] for item in endpoint_results
@@ -1442,7 +1652,10 @@ class APISentinelAuditor:
             states = item_states.setdefault(item["endpoint"], {})
             conclusive_item = item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
                 Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
-            states[item["check"]] = states.get(item["check"], False) or conclusive_item
+            if item["check"] == "BOPLA":
+                states["BOPLA"] = states.get("BOPLA", True) and conclusive_item
+            else:
+                states[item["check"]] = states.get(item["check"], False) or conclusive_item
         conclusive_keys = {endpoint for endpoint, states in item_states.items() if all(states.values())}
         attempted = len(attempted_keys)
         conclusive = len(conclusive_keys)
@@ -1453,6 +1666,21 @@ class APISentinelAuditor:
         self.stats["confirmed_endpoints"] = len({item["endpoint"] for item in endpoint_results
                                                  if item["verdict"] == Verdict.CONFIRMED.value})
         self.stats["detection_items"] = sum(len(states) for states in item_states.values())
+        if self.bopla_config:
+            fields = [item for item in endpoint_results if item["check"] == "BOPLA"]
+            def field_key(item: Dict[str, Any]) -> Tuple[Any, ...]:
+                proof = item["evidence"].get("decision_evidence", {})
+                return (item["endpoint"], item["evidence"].get("target_url"), proof.get("context_id"),
+                        item["evidence"].get("resource_group"), proof.get("field_path"))
+            self.stats["bopla_field_checks"] = sum(bool(item["evidence"].get("decision_evidence", {}).get("field_path")) for item in fields)
+            self.stats["bopla_fields_checked"] = len({field_key(item) for item in fields
+                if item["evidence"].get("decision_evidence", {}).get("comparison_valid")})
+            self.stats["bopla_fields_confirmed"] = len({field_key(item) for item in fields
+                if item["verdict"] == "CONFIRMED"})
+            self.stats["bopla_inconclusive_count"] = sum(item["verdict"] == "INCONCLUSIVE" for item in fields)
+            self.stats["bopla_skipped_count"] = sum(item["verdict"] == "SKIPPED" for item in fields)
+            self.stats["unique_confirmed_vulnerabilities"] = len(self.findings)
+            self.stats["confirmed_detection_items"] = sum(item["verdict"] == "CONFIRMED" for item in endpoint_results)
 
     def build_plan(self) -> Dict[str, Any]:
         """Inspect local specification/configuration only; this never makes requests."""
@@ -1515,6 +1743,15 @@ class APISentinelAuditor:
             else:
                 entry.update({"reason_category": "detector_unimplemented",
                               "reason": f"No detector is implemented for {ep['method']}"})
+            if key in self.bopla_config:
+                policy = self.bopla_config[key]
+                entry["property_check"] = "BOPLA"
+                entry["property_policy_valid"] = not validate_bopla_policy(policy)
+                entry["property_fields"] = [rule.get("path") for rule in policy.get("fields", [])
+                                             if isinstance(rule, dict)] if isinstance(policy, dict) else []
+                if not entry["property_policy_valid"]:
+                    entry.update({"safety_blocked": True, "reason_category": "invalid_input",
+                                  "reason": "Invalid property policy; no request will be sent"})
             entries.append(entry)
         return sanitize_evidence({"mode": "DRY_RUN", "requests_sent": 0,
                                   "note": "Local plan only; not a successful scan or a recovery guarantee",
