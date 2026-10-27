@@ -28,7 +28,7 @@ from core.authorization import AuthorizationEvidence
 from core.bopla import BOPLAEvidence, resource_scope, validate_bopla_policy
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
-from core.evidence import PROPERTY_EVIDENCE_LOCK, body_sha256, sanitize_body, sanitize_evidence, sanitize_property_record
+from core.evidence import PROPERTY_EVIDENCE_LOCK, _is_sensitive_key, body_sha256, sanitize_body, sanitize_evidence, sanitize_property_record
 from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, path_parts, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
@@ -148,12 +148,36 @@ class APISentinelAuditor:
         }
         self._validate_identities()
         self._secret_values = set()
-        for identity_name in self.identities:
+        for identity_name, identity in self.identities.items():
             for key, value in self._identity_headers(identity_name).items():
                 if self._is_auth_header(key):
                     self._secret_values.add(value)
                     if key.lower() == "authorization" and " " in value:
                         self._secret_values.add(value.split(" ", 1)[1])
+                    if key.lower() == "cookie":
+                        for part in value.split(";"):
+                            if "=" in part:
+                                c_val = part.split("=", 1)[1].strip().strip('"')
+                                if c_val:
+                                    self._secret_values.add(c_val)
+            for p_name, p_val in identity.get("parameters", {}).items():
+                if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                    if isinstance(p_val, (str, int, float)) and str(p_val):
+                        self._secret_values.add(str(p_val))
+
+        for conf in self.parameter_values.values():
+            if isinstance(conf, dict):
+                for sub_key, sub_val in conf.items():
+                    if isinstance(sub_val, dict):
+                        for p_name, p_val in sub_val.items():
+                            if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                                if isinstance(p_val, (str, int, float)) and str(p_val):
+                                    self._secret_values.add(str(p_val))
+                    else:
+                        p_name, p_val = sub_key, sub_val
+                        if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                            if isinstance(p_val, (str, int, float)) and str(p_val):
+                                self._secret_values.add(str(p_val))
 
         self.findings: List[Dict[str, Any]] = []
         self.results: List[Dict[str, Any]] = []
@@ -224,6 +248,35 @@ class APISentinelAuditor:
             custom_auth_names=custom_headers,
             spec_auth_names=spec_headers,
         )
+
+    def _is_auth_cookie(self, name: str) -> bool:
+        norm_name = str(name).strip().lower()
+        schemes = dict(self.parser.raw_spec.get("securityDefinitions") or {})
+        schemes.update((self.parser.raw_spec.get("components") or {}).get("securitySchemes") or {})
+        spec_cookies = [
+            str(scheme.get("name", "")).strip().lower()
+            for scheme in schemes.values()
+            if isinstance(scheme, dict) and scheme.get("in") == "cookie" and scheme.get("name")
+        ]
+        if norm_name in spec_cookies:
+            return True
+
+        for identity in self.identities.values():
+            for k, v in identity.get("headers", {}).items():
+                if str(k).strip().lower() == "cookie":
+                    for part in str(v).split(";"):
+                        if "=" in part:
+                            c_name = part.split("=", 1)[0].strip().lower()
+                            if c_name == norm_name:
+                                return True
+
+        auth_cookie_words = (
+            "authorization", "token", "api_key", "apikey", "cookie",
+            "session", "credential", "auth", "jwt", "sid", "secret",
+            "ticket", "pass", "login",
+        )
+        normalized = norm_name.replace("-", "_")
+        return any(word in normalized for word in auth_cookie_words)
 
     def _validate_identities(self) -> None:
         missing = {"owner", "visitor", "anonymous"} - set(self.identities)
@@ -438,9 +491,15 @@ class APISentinelAuditor:
             return req_headers
 
         swagger2 = str(ep.get("spec_version", self.parser.raw_spec.get("swagger", ""))).startswith("2.")
-        values = self._operation_parameter_values(ep, resource_identity)
+        configured = self.parameter_values.get(self._operation_key(ep), {})
+
+        # Requester identity values (strictly identity-isolated)
+        requester_values = dict(self._operation_parameter_values(ep, identity_name))
         if extra_values:
-            values.update(extra_values)
+            requester_values.update(extra_values)
+
+        # Target resource owner values (used solely to verify non-leakage of owner credentials)
+        owner_values = self._operation_parameter_values(ep, resource_identity)
 
         business_headers: Dict[str, str] = {}
         emitted_headers: Set[str] = set()
@@ -460,7 +519,14 @@ class APISentinelAuditor:
             if location == "header":
                 if not swagger2 and normalized_name in {"authorization", "accept", "content-type"}:
                     continue
-                if self._is_auth_header(name):
+                is_auth_hdr = self._is_auth_header(name)
+                if is_auth_hdr:
+                    if identity_name == "anonymous":
+                        if metadata.get("required") is True:
+                            raise ParameterSerializationError(
+                                f"Anonymous identity cannot satisfy required authentication header '{name}'; no request was sent"
+                            )
+                        continue
                     if all(self._identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
                         continue
                     raise ParameterSerializationError(
@@ -479,8 +545,8 @@ class APISentinelAuditor:
                     )
 
                 is_required = metadata.get("required") is True
-                if name in values:
-                    val = values[name]
+                if name in requester_values:
+                    val = requester_values[name]
                 elif is_required:
                     raise ParameterSerializationError(f"Missing required header parameter '{name}'; no request was sent")
                 elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
@@ -490,20 +556,78 @@ class APISentinelAuditor:
 
                 hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
                 business_headers[hdr_name] = hdr_val
+                if is_auth_hdr or _is_sensitive_key(name):
+                    self._secret_values.add(hdr_val)
 
             elif location == "cookie":
                 if swagger2:
                     raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
 
+                is_auth_cookie = self._is_auth_cookie(name)
                 is_required = metadata.get("required") is True
-                if name in values:
-                    val = values[name]
-                elif is_required:
-                    raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
-                elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
-                    val = metadata.get("default", metadata.get("schema", {}).get("default"))
-                else:
-                    continue
+
+                if identity_name == "anonymous":
+                    # Anonymous probes unauthenticated access and must never send authentication/session cookies
+                    if is_auth_cookie:
+                        continue
+                    # For non-auth business cookies:
+                    if name in requester_values:
+                        val = requester_values[name]
+                    elif is_required:
+                        raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
+                    elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                        val = metadata.get("default", metadata.get("schema", {}).get("default"))
+                    else:
+                        continue
+
+                elif identity_name == "visitor":
+                    if is_auth_cookie:
+                        # Must have explicit visitor-scoped value, distinct from Owner
+                        visitor_scoped_val = None
+                        if isinstance(configured, dict) and isinstance(configured.get("visitor"), dict):
+                            visitor_scoped_val = configured["visitor"].get(name)
+                        if visitor_scoped_val is None:
+                            visitor_scoped_val = self.identities["visitor"].get("parameters", {}).get(name)
+
+                        if visitor_scoped_val is not None:
+                            if resource_identity != identity_name:
+                                owner_val = owner_values.get(name)
+                                if owner_val is not None and visitor_scoped_val == owner_val:
+                                    raise ParameterSerializationError(
+                                        f"Visitor authentication cookie '{name}' cannot share value with Owner; no request was sent"
+                                    )
+                            val = visitor_scoped_val
+                        elif name in requester_values:
+                            # It was defined in common or flat without visitor override
+                            raise ParameterSerializationError(
+                                f"Authentication cookie '{name}' cannot be shared across identities in common parameter values; no request was sent"
+                            )
+                        elif is_required:
+                            raise ParameterSerializationError(
+                                f"Missing required visitor authentication cookie '{name}'; no request was sent"
+                            )
+                        else:
+                            continue
+                    else:
+                        # Demonstrably non-authentication business cookie
+                        if name in requester_values:
+                            val = requester_values[name]
+                        elif is_required:
+                            raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
+                        elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                            val = metadata.get("default", metadata.get("schema", {}).get("default"))
+                        else:
+                            continue
+
+                else:  # identity_name == "owner" (or other primary identity)
+                    if name in requester_values:
+                        val = requester_values[name]
+                    elif is_required:
+                        raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
+                    elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                        val = metadata.get("default", metadata.get("schema", {}).get("default"))
+                    else:
+                        continue
 
                 c_name, c_val = serialize_cookie_parameter(metadata, val, swagger2=swagger2)
                 if c_name in emitted_cookies:
@@ -512,6 +636,8 @@ class APISentinelAuditor:
                     )
                 emitted_cookies.add(c_name)
                 cookie_pairs.append((c_name, c_val))
+                if is_auth_cookie or _is_sensitive_key(name):
+                    self._secret_values.add(c_val)
 
         if cookie_pairs:
             identity_cookie_names: Set[str] = set()

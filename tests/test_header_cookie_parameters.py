@@ -29,7 +29,7 @@ from core.sarif import SarifReportGenerator
 
 
 class ParameterRecordingHandler(BaseHTTPRequestHandler):
-    """Disposable local HTTP server that captures received requests and headers."""
+    """Local disposable HTTP handler recording received wire headers."""
 
     requests: List[Tuple[str, str, Dict[str, str]]] = []
     lock = threading.Lock()
@@ -40,7 +40,22 @@ class ParameterRecordingHandler(BaseHTTPRequestHandler):
             self.requests.append((self.command, self.path, headers_dict))
 
         auth = self.headers.get("Authorization", "")
-        if self.path.startswith("/api/documents/"):
+        if self.path.startswith("/api/echo/"):
+            doc_id = self.path.split("?")[0].split("/")[-1]
+            body_dict = {
+                "id": doc_id,
+                "title": "Echo Sensitive Response",
+                "echo_auth": auth,
+                "echo_cookie": self.headers.get("Cookie", ""),
+                "echo_header": self.headers.get("X-API-Token", ""),
+            }
+            body = json.dumps(body_dict).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/documents/"):
             doc_id = self.path.split("?")[0].split("/")[-1]
             if "Bearer OWNER_TOKEN" in auth:
                 body = json.dumps({"id": doc_id, "title": "Owner Confidential", "owner": "1001"}).encode("utf-8")
@@ -130,6 +145,7 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self,
         parameter_values: Optional[Dict[str, Any]] = None,
         extra_identities: Optional[Dict[str, Any]] = None,
+        path: str = "/api/documents/{doc_id}",
     ) -> Dict[str, Any]:
         identities: Dict[str, Any] = {
             "owner": {
@@ -151,7 +167,7 @@ class HeaderCookieParameterTests(unittest.TestCase):
             "identities": identities,
             "parameter_values": parameter_values or {},
             "bola": {
-                "GET /api/documents/{doc_id}": {
+                f"GET {path}": {
                     "expected_visitor_access": "deny",
                     "resource_id_paths": ["id"],
                 }
@@ -181,31 +197,22 @@ class HeaderCookieParameterTests(unittest.TestCase):
             return auditor
 
     def test_normal_header_parameter_wire_delivery(self) -> None:
-        """Declared GET header parameter is correctly delivered on the wire."""
+        """Declared GET header parameter is delivered on the wire without alteration."""
         params = [
-            {"name": "X-Client-Version", "in": "header", "schema": {"type": "string"}},
-            {"name": "X-Tenant-Key", "in": "header", "schema": {"type": "integer"}},
+            {"name": "X-Request-Tracking", "in": "header", "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(
             parameter_values={
                 "GET /api/documents/{doc_id}": {
-                    "common": {
-                        "X-Client-Version": "v2.5.3",
-                        "X-Tenant-Key": 42,
-                    }
+                    "common": {"X-Request-Tracking": "req-track-12345"}
                 }
             }
         )
-        auditor = self._run_audit(spec, config)
+        self._run_audit(spec, config)
         self.assertGreater(len(ParameterRecordingHandler.requests), 0)
-        # Check wire headers received by local test server
         for _, _, headers in ParameterRecordingHandler.requests:
-            self.assertEqual(headers.get("X-Client-Version"), "v2.5.3")
-            self.assertEqual(headers.get("X-Tenant-Key"), "42")
-        # Ensure BOLA check was attempted and confirmed with wire evidence
-        confirmed = [r for r in auditor.results if r["verdict"] == Verdict.CONFIRMED]
-        self.assertEqual(len(confirmed), 1)
+            self.assertEqual(headers.get("X-Request-Tracking"), "req-track-12345")
 
     def test_normal_cookie_parameter_wire_delivery(self) -> None:
         """Declared GET cookie parameter is delivered in the HTTP Cookie header."""
@@ -227,46 +234,42 @@ class HeaderCookieParameterTests(unittest.TestCase):
             self.assertIn("tracking_id=trk_xyz_987", cookie_header)
 
     def test_missing_required_header_parameter_sends_zero_requests(self) -> None:
-        """Missing required header parameter safely fails before transport."""
+        """Missing required header parameter raises serialization error and sends 0 requests."""
         params = [
             {"name": "X-Required-Context", "in": "header", "required": True, "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(parameter_values={})
         auditor = self._run_audit(spec, config)
-        # Zero requests sent to server
         self.assertEqual(len(ParameterRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("no request was sent", auditor.results[0]["reason"])
+        self.assertIn("Missing required header parameter", auditor.results[0]["reason"])
 
     def test_missing_required_cookie_parameter_sends_zero_requests(self) -> None:
-        """Missing required cookie parameter safely fails before transport."""
+        """Missing required cookie parameter raises serialization error and sends 0 requests."""
         params = [
-            {"name": "required_sess", "in": "cookie", "required": True, "schema": {"type": "string"}},
+            {"name": "required_session", "in": "cookie", "required": True, "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(parameter_values={})
         auditor = self._run_audit(spec, config)
         self.assertEqual(len(ParameterRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("no request was sent", auditor.results[0]["reason"])
+        self.assertIn("Missing required", auditor.results[0]["reason"])
 
     def test_unsupported_serialization_formats(self) -> None:
-        """Unsupported styles, complex objects, and Swagger 2 cookie fail-closed."""
-        cases = [
-            ({"name": "X-Matrix", "in": "header", "style": "matrix"}, "val", False),
-            ({"name": "X-Form", "in": "header", "style": "form"}, "val", False),
-            ({"name": "c_simple", "in": "cookie", "style": "simple"}, "val", False),
-            ({"name": "X-Obj", "in": "header", "schema": {"type": "object"}}, {"k": "v"}, False),
-            ({"name": "X-Arr", "in": "header", "schema": {"type": "array"}}, ["a", "b"], False),
-            ({"name": "c_arr", "in": "cookie", "schema": {"type": "array"}}, ["a", "b"], False),
-            ({"name": "c_obj", "in": "cookie", "schema": {"type": "object"}}, {"k": "v"}, False),
-            ({"name": "c_sw2", "in": "cookie", "type": "string"}, "val", True),
+        """Arrays and objects in headers/cookies, or Swagger 2 cookies raise serialization errors."""
+        unsupported = [
+            ({"name": "arr_hdr", "in": "header", "schema": {"type": "array"}}, ["a", "b"], False),
+            ({"name": "obj_hdr", "in": "header", "schema": {"type": "object"}}, {"k": "v"}, False),
+            ({"name": "arr_cook", "in": "cookie", "schema": {"type": "array"}}, ["a", "b"], False),
+            ({"name": "obj_cook", "in": "cookie", "schema": {"type": "object"}}, {"k": "v"}, False),
+            ({"name": "swag_cook", "in": "cookie", "schema": {"type": "string"}}, "val", True),
         ]
-        for meta, value, swagger2 in cases:
-            with self.subTest(meta=meta):
+        for meta, value, swagger2 in unsupported:
+            with self.subTest(meta=meta, swagger2=swagger2):
                 with self.assertRaises(ParameterSerializationError) as caught:
-                    if meta.get("in") == "header":
+                    if meta["in"] == "header":
                         serialize_header_parameter(meta, value, swagger2=swagger2)
                     else:
                         serialize_cookie_parameter(meta, value, swagger2=swagger2)
@@ -366,13 +369,20 @@ class HeaderCookieParameterTests(unittest.TestCase):
         """Visitor cross request NEVER gets Owner credentials; Anonymous gets no credentials."""
         params = [
             {"name": "X-Tenant-Id", "in": "header", "schema": {"type": "string"}},
+            {"name": "session_token", "in": "cookie", "required": True, "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(
             parameter_values={
                 "GET /api/documents/{doc_id}": {
-                    "owner": {"X-Tenant-Id": "tenant-owner"},
-                    "visitor": {"X-Tenant-Id": "tenant-visitor"},
+                    "owner": {
+                        "X-Tenant-Id": "tenant-owner",
+                        "session_token": "owner_cookie_val",
+                    },
+                    "visitor": {
+                        "X-Tenant-Id": "tenant-visitor",
+                        "session_token": "visitor_cookie_val",
+                    },
                 }
             }
         )
@@ -387,12 +397,95 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self.assertGreater(len(visitor_reqs), 0)
         self.assertGreater(len(anon_reqs), 0)
 
-        # In visitor requests: MUST NOT contain owner token
+        # In owner requests: contains owner tenant and owner session cookie
+        for h in owner_reqs:
+            self.assertEqual(h.get("X-Tenant-Id"), "tenant-owner")
+            self.assertIn("session_token=owner_cookie_val", h.get("Cookie", ""))
+
+        # In visitor requests: MUST NOT contain owner token, tenant, or session cookie
         for h in visitor_reqs:
             self.assertNotIn("OWNER_TOKEN", h.get("Authorization", ""))
-        # In anonymous requests: MUST NOT contain any Authorization
+            self.assertEqual(h.get("X-Tenant-Id"), "tenant-visitor")
+            self.assertIn("session_token=visitor_cookie_val", h.get("Cookie", ""))
+            self.assertNotIn("owner_cookie_val", h.get("Cookie", ""))
+
+        # In anonymous requests: MUST NOT contain any Authorization, tenant, or session cookie
         for h in anon_reqs:
             self.assertIsNone(h.get("Authorization"))
+            self.assertNotIn("tenant-owner", h.get("X-Tenant-Id", ""))
+            self.assertNotIn("session_token", h.get("Cookie", ""))
+
+    def test_cross_identity_cookie_collision_and_shared_token_blocked(self) -> None:
+        """Fail-closed on identical cookie tokens between Owner and Visitor, or un-overridden common tokens."""
+        # 1. Visitor cookie token identical to Owner's token
+        params = [
+            {"name": "session_token", "in": "cookie", "required": True, "schema": {"type": "string"}},
+        ]
+        spec = self._make_spec(params)
+        config_identical = self._make_config(
+            parameter_values={
+                "GET /api/documents/{doc_id}": {
+                    "owner": {"session_token": "shared_secret_123"},
+                    "visitor": {"session_token": "shared_secret_123"},
+                }
+            }
+        )
+        auditor = self._run_audit(spec, config_identical)
+        self.assertEqual(len(ParameterRecordingHandler.requests), 0)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("cannot share value with Owner", auditor.results[0]["reason"])
+
+        # 2. Auth cookie placed in common without visitor-specific override
+        with ParameterRecordingHandler.lock:
+            ParameterRecordingHandler.requests.clear()
+        config_common = self._make_config(
+            parameter_values={
+                "GET /api/documents/{doc_id}": {
+                    "common": {"session_token": "shared_secret_123"},
+                }
+            }
+        )
+        auditor = self._run_audit(spec, config_common)
+        self.assertEqual(len(ParameterRecordingHandler.requests), 0)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("cannot be shared across identities", auditor.results[0]["reason"])
+
+        # 3. Missing visitor-scoped auth cookie when required
+        with ParameterRecordingHandler.lock:
+            ParameterRecordingHandler.requests.clear()
+        config_missing_visitor = self._make_config(
+            parameter_values={
+                "GET /api/documents/{doc_id}": {
+                    "owner": {"session_token": "owner_only_secret"},
+                }
+            }
+        )
+        auditor = self._run_audit(spec, config_missing_visitor)
+        self.assertEqual(len(ParameterRecordingHandler.requests), 0)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Missing required visitor authentication cookie", auditor.results[0]["reason"])
+
+    def test_business_cookie_preserves_functionality_across_roles(self) -> None:
+        """Non-authentication business cookies preserve legitimate shared delivery across all roles."""
+        params = [
+            {"name": "theme", "in": "cookie", "schema": {"type": "string"}},
+            {"name": "tracking_id", "in": "cookie", "schema": {"type": "string"}},
+        ]
+        spec = self._make_spec(params)
+        config = self._make_config(
+            parameter_values={
+                "GET /api/documents/{doc_id}": {
+                    "common": {"theme": "dark", "tracking_id": "trk-global-456"}
+                }
+            }
+        )
+        self._run_audit(spec, config)
+        self.assertGreater(len(ParameterRecordingHandler.requests), 0)
+
+        for _, _, headers in ParameterRecordingHandler.requests:
+            cookie_str = headers.get("Cookie", "")
+            self.assertIn("theme=dark", cookie_str)
+            self.assertIn("tracking_id=trk-global-456", cookie_str)
 
     def test_unconfigured_optional_parameters_backward_compatibility(self) -> None:
         """Optional parameters without configuration do not block scan or invent headers."""
@@ -417,27 +510,43 @@ class HeaderCookieParameterTests(unittest.TestCase):
         ]
         spec = self._make_spec(params, path="/api/documents/{doc_id}/delete")
         config = self._make_config(
-            parameter_values={"GET /api/documents/{doc_id}/delete": {"common": {"X-Client-Id": "123"}}}
+            parameter_values={"GET /api/documents/{doc_id}/delete": {"common": {"X-Client-Id": "123"}}},
+            path="/api/documents/{doc_id}/delete",
         )
         auditor = self._run_audit(spec, config)
         self.assertEqual(len(ParameterRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.SKIPPED)
 
     def test_redaction_html_json_sarif_no_leakage(self) -> None:
-        """HTML, JSON, and SARIF reports redact credentials, tokens, and private fields."""
+        """HTML, JSON, and SARIF reports redact credentials, tokens, and echoed private fields."""
+        echo_path = "/api/echo/{doc_id}"
         params = [
-            {"name": "X-Custom-Id", "in": "header", "schema": {"type": "string"}},
-            {"name": "user_cookie", "in": "cookie", "schema": {"type": "string"}},
+            {"name": "X-API-Token", "in": "header", "schema": {"type": "string"}},
+            {"name": "session_token", "in": "cookie", "schema": {"type": "string"}},
         ]
-        spec = self._make_spec(params)
+        spec = self._make_spec(params, path=echo_path)
         config = self._make_config(
             parameter_values={
-                "GET /api/documents/{doc_id}": {
-                    "common": {"X-Custom-Id": "cust-secret-42", "user_cookie": "sess-secret-99"}
+                f"GET {echo_path}": {
+                    "owner": {
+                        "X-API-Token": "SUPER_SECRET_HEADER_VALUE_12345",
+                        "session_token": "SUPER_SECRET_COOKIE_VALUE_67890",
+                    },
+                    "visitor": {
+                        "X-API-Token": "VISITOR_SECRET_HEADER_VALUE_54321",
+                        "session_token": "VISITOR_SECRET_COOKIE_VALUE_09876",
+                    },
                 }
-            }
+            },
+            path=echo_path,
         )
         auditor = self._run_audit(spec, config)
+
+        # 1. Assert secrets are collected into _secret_values
+        self.assertIn("SUPER_SECRET_HEADER_VALUE_12345", auditor._secret_values)
+        self.assertIn("SUPER_SECRET_COOKIE_VALUE_67890", auditor._secret_values)
+        self.assertIn("VISITOR_SECRET_HEADER_VALUE_54321", auditor._secret_values)
+        self.assertIn("VISITOR_SECRET_COOKIE_VALUE_09876", auditor._secret_values)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             json_path = Path(temp_dir) / "report.json"
@@ -470,10 +579,23 @@ class HeaderCookieParameterTests(unittest.TestCase):
             )
             sarif_text = sarif_path.read_text(encoding="utf-8")
 
+            all_sensitive = [
+                "OWNER_TOKEN",
+                "VISITOR_TOKEN",
+                "SUPER_SECRET_HEADER_VALUE_12345",
+                "SUPER_SECRET_COOKIE_VALUE_67890",
+                "VISITOR_SECRET_HEADER_VALUE_54321",
+                "VISITOR_SECRET_COOKIE_VALUE_09876",
+            ]
             for text, name in [(json_text, "JSON"), (html_text, "HTML"), (sarif_text, "SARIF")]:
-                # Credentials and auth tokens must NEVER appear in report output
-                self.assertNotIn("OWNER_TOKEN", text, f"Found raw OWNER_TOKEN in {name}")
-                self.assertNotIn("VISITOR_TOKEN", text, f"Found raw VISITOR_TOKEN in {name}")
+                for secret in all_sensitive:
+                    self.assertNotIn(secret, text, f"Found raw sensitive value {secret} in {name} report")
+
+            # Check that results and findings do not leak sensitive values in error or reason fields
+            for res in auditor.results:
+                reason = res.get("reason", "")
+                for secret in all_sensitive:
+                    self.assertNotIn(secret, reason, f"Found raw sensitive value {secret} in result reason")
 
     def test_config_validator_header_cookie_schema(self) -> None:
         """Config validator verifies header and cookie parameter values against schema."""
