@@ -40,6 +40,18 @@ class ParameterRecordingHandler(BaseHTTPRequestHandler):
             self.requests.append((self.command, self.path, headers_dict))
 
         auth = self.headers.get("Authorization", "")
+        if self.path.startswith("/api/key-documents/"):
+            # Exercise API-key-only authentication independently of Bearer tokens.
+            auth = {
+                "OWNER_API_KEY": "Bearer OWNER_TOKEN",
+                "VISITOR_API_KEY": "Bearer VISITOR_TOKEN",
+            }.get(self.headers.get("X-API-Key", ""), "")
+        elif self.path.startswith("/api/cookie-documents/"):
+            cookies = dict(part.strip().split("=", 1) for part in self.headers.get("Cookie", "").split(";") if "=" in part)
+            auth = {
+                "OWNER_SESSION_COOKIE": "Bearer OWNER_TOKEN",
+                "VISITOR_SESSION_COOKIE": "Bearer VISITOR_TOKEN",
+            }.get(cookies.get("session_token", ""), "")
         if self.path.startswith("/api/echo/"):
             doc_id = self.path.split("?")[0].split("/")[-1]
             body_dict = {
@@ -55,7 +67,7 @@ class ParameterRecordingHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path.startswith("/api/documents/"):
+        elif self.path.startswith(("/api/documents/", "/api/key-documents/", "/api/cookie-documents/")):
             doc_id = self.path.split("?")[0].split("/")[-1]
             if "Bearer OWNER_TOKEN" in auth:
                 body = json.dumps({"id": doc_id, "title": "Owner Confidential", "owner": "1001"}).encode("utf-8")
@@ -245,17 +257,230 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
         self.assertIn("Missing required header parameter", auditor.results[0]["reason"])
 
+    def test_required_auth_header_preserves_anonymous_wire_probe(self) -> None:
+        """A required API-key declaration must not prevent unauthenticated access checks."""
+        path = "/api/key-documents/{doc_id}"
+        spec = self._make_spec([
+            {"name": "X-API-Key", "in": "header", "required": True, "schema": {"type": "string"}},
+        ], path=path)
+        spec["components"]["securitySchemes"] = {
+            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+        }
+        spec["paths"][path]["get"]["security"] = [{"ApiKeyAuth": []}]
+        config = self._make_config(
+            parameter_values={f"GET {path}": {"common": {"X-API-Key": "SHARED_POISON_KEY"}}},
+            extra_identities={
+                "owner": {"token": None, "headers": {"x-api-key": "OWNER_API_KEY"}},
+                "visitor": {"token": None, "headers": {"X-API-KEY": "VISITOR_API_KEY"}},
+            },
+            path=path,
+        )
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+
+        observed = []
+        for method, request_path, headers in ParameterRecordingHandler.requests:
+            normalized = {name.lower(): value for name, value in headers.items()}
+            self.assertEqual(method, "GET")
+            self.assertNotIn("authorization", normalized)
+            self.assertNotIn("SHARED_POISON_KEY", headers.values())
+            key = normalized.get("x-api-key")
+            observed.append((request_path, key))
+            if key == "VISITOR_API_KEY":
+                self.assertNotIn("OWNER_API_KEY", headers.values())
+        self.assertCountEqual(observed, [
+            ("/api/key-documents/doc-owner", "OWNER_API_KEY"),
+            ("/api/key-documents/doc-owner", "VISITOR_API_KEY"),
+            ("/api/key-documents/doc-visitor", "VISITOR_API_KEY"),
+            ("/api/key-documents/doc-owner", None),
+        ])
+
+    def test_openapi_reserved_header_parameters_are_ignored_on_wire(self) -> None:
+        """OAS 3 ignores Authorization, Accept and Content-Type Parameter Objects."""
+        names = ("Authorization", "Accept", "Content-Type")
+        spec = self._make_spec([
+            {"name": name, "in": "header", "required": True, "schema": {"type": "string"}}
+            for name in names
+        ])
+        config = self._make_config(parameter_values={
+            "GET /api/documents/{doc_id}": {
+                "common": {name: "IGNORED_POISON_VALUE" for name in names},
+            },
+        })
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+        observed_auth = []
+        for _, _, headers in ParameterRecordingHandler.requests:
+            normalized = {name.lower(): value for name, value in headers.items()}
+            self.assertEqual(normalized.get("accept"), "application/json")
+            self.assertNotIn("content-type", normalized)
+            self.assertNotIn("IGNORED_POISON_VALUE", headers.values())
+            observed_auth.append(normalized.get("authorization"))
+        self.assertCountEqual(observed_auth, [
+            "Bearer OWNER_TOKEN", "Bearer VISITOR_TOKEN", None, "Bearer VISITOR_TOKEN",
+        ])
+
+    def test_swagger2_required_auth_header_and_business_header_wire_delivery(self) -> None:
+        """Swagger 2 keeps requester API keys, business headers and anonymous probing."""
+        path = "/api/key-documents/{doc_id}"
+        spec = {
+            "swagger": "2.0",
+            "info": {"title": "Swagger Test API", "version": "1.0.0"},
+            "paths": {
+                path: {
+                    "get": {
+                        "parameters": [
+                            {"name": "doc_id", "in": "path", "required": True, "type": "string"},
+                            {"name": "X-API-Key", "in": "header", "required": True, "type": "string"},
+                            {"name": "X-Request-Tracking", "in": "header", "required": True, "type": "string"},
+                        ],
+                        "security": [{"ApiKeyAuth": []}],
+                        "responses": {"200": {"description": "OK"}},
+                    },
+                },
+            },
+            "securityDefinitions": {
+                "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+            },
+        }
+        config = self._make_config(
+            parameter_values={f"GET {path}": {"common": {
+                "X-Request-Tracking": "swagger-tracking-value", "X-API-Key": "SHARED_POISON_KEY",
+            }}},
+            extra_identities={
+                "owner": {"token": None, "headers": {"X-API-Key": "OWNER_API_KEY"}},
+                "visitor": {"token": None, "headers": {"X-API-Key": "VISITOR_API_KEY"}},
+            },
+            path=path,
+        )
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+        observed = []
+        for _, request_path, headers in ParameterRecordingHandler.requests:
+            normalized = {name.lower(): value for name, value in headers.items()}
+            self.assertEqual(normalized.get("x-request-tracking"), "swagger-tracking-value")
+            self.assertNotIn("SHARED_POISON_KEY", headers.values())
+            observed.append((request_path, normalized.get("x-api-key")))
+        self.assertCountEqual(observed, [
+            ("/api/key-documents/doc-owner", "OWNER_API_KEY"),
+            ("/api/key-documents/doc-owner", "VISITOR_API_KEY"),
+            ("/api/key-documents/doc-visitor", "VISITOR_API_KEY"),
+            ("/api/key-documents/doc-owner", None),
+        ])
+
+        # Swagger 2 has no cookie Parameter Object, including when a value exists.
+        with ParameterRecordingHandler.lock:
+            ParameterRecordingHandler.requests.clear()
+        spec["paths"][path]["get"]["parameters"].append({
+            "name": "theme", "in": "cookie", "required": True, "type": "string",
+        })
+        config["parameter_values"][f"GET {path}"]["common"]["theme"] = "dark"
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Swagger 2 does not support cookie parameters", auditor.results[0]["reason"])
+
+    def test_case_insensitive_duplicate_business_headers_sends_zero_requests(self) -> None:
+        """Two business parameters must not serialize to the same HTTP header name."""
+        names = ("X-Business-Context", "x-business-context")
+        spec = self._make_spec([
+            {"name": name, "in": "header", "required": True, "schema": {"type": "string"}}
+            for name in names
+        ])
+        config = self._make_config(parameter_values={
+            "GET /api/documents/{doc_id}": {"common": {name: "business-value" for name in names}},
+        })
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Different header parameters serialize to the same name", auditor.results[0]["reason"])
+
+    def test_shared_auth_header_values_cannot_replace_identity_credentials(self) -> None:
+        """Parameter configuration cannot supply a missing identity authentication header."""
+        spec = self._make_spec([
+            {"name": "X-API-Key", "in": "header", "required": True, "schema": {"type": "string"}},
+        ])
+        spec["components"]["securitySchemes"]["ApiKeyAuth"] = {
+            "type": "apiKey", "in": "header", "name": "X-API-Key",
+        }
+        config = self._make_config(parameter_values={
+            "GET /api/documents/{doc_id}": {"common": {"X-API-Key": "SHARED_POISON_KEY"}},
+        })
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("cannot be supplied via parameter values", auditor.results[0]["reason"])
+
+    def test_required_identity_auth_cookie_preserves_anonymous_wire_probe(self) -> None:
+        """An identity Cookie satisfies its declaration while anonymous sends no credential."""
+        path = "/api/cookie-documents/{doc_id}"
+        spec = self._make_spec([
+            {"name": "session_token", "in": "cookie", "required": True, "schema": {"type": "string"}},
+            {"name": "theme", "in": "cookie", "required": True, "schema": {"type": "string"}},
+        ], path=path)
+        spec["components"]["securitySchemes"] = {
+            "SessionAuth": {"type": "apiKey", "in": "cookie", "name": "session_token"},
+        }
+        spec["paths"][path]["get"]["security"] = [{"SessionAuth": []}]
+        config = self._make_config(
+            parameter_values={f"GET {path}": {"common": {"theme": "dark"}}},
+            extra_identities={
+                "owner": {"token": None, "headers": {"Cookie": "session_token=OWNER_SESSION_COOKIE"}},
+                "visitor": {"token": None, "headers": {"Cookie": "session_token=VISITOR_SESSION_COOKIE"}},
+            },
+            path=path,
+        )
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+        observed = []
+        for method, request_path, headers in ParameterRecordingHandler.requests:
+            self.assertEqual(method, "GET")
+            normalized = {name.lower(): value for name, value in headers.items()}
+            self.assertNotIn("authorization", normalized)
+            cookie = normalized.get("cookie", "")
+            pairs = dict(part.strip().split("=", 1) for part in cookie.split(";") if "=" in part)
+            self.assertEqual(pairs.get("theme"), "dark")
+            observed.append((request_path, pairs.get("session_token")))
+        self.assertCountEqual(observed, [
+            ("/api/cookie-documents/doc-owner", "OWNER_SESSION_COOKIE"),
+            ("/api/cookie-documents/doc-owner", "VISITOR_SESSION_COOKIE"),
+            ("/api/cookie-documents/doc-visitor", "VISITOR_SESSION_COOKIE"),
+            ("/api/cookie-documents/doc-owner", None),
+        ])
+
+    def test_anonymous_missing_required_business_parameters_sends_zero_requests(self) -> None:
+        """Only authentication parameters may be omitted from an anonymous probe."""
+        for location, name in (("header", "X-Required-Context"), ("cookie", "required_preference")):
+            with self.subTest(location=location):
+                spec = self._make_spec([
+                    {"name": name, "in": location, "required": True, "schema": {"type": "string"}},
+                ])
+                config = self._make_config(parameter_values={
+                    "GET /api/documents/{doc_id}": {
+                        "owner": {name: "owner-context"},
+                        "visitor": {name: "visitor-context"},
+                    },
+                })
+                auditor = self._run_audit(spec, config)
+                self.assertEqual(ParameterRecordingHandler.requests, [])
+                self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+                self.assertIn(f"Missing required {location} parameter '{name}'", auditor.results[0]["reason"])
+
     def test_missing_required_cookie_parameter_sends_zero_requests(self) -> None:
         """Missing required cookie parameter raises serialization error and sends 0 requests."""
         params = [
-            {"name": "required_session", "in": "cookie", "required": True, "schema": {"type": "string"}},
+            {"name": "required_preference", "in": "cookie", "required": True, "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(parameter_values={})
         auditor = self._run_audit(spec, config)
         self.assertEqual(len(ParameterRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("Missing required", auditor.results[0]["reason"])
+        self.assertIn("Missing required cookie parameter 'required_preference'", auditor.results[0]["reason"])
 
     def test_unsupported_serialization_formats(self) -> None:
         """Arrays and objects in headers/cookies, or Swagger 2 cookies raise serialization errors."""
@@ -348,16 +573,16 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self.assertIn("conflicts with identity authentication cookie", auditor.results[0]["reason"])
 
     def test_header_collision_with_identity_header_blocked(self) -> None:
-        """Business header cannot overwrite an identity header."""
+        """Business header cannot overwrite an identity header with different casing."""
         params = [
-            {"name": "X-Custom-Auth", "in": "header", "schema": {"type": "string"}},
+            {"name": "X-CUSTOM-AUTH", "in": "header", "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
         config = self._make_config(
-            parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Custom-Auth": "OVERWRITE"}}},
+            parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-CUSTOM-AUTH": "OVERWRITE"}}},
             extra_identities={
-                "owner": {"headers": {"X-Custom-Auth": "OWNER_AUTH"}},
-                "visitor": {"headers": {"X-Custom-Auth": "VISITOR_AUTH"}},
+                "owner": {"headers": {"x-Custom-auth": "OWNER_AUTH"}},
+                "visitor": {"headers": {"x-Custom-auth": "VISITOR_AUTH"}},
             },
         )
         auditor = self._run_audit(spec, config)
@@ -372,6 +597,9 @@ class HeaderCookieParameterTests(unittest.TestCase):
             {"name": "session_token", "in": "cookie", "required": True, "schema": {"type": "string"}},
         ]
         spec = self._make_spec(params)
+        spec["components"]["securitySchemes"]["SessionAuth"] = {
+            "type": "apiKey", "in": "cookie", "name": "session_token",
+        }
         config = self._make_config(
             parameter_values={
                 "GET /api/documents/{doc_id}": {
@@ -386,8 +614,9 @@ class HeaderCookieParameterTests(unittest.TestCase):
                 }
             }
         )
-        self._run_audit(spec, config)
-        self.assertGreater(len(ParameterRecordingHandler.requests), 0)
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
 
         owner_reqs = [h for _, _, h in ParameterRecordingHandler.requests if "Bearer OWNER_TOKEN" in h.get("Authorization", "")]
         visitor_reqs = [h for _, _, h in ParameterRecordingHandler.requests if "Bearer VISITOR_TOKEN" in h.get("Authorization", "")]
@@ -529,18 +758,28 @@ class HeaderCookieParameterTests(unittest.TestCase):
             parameter_values={
                 f"GET {echo_path}": {
                     "owner": {
-                        "X-API-Token": "SUPER_SECRET_HEADER_VALUE_12345",
                         "session_token": "SUPER_SECRET_COOKIE_VALUE_67890",
                     },
                     "visitor": {
-                        "X-API-Token": "VISITOR_SECRET_HEADER_VALUE_54321",
                         "session_token": "VISITOR_SECRET_COOKIE_VALUE_09876",
                     },
                 }
             },
+            extra_identities={
+                "owner": {"headers": {"X-API-Token": "SUPER_SECRET_HEADER_VALUE_12345"}},
+                "visitor": {"headers": {"X-API-Token": "VISITOR_SECRET_HEADER_VALUE_54321"}},
+            },
             path=echo_path,
         )
         auditor = self._run_audit(spec, config)
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+        self.assertTrue(auditor.results)
+        for result in auditor.results:
+            self.assertNotIn(result["verdict"], (Verdict.ERROR, Verdict.INCONCLUSIVE), result["reason"])
+        self.assertTrue(any(
+            headers.get("X-Api-Token") == "SUPER_SECRET_HEADER_VALUE_12345"
+            for _, _, headers in ParameterRecordingHandler.requests
+        ))
 
         # 1. Assert secrets are collected into _secret_values
         self.assertIn("SUPER_SECRET_HEADER_VALUE_12345", auditor._secret_values)

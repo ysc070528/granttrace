@@ -150,7 +150,7 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
         if kind != "primitive":
             _fail("Array and object cookie parameter serialization is ambiguous and unsupported")
         text = _scalar(value)
-        if any(c in "\r\n\0;" for c in text) or any(ord(c) < 32 or ord(c) >= 127 for c in text):
+        if any(ord(c) < 33 or ord(c) >= 127 or c in '\",;\\' for c in text):
             _fail("Cookie parameter value contains invalid characters, line breaks, or separators (CRLF or semicolon injection prevented)")
     if location == "header":
         if kind == "object":
