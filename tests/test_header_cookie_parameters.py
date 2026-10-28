@@ -302,10 +302,12 @@ class HeaderCookieParameterTests(unittest.TestCase):
         spec = self._make_spec([
             {"name": name, "in": "header", "required": True, "schema": {"type": "string"}}
             for name in names
-        ])
+        ] + [{"name": "X-Request-Tracking", "in": "header", "required": True,
+              "schema": {"type": "string"}}])
         config = self._make_config(parameter_values={
             "GET /api/documents/{doc_id}": {
-                "common": {name: "IGNORED_POISON_VALUE" for name in names},
+                "common": {**{name: "IGNORED_POISON_VALUE" for name in names},
+                           "X-Request-Tracking": "openapi-tracking-value"},
             },
         })
         auditor = self._run_audit(spec, config)
@@ -317,10 +319,72 @@ class HeaderCookieParameterTests(unittest.TestCase):
             self.assertEqual(normalized.get("accept"), "application/json")
             self.assertNotIn("content-type", normalized)
             self.assertNotIn("IGNORED_POISON_VALUE", headers.values())
+            self.assertEqual(normalized.get("x-request-tracking"), "openapi-tracking-value")
             observed_auth.append(normalized.get("authorization"))
         self.assertCountEqual(observed_auth, [
             "Bearer OWNER_TOKEN", "Bearer VISITOR_TOKEN", None, "Bearer VISITOR_TOKEN",
         ])
+
+    def test_swagger2_reserved_header_parameters_are_ignored_on_wire(self) -> None:
+        """Swagger special Header parameters cannot alter transport or requester credentials."""
+        path = "/api/documents/{doc_id}"
+        variants = [
+            ("Authorization", "Accept", "Content-Type"),
+            ("authorization", "accept", "content-type"),
+            ("aUtHoRiZaTiOn", "aCcEpT", "cOnTeNt-TyPe"),
+        ]
+        for names in variants:
+            for configured in (False, True):
+                with self.subTest(names=names, configured=configured):
+                    with ParameterRecordingHandler.lock:
+                        ParameterRecordingHandler.requests.clear()
+                    spec = {
+                        "swagger": "2.0",
+                        "info": {"title": "Swagger Special Headers", "version": "1.0.0"},
+                        "produces": ["application/json"],
+                        "consumes": ["application/json"],
+                        "paths": {path: {"get": {
+                            "parameters": [
+                                {"name": "doc_id", "in": "path", "required": True, "type": "string"},
+                                *({"name": name, "in": "header", "required": True, "type": "string"}
+                                  for name in names),
+                                {"name": "X-Request-Tracking", "in": "header", "required": True, "type": "string"},
+                            ],
+                            "security": [{"ApiKeyAuth": []}],
+                            "responses": {"200": {"description": "OK"}},
+                        }}},
+                        "securityDefinitions": {
+                            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+                        },
+                    }
+                    common = {"X-Request-Tracking": "swagger-tracking-value"}
+                    if configured:
+                        common.update({name: "IGNORED_POISON_VALUE" for name in names})
+                    config = self._make_config(
+                        parameter_values={f"GET {path}": {"common": common}},
+                        extra_identities={
+                            "owner": {"headers": {"X-API-Key": "OWNER_API_KEY"}},
+                            "visitor": {"headers": {"X-API-Key": "VISITOR_API_KEY"}},
+                        },
+                    )
+                    auditor = self._run_audit(spec, config)
+                    self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED, auditor.results[0]["reason"])
+                    self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+                    observed = []
+                    for method, request_path, headers in ParameterRecordingHandler.requests:
+                        normalized = {name.lower(): value for name, value in headers.items()}
+                        self.assertEqual(method, "GET")
+                        self.assertEqual(normalized.get("accept"), "application/json")
+                        self.assertNotIn("content-type", normalized)
+                        self.assertEqual(normalized.get("x-request-tracking"), "swagger-tracking-value")
+                        self.assertNotIn("IGNORED_POISON_VALUE", headers.values())
+                        observed.append((request_path, normalized.get("authorization"), normalized.get("x-api-key")))
+                    self.assertCountEqual(observed, [
+                        ("/api/documents/doc-owner", "Bearer OWNER_TOKEN", "OWNER_API_KEY"),
+                        ("/api/documents/doc-owner", "Bearer VISITOR_TOKEN", "VISITOR_API_KEY"),
+                        ("/api/documents/doc-visitor", "Bearer VISITOR_TOKEN", "VISITOR_API_KEY"),
+                        ("/api/documents/doc-owner", None, None),
+                    ])
 
     def test_swagger2_required_auth_header_and_business_header_wire_delivery(self) -> None:
         """Swagger 2 keeps requester API keys, business headers and anonymous probing."""

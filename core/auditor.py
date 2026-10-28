@@ -514,7 +514,9 @@ class APISentinelAuditor:
             normalized_name = name.lower()
 
             if location == "header":
-                if not swagger2 and normalized_name in {"authorization", "accept", "content-type"}:
+                if normalized_name in {"authorization", "accept", "content-type"}:
+                    # Media types and authentication have dedicated spec fields;
+                    # ordinary parameter declarations must not replace them.
                     continue
                 is_auth_hdr = self._is_auth_header(name)
                 if is_auth_hdr:
@@ -689,8 +691,8 @@ class APISentinelAuditor:
                 continue  # Swagger request bodies have their own payload encoder.
             if location == "header" and isinstance(name, str):
                 normalized = name.lower()
-                if not swagger2 and normalized in {"authorization", "accept", "content-type"}:
-                    continue  # OAS 3 requires these Parameter Objects to be ignored.
+                if normalized in {"authorization", "accept", "content-type"}:
+                    continue  # Ignore ordinary declarations in both spec versions.
                 if (self._is_auth_header(name)
                         and all(self._identity_headers(role).get(normalized) for role in ("owner", "visitor"))):
                     continue  # Authentication comes only from the actual requester.
