@@ -79,6 +79,7 @@ class APISentinelAuditor:
     ) -> None:
         self._validate_target(target_base_url, allow_http)
         self.parser = OpenAPIParser(spec_path)
+        self._spec_auth_cookie_names()  # Reject unsafe authentication refs before any request.
         self.target_base_url = target_base_url.rstrip("/")
         self.max_workers = max(1, int(max_workers))
         self.request_delay = max(0.0, float(request_delay))
@@ -249,16 +250,39 @@ class APISentinelAuditor:
             spec_auth_names=spec_headers,
         )
 
-    def _is_auth_cookie(self, name: str) -> bool:
-        norm_name = str(name).strip().lower()
+    def _spec_auth_cookie_names(self) -> Set[str]:
+        """Resolve authentication aliases with the parser's local-reference guardrails."""
         schemes = dict(self.parser.raw_spec.get("securityDefinitions") or {})
         schemes.update((self.parser.raw_spec.get("components") or {}).get("securitySchemes") or {})
-        spec_cookies = [
-            str(scheme.get("name", "")).strip().lower()
-            for scheme in schemes.values()
-            if isinstance(scheme, dict) and scheme.get("in") == "cookie" and scheme.get("name")
-        ]
-        if norm_name in spec_cookies:
+        names: Set[str] = set()
+        for scheme in schemes.values():
+            if isinstance(scheme, dict) and "$ref" in scheme:
+                try:
+                    self.parser._reference_siblings(scheme, schema=False)
+                    scheme, _ = self.parser._resolve_ref_chain(
+                        scheme["$ref"], self.parser._spec_file, 20
+                    )
+                except (OSError, TypeError, ValueError, RuntimeError):
+                    raise ParameterSerializationError(
+                        "Authentication scheme reference cannot be resolved safely; no request was sent"
+                    ) from None
+                if (not isinstance(scheme, dict) or "$ref" in scheme
+                        or not isinstance(scheme.get("type"), str)
+                        or scheme.get("type") not in {"apiKey", "http", "oauth2", "openIdConnect", "mutualTLS"}
+                        or (scheme.get("type") == "apiKey" and (
+                            not isinstance(scheme.get("in"), str)
+                            or scheme.get("in") not in {"header", "query", "cookie"}
+                            or not isinstance(scheme.get("name"), str) or not scheme["name"].strip()))):
+                    raise ParameterSerializationError(
+                        "Authentication scheme reference does not resolve to a supported security scheme; no request was sent"
+                    )
+            if isinstance(scheme, dict) and scheme.get("in") == "cookie" and scheme.get("name"):
+                names.add(str(scheme["name"]).strip().lower())
+        return names
+
+    def _is_auth_cookie(self, name: str) -> bool:
+        norm_name = str(name).strip().lower()
+        if norm_name in self._spec_auth_cookie_names():
             return True
 
         for identity in self.identities.values():
