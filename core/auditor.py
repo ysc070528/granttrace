@@ -148,37 +148,9 @@ class APISentinelAuditor:
             "anonymous": {"id": None, "token": None, "parameters": {}},
         }
         self._validate_identities()
-        self._secret_values = set()
-        for identity_name, identity in self.identities.items():
-            for key, value in self._identity_headers(identity_name).items():
-                if self._is_auth_header(key):
-                    self._secret_values.add(value)
-                    if key.lower() == "authorization" and " " in value:
-                        self._secret_values.add(value.split(" ", 1)[1])
-                    if key.lower() == "cookie":
-                        for part in value.split(";"):
-                            if "=" in part:
-                                c_val = part.split("=", 1)[1].strip().strip('"')
-                                if c_val:
-                                    self._secret_values.add(c_val)
-            for p_name, p_val in identity.get("parameters", {}).items():
-                if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                    if isinstance(p_val, (str, int, float)) and str(p_val):
-                        self._secret_values.add(str(p_val))
-
-        for conf in self.parameter_values.values():
-            if isinstance(conf, dict):
-                for sub_key, sub_val in conf.items():
-                    if isinstance(sub_val, dict):
-                        for p_name, p_val in sub_val.items():
-                            if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                                if isinstance(p_val, (str, int, float)) and str(p_val):
-                                    self._secret_values.add(str(p_val))
-                    else:
-                        p_name, p_val = sub_key, sub_val
-                        if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                            if isinstance(p_val, (str, int, float)) and str(p_val):
-                                self._secret_values.add(str(p_val))
+        self._secret_values = self._collect_auth_secret_values()
+        self._auth_parser = self.parser
+        self._auth_parser_lock = threading.Lock()
 
         self.findings: List[Dict[str, Any]] = []
         self.results: List[Dict[str, Any]] = []
@@ -306,6 +278,66 @@ class APISentinelAuditor:
         if fingerprints["anonymous"]:
             raise ValueError("anonymous identity must not define authentication material")
 
+    def _collect_auth_secret_values(self) -> Set[str]:
+        secrets: Set[str] = set()
+        for identity_name, identity in self.identities.items():
+            for key, value in self._identity_headers(identity_name).items():
+                if self._is_auth_header(key):
+                    secrets.add(value)
+                    if key.lower() == "authorization" and " " in value:
+                        secrets.add(value.split(" ", 1)[1])
+                    if key.lower() == "cookie":
+                        for part in value.split(";"):
+                            if "=" in part:
+                                c_val = part.split("=", 1)[1].strip().strip('"')
+                                if c_val:
+                                    secrets.add(c_val)
+            for p_name, p_val in identity.get("parameters", {}).items():
+                if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                    if isinstance(p_val, (str, int, float)) and str(p_val):
+                        secrets.add(str(p_val))
+
+        for conf in self.parameter_values.values():
+            if isinstance(conf, dict):
+                for sub_key, sub_val in conf.items():
+                    if isinstance(sub_val, dict):
+                        for p_name, p_val in sub_val.items():
+                            if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                                if isinstance(p_val, (str, int, float)) and str(p_val):
+                                    secrets.add(str(p_val))
+                    else:
+                        p_name, p_val = sub_key, sub_val
+                        if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
+                            if isinstance(p_val, (str, int, float)) and str(p_val):
+                                secrets.add(str(p_val))
+
+        return secrets
+
+    def _ensure_parser_auth(self) -> None:
+        # Replacing the parser is supported only between scans. Publish its
+        # authentication state after validation, including for direct requests.
+        if self._auth_parser is self.parser:
+            return
+        with self._auth_parser_lock:
+            parser = self.parser
+            if self._auth_parser is parser:
+                return
+            parser.get_security_schemes()
+            self._validate_identities()
+            secrets = self._secret_values.union(self._collect_auth_secret_values())
+            with self._result_lock:
+                self._secret_values = secrets
+                # A previously ordinary value may now be an authentication
+                # secret. Scrub earlier observations and retained aliases too.
+                if self.bopla_config:
+                    self._redact_property_history()
+                else:
+                    for collection in (self.results, self.findings):
+                        for record in collection:
+                            safe = sanitize_evidence(record, self.include_sensitive_evidence, secrets)
+                            self._replace_evidence_in_place(record, safe)
+            self._auth_parser = parser
+
     def _throttle(self) -> None:
         if self.request_delay <= 0:
             return
@@ -414,6 +446,7 @@ class APISentinelAuditor:
         content_type: str = "application/json",
         headers: Optional[Dict[str, str]] = None,
     ) -> HTTPResult:
+        self._ensure_parser_auth()
         if getattr(self._request_accounting, "attempts", None) is None:
             self._request_accounting.attempts = 0
         risk = self._read_request_risk(method, url)
@@ -487,6 +520,7 @@ class APISentinelAuditor:
         identity_name: str,
         extra_values: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
+        self._ensure_parser_auth()
         req_headers = dict(self._identity_headers(identity_name))
         parameters = ep.get("parameters", [])
         if not isinstance(parameters, list):
@@ -1963,6 +1997,7 @@ class APISentinelAuditor:
 
     def build_plan(self) -> Dict[str, Any]:
         """Inspect local specification/configuration only; this never makes requests."""
+        self._ensure_parser_auth()
         entries = []
         for ep in self.parser.get_endpoints():
             key = self._operation_key(ep)
@@ -2038,6 +2073,7 @@ class APISentinelAuditor:
                                  self.include_sensitive_evidence, self._secret_values)
 
     def run(self) -> None:
+        self._ensure_parser_auth()
         endpoints = self.parser.get_endpoints()
         self.stats["total_endpoints"] = len(endpoints)
         print("=" * 68)
