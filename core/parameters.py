@@ -241,28 +241,10 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
                         _fail("Header object parameter property value contains delimiter ',' or '=' which causes ambiguous deserialization")
 
     elif location == "cookie":
-        if kind == "primitive":
-            text = _scalar(value)
-            _validate_cookie_token(text, "Cookie parameter value")
-        elif kind == "array":
-            if explode:
-                _fail("Cookie array parameter with explode=true produces duplicate cookie names, which is ambiguous under RFC 6265")
-            for item in value:
-                text = _scalar(item)
-                if not text:
-                    _fail("Cookie array parameter items must not be empty")
-                _validate_cookie_token(text, "Cookie array parameter item")
-        elif kind == "object":
-            if explode:
-                _fail("Cookie object parameter with explode=true produces un-namespaced cookies, which is ambiguous and conflicts with cookie isolation under RFC 6265")
-            for k, v in value.items():
-                if not k:
-                    _fail("Cookie object parameter property names must be non-empty strings")
-                _validate_cookie_token(k, "Cookie object parameter property name", forbid_equals=True)
-                text = _scalar(v)
-                if not text:
-                    _fail("Cookie object parameter property values must not be empty")
-                _validate_cookie_token(text, "Cookie object parameter property value", forbid_equals=True)
+        if kind != "primitive":
+            _fail(f"Cookie {kind} parameter serialization is unsupported under RFC 6265; only scalar cookie parameters are supported")
+        text = _scalar(value)
+        _validate_cookie_token(text, "Cookie parameter value")
 
     return location, name, style, explode
 
@@ -359,14 +341,6 @@ def serialize_cookie_parameter(metadata: Dict[str, Any], value: Any, *, swagger2
     if location != "cookie":
         _fail("Cookie serialization requires in=cookie")
     kind = _kind(value)
-    if kind == "primitive":
-        return name, _scalar(value)
-    if kind == "array":
-        if explode:
-            _fail("Cookie array parameter with explode=true produces duplicate cookie names, which is ambiguous under RFC 6265")
-        return name, ",".join(_scalar(item) for item in value)
-    if kind == "object":
-        if explode:
-            _fail("Cookie object parameter with explode=true produces un-namespaced cookies, which is ambiguous and conflicts with cookie isolation under RFC 6265")
-        return name, ",".join(f"{part}" for k, v in value.items() for part in (k, _scalar(v)))
-    _fail("Unsupported cookie parameter structure")
+    if kind != "primitive":
+        _fail(f"Cookie {kind} parameter serialization is unsupported under RFC 6265; only scalar cookie parameters are supported")
+    return name, _scalar(value)

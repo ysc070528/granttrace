@@ -280,19 +280,33 @@ class APISentinelAuditor:
 
     def _collect_auth_secret_values(self) -> Set[str]:
         secrets: Set[str] = set()
-        def _add_val_secrets(v_val: Any) -> None:
-            if isinstance(v_val, (str, int, float)) and str(v_val):
-                secrets.add(str(v_val))
-            elif isinstance(v_val, list):
-                for item in v_val:
-                    if isinstance(item, (str, int, float)) and str(item):
-                        secrets.add(str(item))
-            elif isinstance(v_val, dict):
-                for k, v in v_val.items():
-                    if isinstance(k, str) and k:
-                        secrets.add(k)
-                    if isinstance(v, (str, int, float)) and str(v):
-                        secrets.add(str(v))
+
+        def _collect_from_param(p_name: str, p_val: Any) -> None:
+            is_sensitive_param = (
+                self._is_auth_header(p_name)
+                or self._is_auth_cookie(p_name)
+                or _is_sensitive_key(p_name)
+            )
+            if is_sensitive_param:
+                if isinstance(p_val, (str, int, float)) and str(p_val):
+                    secrets.add(str(p_val))
+                elif isinstance(p_val, list):
+                    for item in p_val:
+                        if isinstance(item, (str, int, float)) and str(item):
+                            secrets.add(str(item))
+                elif isinstance(p_val, dict):
+                    for k, v in p_val.items():
+                        if isinstance(v, (str, int, float)) and str(v):
+                            secrets.add(str(v))
+            elif isinstance(p_val, dict):
+                for k, v in p_val.items():
+                    if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
+                        if isinstance(v, (str, int, float)) and str(v):
+                            secrets.add(str(v))
+                        elif isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, (str, int, float)) and str(item):
+                                    secrets.add(str(item))
 
         for identity_name, identity in self.identities.items():
             for key, value in self._identity_headers(identity_name).items():
@@ -307,20 +321,17 @@ class APISentinelAuditor:
                                 if c_val:
                                     secrets.add(c_val)
             for p_name, p_val in identity.get("parameters", {}).items():
-                if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                    _add_val_secrets(p_val)
+                _collect_from_param(p_name, p_val)
 
         for conf in self.parameter_values.values():
             if isinstance(conf, dict):
                 for sub_key, sub_val in conf.items():
                     if isinstance(sub_val, dict):
                         for p_name, p_val in sub_val.items():
-                            if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                                _add_val_secrets(p_val)
+                            _collect_from_param(p_name, p_val)
                     else:
                         p_name, p_val = sub_key, sub_val
-                        if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                            _add_val_secrets(p_val)
+                        _collect_from_param(p_name, p_val)
 
         return secrets
 
@@ -610,14 +621,19 @@ class APISentinelAuditor:
                 business_headers[hdr_name] = hdr_val
                 if is_auth_hdr or _is_sensitive_key(name):
                     self._secret_values.add(hdr_val)
-                    if isinstance(val, list):
+                    if isinstance(val, (str, int, float)) and str(val):
+                        self._secret_values.add(str(val))
+                    elif isinstance(val, list):
                         for item in val:
                             if isinstance(item, (str, int, float)) and str(item):
                                 self._secret_values.add(str(item))
                     elif isinstance(val, dict):
                         for k, v in val.items():
-                            if isinstance(k, str) and k:
-                                self._secret_values.add(k)
+                            if isinstance(v, (str, int, float)) and str(v):
+                                self._secret_values.add(str(v))
+                elif isinstance(val, dict):
+                    for k, v in val.items():
+                        if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
                             if isinstance(v, (str, int, float)) and str(v):
                                 self._secret_values.add(str(v))
 
@@ -693,16 +709,8 @@ class APISentinelAuditor:
                 cookie_pairs.append((c_name, c_val))
                 if is_auth_cookie or _is_sensitive_key(name):
                     self._secret_values.add(c_val)
-                    if isinstance(val, list):
-                        for item in val:
-                            if isinstance(item, (str, int, float)) and str(item):
-                                self._secret_values.add(str(item))
-                    elif isinstance(val, dict):
-                        for k, v in val.items():
-                            if isinstance(k, str) and k:
-                                self._secret_values.add(k)
-                            if isinstance(v, (str, int, float)) and str(v):
-                                self._secret_values.add(str(v))
+                    if isinstance(val, (str, int, float)) and str(val):
+                        self._secret_values.add(str(val))
 
         if cookie_pairs:
             identity_cookie_names: Set[str] = set()

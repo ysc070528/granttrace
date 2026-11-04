@@ -1,18 +1,23 @@
-"""Comprehensive tests for Header and Cookie array and object parameter serialization.
+"""Comprehensive tests for Header and Cookie parameter serialization.
 
 Verifies:
 1. Header primitive, array, and object support with simple style.
-2. Explode settings (explode=false, explode=true) for headers and cookies.
-3. Cookie primitive, array, and object support with form style.
-4. OpenAPI 3.x vs Swagger 2.0 rules (Swagger 2 collectionFormat=csv, non-csv rejection, object rejection).
-5. Empty arrays, empty objects, and nested containers rejection.
-6. CRLF, null byte, and control character injection prevention.
-7. Header/Cookie identity conflicts with Authorization and session credentials.
-8. Owner, Visitor, and Anonymous authentication isolation.
-9. Parameter missing and schema type mismatches.
-10. Delimiter ambiguity (comma, semicolon, equals conflict prevention).
-11. Illegal parameter zero request verification across all failure modes.
-12. Compatibility with existing GET readback functionality.
+2. Explode settings (explode=false, explode=true) for headers.
+3. Cookie primitive support with form style.
+4. Cookie array rejection across explode=false and explode=true (0 wire requests).
+5. Cookie object rejection across explode=false and explode=true (0 wire requests).
+6. OpenAPI 3.x vs Swagger 2.0 rules (Swagger 2 collectionFormat=csv, non-csv rejection, object rejection).
+7. Empty arrays, empty objects, and nested containers rejection.
+8. CRLF, null byte, and control character injection prevention.
+9. Header/Cookie identity conflicts with Authorization and session credentials.
+10. Owner, Visitor, and Anonymous authentication isolation.
+11. Parameter missing and schema type mismatches.
+12. Delimiter ambiguity (comma conflict in items/keys prevention).
+13. Transport header conflicts prevention (Host, Content-Length, etc.).
+14. Illegal parameter zero request verification across all failure modes.
+15. Illegal/unsupported cookies never produce CONFIRMED or SECURE results.
+16. Sensitive object property redaction in HTML, JSON, and SARIF reports.
+17. Compatibility with existing GET readback functionality.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.auditor import APISentinelAuditor
 from core.models import Verdict
 from core.parameters import (
+    ParameterSerializationError,
+    serialize_cookie_parameter,
     serialize_header_parameter,
 )
 from core.reporter import SecurityReportGenerator
@@ -54,6 +61,7 @@ class ArrayObjectRecordingHandler(BaseHTTPRequestHandler):
                 "echo_auth": auth,
                 "echo_cookie": self.headers.get("Cookie", ""),
                 "echo_header": self.headers.get("X-Array-Header", ""),
+                "echo_context": self.headers.get("X-Context", ""),
             }
             body = json.dumps(body_dict).encode("utf-8")
             self.send_response(200)
@@ -293,10 +301,29 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
             self.assertEqual(headers.get("X-Context"), "tenant=acme,env=prod")
 
     # -------------------------------------------------------------------------
-    # 2. Cookie primitive / array / object serialization & explode rules
+    def test_serialize_cookie_parameter_direct_unit(self) -> None:
+        """serialize_cookie_parameter directly raises ParameterSerializationError on array or object."""
+        meta_arr = {"name": "c_arr", "in": "cookie", "schema": {"type": "array"}}
+        with self.assertRaises(ParameterSerializationError) as ctx:
+            serialize_cookie_parameter(meta_arr, ["v1", "v2"])
+        self.assertIn("Cookie array parameter serialization is unsupported under RFC 6265", str(ctx.exception))
+
+        meta_obj = {"name": "c_obj", "in": "cookie", "schema": {"type": "object"}}
+        with self.assertRaises(ParameterSerializationError) as ctx:
+            serialize_cookie_parameter(meta_obj, {"k": "v"})
+        self.assertIn("Cookie object parameter serialization is unsupported under RFC 6265", str(ctx.exception))
+
+        # Scalar cookie returns tuple
+        meta_str = {"name": "c_str", "in": "cookie", "schema": {"type": "string"}}
+        name, val = serialize_cookie_parameter(meta_str, "valid_val")
+        self.assertEqual(name, "c_str")
+        self.assertEqual(val, "valid_val")
+
+    # 2. Cookie parameter rules (Scalar supported, Array/Object rejected under RFC 6265)
     # -------------------------------------------------------------------------
 
     def test_cookie_primitive_wire_delivery(self) -> None:
+        """Scalar cookie parameter is delivered in the HTTP Cookie header."""
         spec = self._make_spec([
             {"name": "client_id", "in": "cookie", "schema": {"type": "string"}}
         ])
@@ -310,23 +337,22 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
             cookie_header = headers.get("Cookie", "")
             self.assertIn("client_id=cid-999", cookie_header)
 
-    def test_cookie_array_explode_false_wire_delivery(self) -> None:
-        """Cookie array with explode=false serializes as name=val1,val2,val3 under RFC 6265."""
+    def test_cookie_array_explode_false_rejected_zero_requests(self) -> None:
+        """Cookie array parameter with explode=false is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
             {"name": "features", "in": "cookie", "schema": {"type": "array"}, "explode": False}
         ])
         config = self._make_config(
-            parameter_values={"GET /api/documents/{doc_id}": {"common": {"features": ["beta", "darkmode", "preview"]}}}
+            parameter_values={"GET /api/documents/{doc_id}": {"common": {"features": ["beta", "darkmode"]}}}
         )
         auditor = self._run_audit(spec, config)
-        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED)
-
-        for _, _, headers in ArrayObjectRecordingHandler.requests:
-            cookie_header = headers.get("Cookie", "")
-            self.assertIn("features=beta,darkmode,preview", cookie_header)
+        self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Cookie array parameter serialization is unsupported under RFC 6265", auditor.results[0]["reason"])
+        self.assertIn("no request was sent", auditor.results[0]["reason"])
 
     def test_cookie_array_explode_true_rejected_zero_requests(self) -> None:
-        """Cookie array with explode=true produces duplicate cookie names under RFC 6265 and is rejected."""
+        """Cookie array parameter with explode=true is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
             {"name": "features", "in": "cookie", "schema": {"type": "array"}, "explode": True}
         ])
@@ -336,23 +362,11 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         auditor = self._run_audit(spec, config)
         self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("duplicate cookie names", auditor.results[0]["reason"])
+        self.assertIn("Cookie array parameter serialization is unsupported under RFC 6265", auditor.results[0]["reason"])
+        self.assertIn("no request was sent", auditor.results[0]["reason"])
 
-    def test_cookie_array_default_explode_rejected_zero_requests(self) -> None:
-        """In OAS 3, cookie style form defaults to explode=true, which must fail-closed."""
-        spec = self._make_spec([
-            {"name": "features", "in": "cookie", "schema": {"type": "array"}}
-        ])
-        config = self._make_config(
-            parameter_values={"GET /api/documents/{doc_id}": {"common": {"features": ["beta", "darkmode"]}}}
-        )
-        auditor = self._run_audit(spec, config)
-        self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
-        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("duplicate cookie names", auditor.results[0]["reason"])
-
-    def test_cookie_object_explode_false_wire_delivery(self) -> None:
-        """Cookie object with explode=false serializes as name=k1,v1,k2,v2."""
+    def test_cookie_object_explode_false_rejected_zero_requests(self) -> None:
+        """Cookie object parameter with explode=false is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
             {"name": "prefs", "in": "cookie", "schema": {"type": "object"}, "explode": False}
         ])
@@ -360,14 +374,13 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"prefs": {"theme": "dark", "lang": "en"}}}}
         )
         auditor = self._run_audit(spec, config)
-        self.assertEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED)
-
-        for _, _, headers in ArrayObjectRecordingHandler.requests:
-            cookie_header = headers.get("Cookie", "")
-            self.assertIn("prefs=theme,dark,lang,en", cookie_header)
+        self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Cookie object parameter serialization is unsupported under RFC 6265", auditor.results[0]["reason"])
+        self.assertIn("no request was sent", auditor.results[0]["reason"])
 
     def test_cookie_object_explode_true_rejected_zero_requests(self) -> None:
-        """Cookie object with explode=true produces un-namespaced cookies under RFC 6265 and is rejected."""
+        """Cookie object parameter with explode=true is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
             {"name": "prefs", "in": "cookie", "schema": {"type": "object"}, "explode": True}
         ])
@@ -377,7 +390,31 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         auditor = self._run_audit(spec, config)
         self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
-        self.assertIn("un-namespaced cookies", auditor.results[0]["reason"])
+        self.assertIn("Cookie object parameter serialization is unsupported under RFC 6265", auditor.results[0]["reason"])
+        self.assertIn("no request was sent", auditor.results[0]["reason"])
+
+    def test_illegal_cookie_never_produces_confirmed_or_secure(self) -> None:
+        """Illegal cookie configurations fail-closed and must never produce CONFIRMED or SECURE."""
+        bad_specs = [
+            ("array_explode_false", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array"}, "explode": False}], {"c_arr": ["a", "b"]}),
+            ("array_explode_true", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array"}, "explode": True}], {"c_arr": ["a", "b"]}),
+            ("object_explode_false", [{"name": "c_obj", "in": "cookie", "schema": {"type": "object"}, "explode": False}], {"c_obj": {"k": "v"}}),
+            ("object_explode_true", [{"name": "c_obj", "in": "cookie", "schema": {"type": "object"}, "explode": True}], {"c_obj": {"k": "v"}}),
+        ]
+        for name, params, values in bad_specs:
+            with self.subTest(scenario=name):
+                with ArrayObjectRecordingHandler.lock:
+                    ArrayObjectRecordingHandler.requests.clear()
+                spec = self._make_spec(params)
+                config = self._make_config(parameter_values={"GET /api/documents/{doc_id}": {"common": values}})
+                auditor = self._run_audit(spec, config)
+                self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
+                self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+                self.assertNotEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED)
+                self.assertNotEqual(auditor.results[0]["verdict"], Verdict.SECURE)
+                self.assertEqual(auditor.stats["confirmed"], 0)
+                self.assertEqual(auditor.stats["secure_endpoints"], 0)
+                self.assertEqual(auditor.stats["http_requests_sent"], 0)
 
     # -------------------------------------------------------------------------
     # 3. OpenAPI vs Swagger 2.0 rules
@@ -538,27 +575,29 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.assertIn("CRLF injection prevented", auditor.results[0]["reason"])
 
     def test_cookie_delimiter_and_whitespace_injection_blocked(self) -> None:
-        """Cookie parameters must reject semicolons, quotes, whitespace, and delimiters."""
-        bad_array_items = [
+        """Scalar cookie parameters must reject semicolons, quotes, whitespace, commas, and delimiters."""
+        bad_cookies = [
             "item; evil=1",
             "item with spaces",
-            "item\"quoted\"",
+            'item"quoted"',
             "item\\escaped",
             "item\r\ninjected",
+            "item,with,comma",
         ]
-        for bad_item in bad_array_items:
+        for bad_item in bad_cookies:
             with self.subTest(bad_item=bad_item):
                 with ArrayObjectRecordingHandler.lock:
                     ArrayObjectRecordingHandler.requests.clear()
                 spec = self._make_spec([
-                    {"name": "tags", "in": "cookie", "schema": {"type": "array"}, "explode": False}
+                    {"name": "client_tag", "in": "cookie", "schema": {"type": "string"}}
                 ])
                 config = self._make_config(
-                    parameter_values={"GET /api/documents/{doc_id}": {"common": {"tags": ["good", bad_item]}}}
+                    parameter_values={"GET /api/documents/{doc_id}": {"common": {"client_tag": bad_item}}}
                 )
                 auditor = self._run_audit(spec, config)
                 self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
                 self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+                self.assertIn("CRLF or delimiter injection prevented", auditor.results[0]["reason"])
 
     # -------------------------------------------------------------------------
     # 6. Delimiter ambiguity (comma conflict in items/keys)
@@ -623,12 +662,13 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
         self.assertIn("conflicts with identity header", auditor.results[0]["reason"])
 
-    def test_cookie_array_collision_with_identity_cookie_blocked(self) -> None:
+    def test_cookie_collision_with_identity_cookie_blocked(self) -> None:
+        """Business cookie parameter conflicting with identity cookie name is blocked before any request."""
         spec = self._make_spec([
-            {"name": "session_id", "in": "cookie", "schema": {"type": "array"}, "explode": False}
+            {"name": "session_id", "in": "cookie", "schema": {"type": "string"}}
         ])
         config = self._make_config(
-            parameter_values={"GET /api/documents/{doc_id}": {"common": {"session_id": ["sess1", "sess2"]}}},
+            parameter_values={"GET /api/documents/{doc_id}": {"common": {"session_id": "malicious_sess"}}},
             extra_identities={
                 "owner": {"headers": {"Cookie": "session_id=OWNER_COOKIE"}},
                 "visitor": {"headers": {"Cookie": "session_id=VISITOR_COOKIE"}},
@@ -663,13 +703,13 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         """Owner, Visitor, and Anonymous maintain their respective auth state while sharing business parameters."""
         spec = self._make_spec([
             {"name": "X-Audit-Tags", "in": "header", "schema": {"type": "array"}, "explode": False},
-            {"name": "ui_features", "in": "cookie", "schema": {"type": "array"}, "explode": False},
+            {"name": "ui_theme", "in": "cookie", "schema": {"type": "string"}},
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {
                 "common": {
                     "X-Audit-Tags": ["security", "audit"],
-                    "ui_features": ["new_nav", "compact"],
+                    "ui_theme": "dark",
                 }
             }},
             extra_identities={
@@ -687,10 +727,11 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         self.assertIn("Bearer VISITOR_TOKEN", auth_headers)
         self.assertIn(None, auth_headers)  # Anonymous request has no Authorization header
 
-        # Confirm merged cookie: user_id auth cookie + business ui_features cookie
+        # Confirm merged cookie: user_id auth cookie + business ui_theme cookie
         for _, _, h in ArrayObjectRecordingHandler.requests:
             cookie = h.get("Cookie", "")
-            self.assertIn("ui_features=new_nav,compact", cookie)
+            self.assertIn("ui_theme=dark", cookie)
+            self.assertEqual(h.get("X-Audit-Tags"), "security,audit")
             if "Bearer OWNER_TOKEN" in str(h.get("Authorization")):
                 self.assertIn("user_id=1001", cookie)
             elif "Bearer VISITOR_TOKEN" in str(h.get("Authorization")):
@@ -746,14 +787,14 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
 
         spec = self._make_spec([
             {"name": "X-Secret-Tokens", "in": "header", "schema": {"type": "array"}, "explode": False},
-            {"name": "secret_pref", "in": "cookie", "schema": {"type": "object"}, "explode": False},
+            {"name": "X-Secret-Obj", "in": "header", "schema": {"type": "object"}, "explode": True},
         ], path="/api/echo/{doc_id}")
 
         config = self._make_config(
             parameter_values={"GET /api/echo/{doc_id}": {
                 "common": {
                     "X-Secret-Tokens": [secret_token1, secret_token2],
-                    "secret_pref": {"key": secret_obj_val},
+                    "X-Secret-Obj": {"api_key": secret_obj_val},
                 }
             }},
             path="/api/echo/{doc_id}",
@@ -773,6 +814,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.target_url,
                 html_path,
                 results=auditor.results,
+                secret_values=auditor._secret_values,
             )
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump({"results": auditor.results, "findings": auditor.findings}, f)
@@ -781,6 +823,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 auditor.results,
                 self.target_url,
                 str(sarif_path),
+                secret_values=auditor._secret_values,
             )
 
             html_text = Path(html_path).read_text(encoding="utf-8")
@@ -793,7 +836,91 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.assertNotIn(secret, sarif_text, f"Secret {secret} leaked in SARIF report")
 
     # -------------------------------------------------------------------------
-    # 11. Readback compatibility
+    # 11. Sensitive object field redaction (Section V)
+    # -------------------------------------------------------------------------
+
+    def test_sensitive_inner_object_field_redacted_without_over_redaction(self) -> None:
+        """Ordinary outer header parameter with sensitive inner object property is redacted in all reports.
+
+        Verifies:
+        1. Inner sensitive property (access_token) is recognized and its value collected.
+        2. Even if echoed by server in response body/headers, the secret value is not leaked.
+        3. HTML, JSON, and SARIF reports all redact the secret value.
+        4. Non-sensitive property names (tenant) and values (acme_corp) are NOT over-redacted.
+        5. Existing Owner and Visitor authentication tokens remain properly redacted.
+        """
+        sensitive_val = "SECRET_INNER_TOKEN_XYZ_98765"
+        ordinary_prop = "tenant"
+        ordinary_val = "acme_tenant_corp"
+
+        spec = self._make_spec([
+            {"name": "X-Context", "in": "header", "schema": {"type": "object"}, "explode": True}
+        ], path="/api/echo/{doc_id}")
+
+        config = self._make_config(
+            parameter_values={"GET /api/echo/{doc_id}": {
+                "common": {
+                    "X-Context": {ordinary_prop: ordinary_val, "access_token": sensitive_val}
+                }
+            }},
+            path="/api/echo/{doc_id}",
+        )
+
+        auditor = self._run_audit(spec, config)
+
+        # 1. Verify sensitive value is collected into auditor._secret_values
+        self.assertIn(sensitive_val, auditor._secret_values)
+
+        # 2. Verify non-sensitive property name and ordinary value are NOT in secrets (no over-redaction)
+        self.assertNotIn(ordinary_prop, auditor._secret_values)
+        self.assertNotIn(ordinary_val, auditor._secret_values)
+        self.assertNotIn("access_token", auditor._secret_values)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            html_path = str(Path(temp_dir) / "report.html")
+            json_path = str(Path(temp_dir) / "report.json")
+            sarif_path = str(Path(temp_dir) / "report.sarif")
+
+            findings = [r["finding"] for r in auditor.results if r.get("finding")]
+            SecurityReportGenerator.generate(
+                auditor.stats,
+                findings,
+                self.target_url,
+                html_path,
+                results=auditor.results,
+                secret_values=auditor._secret_values,
+            )
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump({"results": auditor.results, "findings": auditor.findings}, f)
+
+            SarifReportGenerator.generate(
+                auditor.results,
+                self.target_url,
+                str(sarif_path),
+                secret_values=auditor._secret_values,
+            )
+
+            html_text = Path(html_path).read_text(encoding="utf-8")
+            json_text = Path(json_path).read_text(encoding="utf-8")
+            sarif_text = Path(sarif_path).read_text(encoding="utf-8")
+
+            # 3. HTML, JSON, and SARIF must NOT contain the sensitive value
+            self.assertNotIn(sensitive_val, html_text, "Sensitive inner token leaked in HTML")
+            self.assertNotIn(sensitive_val, json_text, "Sensitive inner token leaked in JSON")
+            self.assertNotIn(sensitive_val, sarif_text, "Sensitive inner token leaked in SARIF")
+
+            # 4. Ordinary values must be preserved in reports (no over-redaction)
+            self.assertIn(ordinary_val, html_text, "Ordinary value incorrectly redacted in HTML")
+            self.assertIn(ordinary_val, json_text, "Ordinary value incorrectly redacted in JSON")
+
+            # 5. Existing auth credentials remain properly redacted
+            for auth_token in ("OWNER_TOKEN", "VISITOR_TOKEN"):
+                self.assertNotIn(auth_token, html_text)
+                self.assertNotIn(auth_token, json_text)
+                self.assertNotIn(auth_token, sarif_text)
+
+    # -------------------------------------------------------------------------
+    # 12. Readback compatibility
     # -------------------------------------------------------------------------
 
     def test_readback_compatibility_with_array_header_endpoint(self) -> None:
