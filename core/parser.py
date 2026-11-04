@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import unquote, urlsplit
@@ -55,7 +56,10 @@ class OpenAPIParser:
                             "YAML OpenAPI files require the PyYAML package; "
                             "install it with 'pip install PyYAML'."
                         ) from exc
-                    data = yaml.safe_load(handle)
+                    try:
+                        data = yaml.safe_load(handle)
+                    except yaml.YAMLError as exc:
+                        raise ValueError("Invalid YAML specification") from exc
                 else:
                     data = json.load(handle)
         except json.JSONDecodeError as exc:
@@ -195,6 +199,45 @@ class OpenAPIParser:
             self._ref_cache[cache_key] = copy.deepcopy(value)
             self._ref_file_cache[cache_key] = target_file
         return value, target_file
+
+    def get_security_schemes(self) -> Dict[str, Dict[str, Any]]:
+        """Resolve authentication definitions with the existing local-reference limits."""
+        legacy = self.raw_spec.get("securityDefinitions", {})
+        components = self.raw_spec.get("components", {})
+        if not isinstance(legacy, dict) or not isinstance(components, dict):
+            raise ValueError("Security scheme definitions must be objects; no request was sent")
+        modern = components.get("securitySchemes", {})
+        if not isinstance(modern, dict):
+            raise ValueError("Security scheme definitions must be objects; no request was sent")
+        schemes = dict(legacy)
+        schemes.update(modern)
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for name, scheme in schemes.items():
+            if isinstance(scheme, dict) and "$ref" in scheme:
+                try:
+                    self._reference_siblings(scheme, schema=False)
+                    scheme, _ = self._resolve_ref_chain(scheme["$ref"], self._spec_file, 20)
+                except (OSError, TypeError, ValueError, RuntimeError):
+                    raise ValueError(
+                        "Authentication scheme reference cannot be resolved safely; no request was sent"
+                    ) from None
+            if (not isinstance(scheme, dict) or "$ref" in scheme
+                    or not isinstance(scheme.get("type"), str)
+                    or scheme.get("type") not in {"apiKey", "http", "basic", "oauth2", "openIdConnect", "mutualTLS"}
+                    or (scheme.get("type") == "apiKey" and (
+                        not isinstance(scheme.get("in"), str)
+                        or scheme.get("in") not in {"header", "query", "cookie"}
+                        or not isinstance(scheme.get("name"), str) or not scheme["name"].strip()))
+                    or (scheme.get("type") == "http" and (
+                        not isinstance(scheme.get("scheme"), str) or not scheme["scheme"].strip()))):
+                raise ValueError(
+                    "Authentication definition is not a supported security scheme; no request was sent"
+                )
+            if (scheme.get("type") == "apiKey" and scheme.get("in") in {"header", "cookie"}
+                    and re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", scheme["name"]) is None):
+                raise ValueError("Authentication parameter name is invalid; no request was sent")
+            resolved[name] = scheme
+        return resolved
 
     def resolve_ref(self, ref_uri: str, max_depth: int = 20) -> Dict[str, Any]:
         """Resolve a root-relative or local external ``$ref``.

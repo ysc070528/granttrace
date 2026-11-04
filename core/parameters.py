@@ -1,13 +1,13 @@
-"""Strict path/query parameter serialization shared by scans and readbacks.
+"""Strict parameter serialization shared by scans and readbacks.
 
 Supported contracts follow the OpenAPI Parameter Object rules:
 https://spec.openapis.org/oas/v3.0.4.html#parameter-object
 https://spec.openapis.org/oas/v2.0.html#parameter-object
 
-Values are encoded individually before joining, so data cannot introduce URL
-syntax. Unsupported or ambiguous formats fail before any request is sent.
-Header/cookie parameters are deliberately outside this URL serializer; identity
-authentication headers are handled by the auditor's authentication context.
+Values are validated and encoded individually before joining, so data cannot
+introduce URL syntax or HTTP header/cookie injection. Unsupported or ambiguous
+formats fail before any request is sent. Authentication credentials remain
+strictly governed by the requester identity context.
 """
 
 from __future__ import annotations
@@ -124,10 +124,16 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
         _fail("Parameter metadata must be an object")
     location = metadata.get("in")
     name = metadata.get("name")
-    if not isinstance(location, str) or location not in {"path", "query"}:
-        _fail("Only path/query parameter serialization is supported; header/cookie/formData parameters are unsupported")
+    if not isinstance(location, str) or location not in {"path", "query", "header", "cookie"}:
+        _fail("Only path/query/header/cookie parameter serialization is supported; formData/unsupported parameters are unsupported")
+    if swagger2 and location == "cookie":
+        _fail("Swagger 2 does not support cookie parameters")
     if not isinstance(name, str) or not name or any(ord(char) < 32 for char in name):
         _fail("Parameter name must be a non-empty string without control characters")
+    if location == "header" and not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9a-zA-Z]+", name):
+        _fail("Header parameter name must be a valid RFC 7230 token without whitespace or control characters")
+    if location == "cookie" and not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9a-zA-Z]+", name):
+        _fail("Cookie parameter name must be a valid RFC 6265 token without whitespace or separators")
     if "$ref" in metadata:
         _fail("Unresolved parameter references are unsupported")
     if "content" in metadata:
@@ -140,6 +146,20 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
     kind = _kind(value)
     if location == "path" and kind == "primitive" and _scalar(value) == "":
         _fail("Empty path parameter values are unsupported because they can select a different resource")
+    if location == "cookie":
+        if kind != "primitive":
+            _fail("Array and object cookie parameter serialization is ambiguous and unsupported")
+        text = _scalar(value)
+        if any(ord(c) < 33 or ord(c) >= 127 or c in '\",;\\' for c in text):
+            _fail("Cookie parameter value contains invalid characters, line breaks, or separators (CRLF or semicolon injection prevented)")
+    if location == "header":
+        if kind == "object":
+            _fail("Object header parameter serialization is ambiguous and unsupported")
+        if kind == "array":
+            _fail("Array header parameter serialization is ambiguous and unsupported")
+        text = _scalar(value)
+        if any(c in "\r\n\0" for c in text) or any(ord(c) < 32 and c != "\t" or ord(c) >= 127 for c in text):
+            _fail("Header parameter value contains invalid characters or line breaks (CRLF injection prevented)")
     schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
     if isinstance(schema, dict):
         declared = schema.get("type")
@@ -165,16 +185,25 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
             _fail("Swagger 2 collectionFormat requires an array parameter")
         if collection == "multi" and location != "query":
             _fail("Swagger 2 collectionFormat=multi is supported only for query parameters")
+        if location == "header" and collection != "csv":
+            _fail("Swagger 2 header parameters only support collectionFormat=csv")
         return location, name, collection, collection == "multi"
     if "collectionFormat" in metadata:
         _fail("OpenAPI 3 parameters use style/explode; collectionFormat is unsupported")
-    style = metadata.get("style", "form" if location == "query" else "simple")
+    style = metadata.get("style", "form" if location in {"query", "cookie"} else "simple")
     explode = metadata.get("explode", style == "form")
     if not isinstance(explode, bool):
         _fail("explode must be a boolean")
-    allowed = {"simple", "label", "matrix"} if location == "path" else {
-        "form", "spaceDelimited", "pipeDelimited", "deepObject"
-    }
+    if location == "path":
+        allowed = {"simple", "label", "matrix"}
+    elif location == "query":
+        allowed = {"form", "spaceDelimited", "pipeDelimited", "deepObject"}
+    elif location == "header":
+        allowed = {"simple"}
+    elif location == "cookie":
+        allowed = {"form"}
+    else:
+        allowed = set()
     if not isinstance(style, str) or style not in allowed:
         _fail("Unsupported parameter style for its location")
     if style in {"spaceDelimited", "pipeDelimited"}:
@@ -252,3 +281,19 @@ def serialize_query_parameter(metadata: Dict[str, Any], value: Any, *, swagger2:
     if explode and isinstance(value, list):
         return [(encoded_name, _encoded(item)) for item in value]
     return [(encoded_name, ",".join(_tokens(value)))]
+
+
+def serialize_header_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> Tuple[str, str]:
+    value = normalize_parameter_value(metadata, value, swagger2=swagger2)
+    location, name, style, explode = _settings(metadata, value, swagger2)
+    if location != "header":
+        _fail("Header serialization requires in=header")
+    return name, _scalar(value)
+
+
+def serialize_cookie_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> Tuple[str, str]:
+    value = normalize_parameter_value(metadata, value, swagger2=swagger2)
+    location, name, style, explode = _settings(metadata, value, swagger2)
+    if location != "cookie":
+        _fail("Cookie serialization requires in=cookie")
+    return name, _scalar(value)

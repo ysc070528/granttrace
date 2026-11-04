@@ -135,12 +135,13 @@ class _LocalDemoAuditor(APISentinelAuditor):
         return copy.deepcopy(value) if isinstance(value, dict) else None
 
     def _http_request(self, method: str, url: str, data: Optional[Dict[str, Any]] = None,
-                      identity_name: str = "anonymous", content_type: str = "application/json") -> HTTPResult:
+                      identity_name: str = "anonymous", content_type: str = "application/json",
+                      headers: Optional[Dict[str, str]] = None) -> HTTPResult:
         selected = urlsplit(url)
         if (method not in {"GET", "PATCH"}
                 or (selected.scheme, selected.netloc) != (self._demo_origin.scheme, self._demo_origin.netloc)):
             raise ValueError("Demo requests must stay on the bundled loopback GET/PATCH target")
-        return super()._http_request(method, url, data, identity_name, content_type)
+        return super()._http_request(method, url, data, identity_name, content_type, headers=headers)
 
 
 def _verify_demo(auditor: APISentinelAuditor, server: DemoServer, read_only: bool) -> Dict[str, Any]:

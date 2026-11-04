@@ -263,7 +263,7 @@ class ConfigValidator:
 
         # 2. Section: identities
         try:
-            spec_auth_names = cls._extract_spec_auth_headers(raw_spec)
+            spec_auth_names = cls._extract_spec_auth_headers(raw_spec, spec_path=spec_path)
         except (TypeError, ValueError) as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
@@ -527,7 +527,7 @@ class ConfigValidator:
         if not isinstance(parameters, list):
             return
         for parameter in parameters:
-            if not isinstance(parameter, dict) or parameter.get("in") not in {"path", "query"}:
+            if not isinstance(parameter, dict) or parameter.get("in") not in {"path", "query", "header", "cookie"}:
                 continue
             name = parameter.get("name")
             if not isinstance(name, str) or name not in values:
@@ -553,22 +553,27 @@ class ConfigValidator:
             ))
 
     @classmethod
-    def _extract_spec_auth_headers(cls, raw_spec: Optional[Dict[str, Any]]) -> Set[str]:
+    def _extract_spec_auth_headers(
+        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None,
+    ) -> Set[str]:
         if not isinstance(raw_spec, dict):
             return set()
-        legacy = raw_spec.get("securityDefinitions", {})
-        components = raw_spec.get("components", {})
-        if not isinstance(legacy, dict) or not isinstance(components, dict):
-            raise ValueError("securityDefinitions and components must be objects")
-        modern = components.get("securitySchemes", {})
-        if not isinstance(modern, dict):
-            raise ValueError("components.securitySchemes must be an object")
-        schemes = dict(legacy)
-        schemes.update(modern)
+        try:
+            if spec_path is not None:
+                schemes = OpenAPIParser(spec_path).get_security_schemes()
+            else:
+                # A mapping supplies no origin for external files. Internal refs
+                # can still be resolved without guessing a local base directory.
+                with tempfile.TemporaryDirectory(prefix="granttrace-auth-spec-") as directory:
+                    source = Path(directory) / "openapi.json"
+                    source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
+                    schemes = OpenAPIParser(str(source)).get_security_schemes()
+        except (OSError, TypeError, ValueError, RuntimeError):
+            raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
         return {
-            str(scheme.get("name", "")).lower()
+            scheme["name"].lower()
             for scheme in schemes.values()
-            if isinstance(scheme, dict) and scheme.get("in") == "header" and scheme.get("name")
+            if scheme.get("in") == "header" and scheme.get("name")
         }
 
     @classmethod

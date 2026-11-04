@@ -32,7 +32,7 @@
       }
     },
     "parameter_values": {
-      "description": "Pre-configured valid path and query parameter values indexed by 'METHOD /path'",
+      "description": "Pre-configured valid path, query, header and cookie parameter values indexed by 'METHOD /path'",
       "type": "object",
       "additionalProperties": {
         "type": "object"
@@ -93,7 +93,7 @@
         },
         "parameters": {
           "type": "object",
-          "description": "Identity-bound path or query parameters (e.g. user_id)"
+          "description": "Identity-bound parameters (e.g. user_id, tenant headers)"
         },
         "auth_header_names": {
           "type": "array",
@@ -159,7 +159,7 @@
         },
         "parameters": {
           "type": "array",
-          "description": "Readback path/query Parameter Objects consumed directly by the URL builder",
+          "description": "Readback Parameter Objects consumed directly by the URL builder",
           "items": {
             "type": "object",
             "required": ["name", "in", "schema"],
