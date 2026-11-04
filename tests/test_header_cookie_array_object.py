@@ -456,7 +456,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.assertEqual(auditor.stats["http_requests_sent"], 0)
 
     def test_cookie_style_cookie_rejected_zero_requests(self) -> None:
-        """OpenAPI 3.2 style: cookie is explicitly unsupported and fails closed with zero requests."""
+        """OpenAPI 3.2.0 style: cookie is explicitly unsupported and fails closed with zero requests."""
         cases = [
             ("scalar", {"name": "c_pref", "in": "cookie", "style": "cookie", "schema": {"type": "string"}}, "dark"),
             ("array", {"name": "c_tags", "in": "cookie", "style": "cookie", "schema": {"type": "array", "items": {"type": "string"}}}, ["a", "b"]),
@@ -466,12 +466,18 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 with ArrayObjectRecordingHandler.lock:
                     ArrayObjectRecordingHandler.requests.clear()
-                spec = self._make_spec([meta])
+                # Explicitly use OpenAPI 3.2.0 document fixture
+                spec = self._make_spec([meta], version="3.2.0")
+                self.assertEqual(spec["openapi"], "3.2.0")
                 config = self._make_config(parameter_values={"GET /api/documents/{doc_id}": {"common": {meta["name"]: val}}})
                 auditor = self._run_audit(spec, config)
+                # Verify parser successfully parsed OpenAPI 3.2.0 document (distinguishing parser from parameter serialization)
+                self.assertEqual(auditor.parser.version, "OpenAPI 3.2.0")
                 self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
                 self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
                 self.assertIn("Unsupported parameter style for its location", auditor.results[0]["reason"])
+                self.assertNotEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED)
+                self.assertNotEqual(auditor.results[0]["verdict"], Verdict.SECURE)
                 self.assertEqual(auditor.stats["confirmed"], 0)
                 self.assertEqual(auditor.stats["secure_endpoints"], 0)
                 self.assertEqual(auditor.stats["http_requests_sent"], 0)
@@ -1167,6 +1173,100 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 auditor._readback_result(dummy_ep, invalid_readback, "visitor")
             self.assertIn("delimiter comma ','", str(ctx.exception))
             self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
+
+    def test_patch_independent_get_readback_invalid_header_array_rejected_preflight_zero_requests(self) -> None:
+        """PATCH operation with independent GET readback declaring Header array fails preflight on invalid delimiter comma with 0 requests."""
+        patch_endpoint = {
+            "operationId": "updateDocument",
+            "parameters": [
+                {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+            ],
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"title": {"type": "string"}},
+                        }
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spec_file = Path(temp_dir) / "spec.json"
+            spec = {
+                "openapi": "3.0.3",
+                "info": {"title": "Test Patch Readback Preflight", "version": "1.0.0"},
+                "paths": {
+                    "/api/documents/{doc_id}": {"patch": patch_endpoint},
+                },
+            }
+            spec_file.write_text(json.dumps(spec), encoding="utf-8")
+
+            config = self._make_config(
+                parameter_values={
+                    "PATCH /api/documents/{doc_id}": {"visitor": {"doc_id": "doc-visitor"}},
+                }
+            )
+
+            # Readback declares Header array parameter, but value contains illegal delimiter comma ','
+            readback_config = {
+                "PATCH /api/documents/{doc_id}": {
+                    "path": "/api/readback/{doc_id}",
+                    "parameters": [
+                        {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                        {
+                            "name": "X-Readback-Tags",
+                            "in": "header",
+                            "schema": {"type": "array", "items": {"type": "string"}},
+                            "explode": False,
+                        },
+                    ],
+                    "parameter_values": {
+                        "doc_id": "doc-visitor",
+                        "X-Readback-Tags": ["valid_prefix", "illegal,delimiter,item"],
+                    },
+                    "field_map": {"title": "title"},
+                }
+            }
+
+            with ArrayObjectRecordingHandler.lock:
+                ArrayObjectRecordingHandler.requests.clear()
+
+            auditor = APISentinelAuditor(
+                spec_path=str(spec_file),
+                target_base_url=self.target_url,
+                identities_config=config.get("identities"),
+                parameter_values=config.get("parameter_values"),
+                allow_write_tests=True,
+                write_allowlist=["PATCH /api/documents/{doc_id}"],
+                readback_config=readback_config,
+                allow_http=True,
+                request_delay=0,
+            )
+
+            # Execute full audit chain via auditor.run()
+            auditor.run()
+
+            # Verify 0 requests sent: both GET and PATCH request counts are 0
+            self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0, "Expected 0 wire requests for preflight failure")
+            self.assertEqual(auditor.stats["http_requests_sent"], 0)
+
+            # Verify MASS_ASSIGNMENT result is INCONCLUSIVE
+            mass_assignment_results = [r for r in auditor.results if r.get("check") == "MASS_ASSIGNMENT"]
+            self.assertEqual(len(mass_assignment_results), 1)
+            ma_result = mass_assignment_results[0]
+            self.assertEqual(ma_result["verdict"], Verdict.INCONCLUSIVE)
+            self.assertIn("delimiter comma ','", ma_result["reason"])
+            self.assertEqual(ma_result["evidence"].get("requests_attempted"), 0)
+
+            # Verify confirmed = 0 and secure_endpoints = 0
+            self.assertEqual(auditor.stats["confirmed"], 0)
+            self.assertEqual(auditor.stats["secure_endpoints"], 0)
+            self.assertNotEqual(ma_result["verdict"], Verdict.CONFIRMED)
+            self.assertNotEqual(ma_result["verdict"], Verdict.SECURE)
 
 
 if __name__ == "__main__":

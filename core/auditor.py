@@ -1843,6 +1843,7 @@ class APISentinelAuditor:
             mutation_url = self._build_url(ep, "visitor")
             read_ep = self._readback_endpoint(ep, readback)
             readback_url = self._build_url(read_ep, "visitor", readback.get("parameter_values"))
+            self._build_request_headers(read_ep, "visitor", "visitor", readback.get("parameter_values"))
         except ParameterSerializationError as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})

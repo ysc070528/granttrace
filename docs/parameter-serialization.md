@@ -15,11 +15,11 @@
 
 示例：query `form` 数组 `[10,20]` 在 `explode: true` 时为 `ids=10&ids=20`，在 `explode: false` 时为 `ids=10,20`（线上可见编码后的分隔符）。标量布尔值为 `enabled=true`。
 Header 参数支持标量（如 `X-Request-ID: req-123`）、数组（`simple` 样式，无论 `explode` 均为逗号分隔，如 `X-Roles: admin,reader`）以及平面对象（`explode: false` 时为 `X-Ctx: env,prod,region,us`，`explode: true` 时为 `X-Ctx: env=prod,region=us`）。Swagger 2.0 header 数组仅支持 `collectionFormat: csv`，不支持非 body 对象。
-Cookie 参数目前仅支持标量（`form` 样式，如 `session_track=xyz789`）。根据 OpenAPI 3.0.4 Appendix D，`form` 样式规范将 `&` 定义为 `explode: true` 的标准分隔符（如 `color=blue&color=black`），将 `,` 定义为 `explode: false` 的标准分隔符（如 `color=blue,black`）。然而，HTTP Cookie 请求头由 RFC 6265 严格约束：多个 Cookie 对必须以分号空格（`; `）分隔，且单个 `cookie-value` 字符集排除了未转义的逗号（`%x2C`）与空格。这就产生了根本性的规范冲突：
-1. OpenAPI 3.0.4 标准中并未将 `;` 定义为 `form` 序列化的实际合法输出；若按规范字面生成 `&` 分隔，在 Cookie 请求头中会被解析为包含非法字符的单个畸形 Cookie 值。若部分实现自行替换为 `;`，则会产生同名重复 Cookie（如 `Cookie: tags=a; tags=b`），在 RFC 6265 Section 5.4 下其解析优先级未定义，导致不同服务端与代理产生极不可预测的解析歧义；对于对象类型，若 `explode: true` 丢失参数名前缀，更会导致未命名空间的全局 Cookie 污染与严重凭据碰撞。
-2. 若采用 `explode: false` 的逗号分隔（如 `Cookie: tags=a,b`），则直接违反 RFC 6265 `cookie-octet` 语法，容易被后端框架直接拦截或错误截断。
+Cookie 参数目前仅支持标量（`form` 样式，如 `session_track=xyz789`）。根据 OpenAPI 3.0.4 Appendix D，`form` 样式规范将 `&` 定义为 `explode: true` 的多值分隔符（如 `color=blue&color=black`），将 `,` 定义为 `explode: false` 的多值分隔符（如 `color=blue,black`）。然而，HTTP Cookie 请求头由 RFC 6265 严格约束，由此产生了根本性的规范分隔符不匹配与语义歧义：
+1. 字符合法性与错误分隔符：`&` 本身属于 RFC 6265 定义的合法 `cookie-octet` 字符（`%x26`），但 RFC 6265 规定请求头中的多个 Cookie 对之间必须以分号空格（`; `）分隔。若按 OpenAPI `form` 样式字面发送 `Cookie: tags=a&tags=b`，接收端服务器不会将其拆分为两个 Cookie，而是会解释为一个名为 `tags`、值为 `a&tags=b` 的单一 Cookie，导致多值数组语义丢失。反之，逗号 `,`（`%x2C`）并不属于合法的 `cookie-octet` 字符集，若采用 `explode: false` 发送逗号分隔（如 `Cookie: tags=a,b`），则直接属于语法非法，极易被严谨的 HTTP 基础设施直接拦截或错误截断。
+2. 同名 Cookie 歧义：若某些非标实现自行将 `&` 替换为 `; ` 生成同名 Cookie（如 `Cookie: tags=a; tags=b`），根据 RFC 6265 Section 4.2.2，服务器不应依赖同名 Cookie 的出现顺序（servers SHOULD NOT rely upon the order in which cookies appear），这会导致不同后端、网关与反向代理间产生极不可预测的解析与覆盖歧义；对于对象类型，若 `explode: true` 丢失参数名前缀，更会导致全局未加命名空间的 Cookie 污染。
 3. OpenAPI 3.2 针对此历史冲突提出了专门的 `style: cookie` 规范，但 GrantTrace 当前基于 OpenAPI 2.0 / 3.0.x / 3.1.x 构建，尚未实现 OpenAPI 3.2 的 `style: cookie`。
-因此，GrantTrace 对所有 Cookie 数组与对象参数（无论 `explode` 为 `true` 还是 `false`），以及声明为 `style: cookie` 的参数，均在发送任何网络请求前予以明确拒绝并记录 `INCONCLUSIVE`，保证 0 请求发送，绝不静默降级或生成不合规的 HTTP 请求。
+因此，GrantTrace 严格区分非法字符、错误分隔符与语义歧义，并对所有 Cookie 数组与对象参数（无论 `explode` 为 `true` 还是 `false`），以及声明为 `style: cookie` 的参数，均在发送任何网络请求前予以明确拒绝并记录 `INCONCLUSIVE`，保证 0 请求发送，绝不静默降级或生成不合规的 HTTP 请求。
 
 安全隔离与合规限制：
 - Header / Cookie 业务参数绝不允许覆盖 `Authorization` 等身份认证凭据。若参数与身份 Header 冲突，或与身份 Cookie 名称冲突，检测器会明确阻断（`ParameterSerializationError`），绝不静默覆盖。
