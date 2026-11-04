@@ -280,6 +280,34 @@ class APISentinelAuditor:
 
     def _collect_auth_secret_values(self) -> Set[str]:
         secrets: Set[str] = set()
+
+        def _collect_from_param(p_name: str, p_val: Any) -> None:
+            is_sensitive_param = (
+                self._is_auth_header(p_name)
+                or self._is_auth_cookie(p_name)
+                or _is_sensitive_key(p_name)
+            )
+            if is_sensitive_param:
+                if isinstance(p_val, (str, int, float)) and str(p_val):
+                    secrets.add(str(p_val))
+                elif isinstance(p_val, list):
+                    for item in p_val:
+                        if isinstance(item, (str, int, float)) and str(item):
+                            secrets.add(str(item))
+                elif isinstance(p_val, dict):
+                    for k, v in p_val.items():
+                        if isinstance(v, (str, int, float)) and str(v):
+                            secrets.add(str(v))
+            elif isinstance(p_val, dict):
+                for k, v in p_val.items():
+                    if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
+                        if isinstance(v, (str, int, float)) and str(v):
+                            secrets.add(str(v))
+                        elif isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, (str, int, float)) and str(item):
+                                    secrets.add(str(item))
+
         for identity_name, identity in self.identities.items():
             for key, value in self._identity_headers(identity_name).items():
                 if self._is_auth_header(key):
@@ -293,23 +321,17 @@ class APISentinelAuditor:
                                 if c_val:
                                     secrets.add(c_val)
             for p_name, p_val in identity.get("parameters", {}).items():
-                if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                    if isinstance(p_val, (str, int, float)) and str(p_val):
-                        secrets.add(str(p_val))
+                _collect_from_param(p_name, p_val)
 
         for conf in self.parameter_values.values():
             if isinstance(conf, dict):
                 for sub_key, sub_val in conf.items():
                     if isinstance(sub_val, dict):
                         for p_name, p_val in sub_val.items():
-                            if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                                if isinstance(p_val, (str, int, float)) and str(p_val):
-                                    secrets.add(str(p_val))
+                            _collect_from_param(p_name, p_val)
                     else:
                         p_name, p_val = sub_key, sub_val
-                        if self._is_auth_header(p_name) or self._is_auth_cookie(p_name) or _is_sensitive_key(p_name):
-                            if isinstance(p_val, (str, int, float)) and str(p_val):
-                                secrets.add(str(p_val))
+                        _collect_from_param(p_name, p_val)
 
         return secrets
 
@@ -599,6 +621,21 @@ class APISentinelAuditor:
                 business_headers[hdr_name] = hdr_val
                 if is_auth_hdr or _is_sensitive_key(name):
                     self._secret_values.add(hdr_val)
+                    if isinstance(val, (str, int, float)) and str(val):
+                        self._secret_values.add(str(val))
+                    elif isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, (str, int, float)) and str(item):
+                                self._secret_values.add(str(item))
+                    elif isinstance(val, dict):
+                        for k, v in val.items():
+                            if isinstance(v, (str, int, float)) and str(v):
+                                self._secret_values.add(str(v))
+                elif isinstance(val, dict):
+                    for k, v in val.items():
+                        if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
+                            if isinstance(v, (str, int, float)) and str(v):
+                                self._secret_values.add(str(v))
 
             elif location == "cookie":
                 if swagger2:
@@ -672,6 +709,8 @@ class APISentinelAuditor:
                 cookie_pairs.append((c_name, c_val))
                 if is_auth_cookie or _is_sensitive_key(name):
                     self._secret_values.add(c_val)
+                    if isinstance(val, (str, int, float)) and str(val):
+                        self._secret_values.add(str(val))
 
         if cookie_pairs:
             identity_cookie_names: Set[str] = set()
@@ -1771,10 +1810,40 @@ class APISentinelAuditor:
         verified_safe: List[str] = []
         tested: List[str] = []
         case_summaries: List[Dict[str, Any]] = []
+        for p in ep.get("parameters", []) or []:
+            if not isinstance(p, dict):
+                continue
+            loc = p.get("in")
+            p_name = p.get("name", "")
+            if loc == "header" and str(p_name).lower() in {"authorization", "accept", "content-type"}:
+                continue
+            schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
+            p_type = schema.get("type", p.get("type"))
+            configured_val = self._operation_parameter_values(ep, "visitor").get(p_name)
+            is_array = (p_type == "array" or "items" in p or "items" in schema
+                        or p.get("collectionFormat") or isinstance(configured_val, list))
+            is_object = (p_type == "object" or "properties" in p or "properties" in schema
+                         or isinstance(configured_val, dict))
+            if loc == "cookie":
+                self._record_result(
+                    ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                    f"Cookie parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
+                    evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
+                )
+                return
+            if loc == "header" and (is_array or is_object):
+                kind = "array" if is_array else "object"
+                self._record_result(
+                    ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                    f"Header {kind} parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
+                    evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
+                )
+                return
         try:
             mutation_url = self._build_url(ep, "visitor")
             read_ep = self._readback_endpoint(ep, readback)
             readback_url = self._build_url(read_ep, "visitor", readback.get("parameter_values"))
+            self._build_request_headers(read_ep, "visitor", "visitor", readback.get("parameter_values"))
         except ParameterSerializationError as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
