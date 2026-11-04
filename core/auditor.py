@@ -1810,6 +1810,35 @@ class APISentinelAuditor:
         verified_safe: List[str] = []
         tested: List[str] = []
         case_summaries: List[Dict[str, Any]] = []
+        for p in ep.get("parameters", []) or []:
+            if not isinstance(p, dict):
+                continue
+            loc = p.get("in")
+            p_name = p.get("name", "")
+            if loc == "header" and str(p_name).lower() in {"authorization", "accept", "content-type"}:
+                continue
+            schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
+            p_type = schema.get("type", p.get("type"))
+            configured_val = self._operation_parameter_values(ep, "visitor").get(p_name)
+            is_array = (p_type == "array" or "items" in p or "items" in schema
+                        or p.get("collectionFormat") or isinstance(configured_val, list))
+            is_object = (p_type == "object" or "properties" in p or "properties" in schema
+                         or isinstance(configured_val, dict))
+            if loc == "cookie":
+                self._record_result(
+                    ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                    f"Cookie parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
+                    evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
+                )
+                return
+            if loc == "header" and (is_array or is_object):
+                kind = "array" if is_array else "object"
+                self._record_result(
+                    ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
+                    f"Header {kind} parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
+                    evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
+                )
+                return
         try:
             mutation_url = self._build_url(ep, "visitor")
             read_ep = self._readback_endpoint(ep, readback)

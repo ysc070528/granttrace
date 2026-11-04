@@ -17,7 +17,9 @@ Verifies:
 14. Illegal parameter zero request verification across all failure modes.
 15. Illegal/unsupported cookies never produce CONFIRMED or SECURE results.
 16. Sensitive object property redaction in HTML, JSON, and SARIF reports.
-17. Compatibility with existing GET readback functionality.
+17. OpenAPI 3.2 style: cookie boundary tests (fail-closed, 0 requests).
+18. Non-GET write operations (PATCH/PUT) safety boundary tests (fail-closed, 0 requests).
+19. GET independent readback integration with Header array and object wire delivery.
 """
 
 from __future__ import annotations
@@ -69,6 +71,23 @@ class ArrayObjectRecordingHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path.startswith("/api/readback/"):
+            doc_id = self.path.split("?")[0].split("/")[-1]
+            tags = self.headers.get("X-Readback-Tags", "")
+            ctx = self.headers.get("X-Readback-Context", "")
+            body_dict = {
+                "id": doc_id,
+                "title": f"Document {doc_id}",
+                "readback_tags": tags,
+                "readback_context": ctx,
+                "readback_auth": auth,
+            }
+            body = json.dumps(body_dict).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path.startswith("/api/documents/"):
             doc_id = self.path.split("?")[0].split("/")[-1]
             if "Bearer OWNER_TOKEN" in auth:
@@ -104,6 +123,26 @@ class ArrayObjectRecordingHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        with self.lock:
+            headers_dict = {k: v for k, v in self.headers.items()}
+            self.requests.append((self.command, self.path, headers_dict))
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def do_PUT(self) -> None:  # noqa: N802
+        with self.lock:
+            headers_dict = {k: v for k, v in self.headers.items()}
+            self.requests.append((self.command, self.path, headers_dict))
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         pass
@@ -246,7 +285,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_header_array_explode_false_wire_delivery(self) -> None:
         """Header array with explode=false serializes as comma-separated values."""
         spec = self._make_spec([
-            {"name": "X-Roles", "in": "header", "schema": {"type": "array"}, "explode": False}
+            {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Roles": ["admin", "auditor", "reader"]}}}
@@ -261,7 +300,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_header_array_explode_true_wire_delivery(self) -> None:
         """OAS 3 simple style header array with explode=true also serializes as comma-separated values."""
         spec = self._make_spec([
-            {"name": "X-Roles", "in": "header", "schema": {"type": "array"}, "explode": True}
+            {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": True}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Roles": ["sec", "ops"]}}}
@@ -300,10 +339,9 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         for _, _, headers in ArrayObjectRecordingHandler.requests:
             self.assertEqual(headers.get("X-Context"), "tenant=acme,env=prod")
 
-    # -------------------------------------------------------------------------
     def test_serialize_cookie_parameter_direct_unit(self) -> None:
         """serialize_cookie_parameter directly raises ParameterSerializationError on array or object."""
-        meta_arr = {"name": "c_arr", "in": "cookie", "schema": {"type": "array"}}
+        meta_arr = {"name": "c_arr", "in": "cookie", "schema": {"type": "array", "items": {"type": "string"}}}
         with self.assertRaises(ParameterSerializationError) as ctx:
             serialize_cookie_parameter(meta_arr, ["v1", "v2"])
         self.assertIn("Cookie array parameter serialization is unsupported under RFC 6265", str(ctx.exception))
@@ -319,6 +357,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         self.assertEqual(name, "c_str")
         self.assertEqual(val, "valid_val")
 
+    # -------------------------------------------------------------------------
     # 2. Cookie parameter rules (Scalar supported, Array/Object rejected under RFC 6265)
     # -------------------------------------------------------------------------
 
@@ -340,7 +379,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_cookie_array_explode_false_rejected_zero_requests(self) -> None:
         """Cookie array parameter with explode=false is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
-            {"name": "features", "in": "cookie", "schema": {"type": "array"}, "explode": False}
+            {"name": "features", "in": "cookie", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"features": ["beta", "darkmode"]}}}
@@ -354,7 +393,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_cookie_array_explode_true_rejected_zero_requests(self) -> None:
         """Cookie array parameter with explode=true is rejected under RFC 6265 with zero requests sent."""
         spec = self._make_spec([
-            {"name": "features", "in": "cookie", "schema": {"type": "array"}, "explode": True}
+            {"name": "features", "in": "cookie", "schema": {"type": "array", "items": {"type": "string"}}, "explode": True}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"features": ["beta", "darkmode"]}}}
@@ -396,8 +435,8 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_illegal_cookie_never_produces_confirmed_or_secure(self) -> None:
         """Illegal cookie configurations fail-closed and must never produce CONFIRMED or SECURE."""
         bad_specs = [
-            ("array_explode_false", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array"}, "explode": False}], {"c_arr": ["a", "b"]}),
-            ("array_explode_true", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array"}, "explode": True}], {"c_arr": ["a", "b"]}),
+            ("array_explode_false", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}], {"c_arr": ["a", "b"]}),
+            ("array_explode_true", [{"name": "c_arr", "in": "cookie", "schema": {"type": "array", "items": {"type": "string"}}, "explode": True}], {"c_arr": ["a", "b"]}),
             ("object_explode_false", [{"name": "c_obj", "in": "cookie", "schema": {"type": "object"}, "explode": False}], {"c_obj": {"k": "v"}}),
             ("object_explode_true", [{"name": "c_obj", "in": "cookie", "schema": {"type": "object"}, "explode": True}], {"c_obj": {"k": "v"}}),
         ]
@@ -412,6 +451,27 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
                 self.assertNotEqual(auditor.results[0]["verdict"], Verdict.CONFIRMED)
                 self.assertNotEqual(auditor.results[0]["verdict"], Verdict.SECURE)
+                self.assertEqual(auditor.stats["confirmed"], 0)
+                self.assertEqual(auditor.stats["secure_endpoints"], 0)
+                self.assertEqual(auditor.stats["http_requests_sent"], 0)
+
+    def test_cookie_style_cookie_rejected_zero_requests(self) -> None:
+        """OpenAPI 3.2 style: cookie is explicitly unsupported and fails closed with zero requests."""
+        cases = [
+            ("scalar", {"name": "c_pref", "in": "cookie", "style": "cookie", "schema": {"type": "string"}}, "dark"),
+            ("array", {"name": "c_tags", "in": "cookie", "style": "cookie", "schema": {"type": "array", "items": {"type": "string"}}}, ["a", "b"]),
+            ("object", {"name": "c_ctx", "in": "cookie", "style": "cookie", "schema": {"type": "object"}}, {"k": "v"}),
+        ]
+        for kind, meta, val in cases:
+            with self.subTest(kind=kind):
+                with ArrayObjectRecordingHandler.lock:
+                    ArrayObjectRecordingHandler.requests.clear()
+                spec = self._make_spec([meta])
+                config = self._make_config(parameter_values={"GET /api/documents/{doc_id}": {"common": {meta["name"]: val}}})
+                auditor = self._run_audit(spec, config)
+                self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
+                self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+                self.assertIn("Unsupported parameter style for its location", auditor.results[0]["reason"])
                 self.assertEqual(auditor.stats["confirmed"], 0)
                 self.assertEqual(auditor.stats["secure_endpoints"], 0)
                 self.assertEqual(auditor.stats["http_requests_sent"], 0)
@@ -493,8 +553,11 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 with self.subTest(location=location, kind=kind):
                     with ArrayObjectRecordingHandler.lock:
                         ArrayObjectRecordingHandler.requests.clear()
+                    schema: Dict[str, Any] = {"type": kind}
+                    if kind == "array":
+                        schema["items"] = {"type": "string"}
                     spec = self._make_spec([
-                        {"name": "param_test", "in": location, "schema": {"type": kind}, "explode": False}
+                        {"name": "param_test", "in": location, "schema": schema, "explode": False}
                     ])
                     config = self._make_config(
                         parameter_values={"GET /api/documents/{doc_id}": {"common": {"param_test": val}}}
@@ -515,8 +578,11 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
             with self.subTest(location=location, kind=kind):
                 with ArrayObjectRecordingHandler.lock:
                     ArrayObjectRecordingHandler.requests.clear()
+                schema: Dict[str, Any] = {"type": kind}
+                if kind == "array":
+                    schema["items"] = {"type": "string"}
                 spec = self._make_spec([
-                    {"name": "nested_param", "in": location, "schema": {"type": kind}, "explode": False}
+                    {"name": "nested_param", "in": location, "schema": schema, "explode": False}
                 ])
                 config = self._make_config(
                     parameter_values={"GET /api/documents/{doc_id}": {"common": {"nested_param": val}}}
@@ -543,7 +609,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 with ArrayObjectRecordingHandler.lock:
                     ArrayObjectRecordingHandler.requests.clear()
                 spec = self._make_spec([
-                    {"name": "X-Roles", "in": "header", "schema": {"type": "array"}, "explode": False}
+                    {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
                 ])
                 config = self._make_config(
                     parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Roles": ["admin", payload]}}}
@@ -605,7 +671,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
 
     def test_delimiter_ambiguity_comma_in_header_array_item_blocked(self) -> None:
         spec = self._make_spec([
-            {"name": "X-Roles", "in": "header", "schema": {"type": "array"}, "explode": False}
+            {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Roles": ["admin,superuser", "reader"]}}}
@@ -648,7 +714,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
 
     def test_header_array_collision_with_identity_header_blocked(self) -> None:
         spec = self._make_spec([
-            {"name": "X-Custom-Auth", "in": "header", "schema": {"type": "array"}, "explode": False}
+            {"name": "X-Custom-Auth", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Custom-Auth": ["token1", "token2"]}}},
@@ -685,7 +751,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 with ArrayObjectRecordingHandler.lock:
                     ArrayObjectRecordingHandler.requests.clear()
                 spec = self._make_spec([
-                    {"name": bad_header, "in": "header", "schema": {"type": "array"}, "explode": False}
+                    {"name": bad_header, "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
                 ])
                 config = self._make_config(
                     parameter_values={"GET /api/documents/{doc_id}": {"common": {bad_header: ["val1", "val2"]}}}
@@ -702,7 +768,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
     def test_identity_isolation_with_business_arrays_and_cookies(self) -> None:
         """Owner, Visitor, and Anonymous maintain their respective auth state while sharing business parameters."""
         spec = self._make_spec([
-            {"name": "X-Audit-Tags", "in": "header", "schema": {"type": "array"}, "explode": False},
+            {"name": "X-Audit-Tags", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False},
             {"name": "ui_theme", "in": "cookie", "schema": {"type": "string"}},
         ])
         config = self._make_config(
@@ -743,7 +809,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
 
     def test_missing_required_array_parameter_sends_zero_requests(self) -> None:
         spec = self._make_spec([
-            {"name": "X-Required-List", "in": "header", "required": True, "schema": {"type": "array"}, "explode": False}
+            {"name": "X-Required-List", "in": "header", "required": True, "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config()  # no parameter value supplied
         auditor = self._run_audit(spec, config)
@@ -753,7 +819,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
 
     def test_type_mismatch_array_expected_got_scalar_sends_zero_requests(self) -> None:
         spec = self._make_spec([
-            {"name": "X-Roles", "in": "header", "schema": {"type": "array"}, "explode": False}
+            {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False}
         ])
         config = self._make_config(
             parameter_values={"GET /api/documents/{doc_id}": {"common": {"X-Roles": "admin"}}}
@@ -786,7 +852,7 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         secret_obj_val = "TOP_SECRET_OBJECT_VAL"
 
         spec = self._make_spec([
-            {"name": "X-Secret-Tokens", "in": "header", "schema": {"type": "array"}, "explode": False},
+            {"name": "X-Secret-Tokens", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False},
             {"name": "X-Secret-Obj", "in": "header", "schema": {"type": "object"}, "explode": True},
         ], path="/api/echo/{doc_id}")
 
@@ -920,15 +986,187 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
                 self.assertNotIn(auth_token, sarif_text)
 
     # -------------------------------------------------------------------------
-    # 12. Readback compatibility
+    # 12. Non-GET write operations (PATCH/PUT) safety boundary tests
     # -------------------------------------------------------------------------
 
-    def test_readback_compatibility_with_array_header_endpoint(self) -> None:
-        """Declared readback parameters remain strictly path/query while main operation uses header array."""
-        meta_header = {"name": "X-Scope", "in": "header", "schema": {"type": "array"}, "explode": False}
-        name, val = serialize_header_parameter(meta_header, ["scope1", "scope2"])
-        self.assertEqual(name, "X-Scope")
-        self.assertEqual(val, "scope1,scope2")
+    def test_patch_and_put_with_unsupported_parameters_rejected_zero_requests(self) -> None:
+        """PATCH and PUT operations declaring Header array/object or Cookie are rejected before transport."""
+        cases = [
+            ("PATCH", "header_array", {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}}, ["admin", "editor"]),
+            ("PATCH", "header_object", {"name": "X-Ctx", "in": "header", "schema": {"type": "object"}}, {"k": "v"}),
+            ("PATCH", "cookie", {"name": "sess", "in": "cookie", "schema": {"type": "string"}}, "token123"),
+            ("PUT", "header_array", {"name": "X-Roles", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}}, ["admin", "editor"]),
+            ("PUT", "header_object", {"name": "X-Ctx", "in": "header", "schema": {"type": "object"}}, {"k": "v"}),
+            ("PUT", "cookie", {"name": "sess", "in": "cookie", "schema": {"type": "string"}}, "token123"),
+        ]
+
+        for method, desc, param, val in cases:
+            with self.subTest(method=method, scenario=desc):
+                with ArrayObjectRecordingHandler.lock:
+                    ArrayObjectRecordingHandler.requests.clear()
+                endpoint = {
+                    "method": method,
+                    "path": "/api/documents/{doc_id}",
+                    "parameters": [
+                        {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                        param,
+                    ],
+                    "request_content_type": "application/json",
+                    "request_schema": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}},
+                    },
+                }
+                config = self._make_config(
+                    parameter_values={f"{method} /api/documents/{{doc_id}}": {"common": {param["name"]: val}}}
+                )
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    spec_file = Path(temp_dir) / "spec.json"
+                    spec = {
+                        "openapi": "3.0.3",
+                        "info": {"title": "Test Write", "version": "1.0.0"},
+                        "paths": {"/api/documents/{doc_id}": {method.lower(): endpoint}},
+                    }
+                    spec_file.write_text(json.dumps(spec), encoding="utf-8")
+
+                    auditor = APISentinelAuditor(
+                        spec_path=str(spec_file),
+                        target_base_url=self.target_url,
+                        identities_config=config.get("identities"),
+                        parameter_values=config.get("parameter_values"),
+                        allow_write_tests=True,
+                        write_allowlist=[f"{method} /api/documents/{{doc_id}}"],
+                        readback_config={
+                            f"{method} /api/documents/{{doc_id}}": {
+                                "path": "/api/documents/{doc_id}",
+                                "field_map": {"title": "title"},
+                            }
+                        },
+                        allow_http=True,
+                        request_delay=0,
+                    )
+                    auditor.audit_endpoint_mass_assignment(endpoint, [endpoint])
+                    self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0, f"Expected 0 requests for {method} {desc}")
+                    self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+                    self.assertIn("not supported for", auditor.results[0]["reason"])
+                    self.assertEqual(auditor.stats["confirmed"], 0)
+                    self.assertEqual(auditor.stats["secure_endpoints"], 0)
+
+    # -------------------------------------------------------------------------
+    # 13. GET independent readback integration with Header array and object
+    # -------------------------------------------------------------------------
+
+    def test_get_independent_readback_with_header_array_and_object_wire_delivery(self) -> None:
+        """GET independent readback correctly serializes Header array and object with identity isolation."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spec_file = Path(temp_dir) / "spec.json"
+            spec = {
+                "openapi": "3.0.3",
+                "info": {"title": "Test Readback", "version": "1.0.0"},
+                "paths": {
+                    "/api/readback/{doc_id}": {
+                        "get": {
+                            "operationId": "readbackDoc",
+                            "parameters": [
+                                {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                                {"name": "X-Readback-Tags", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False},
+                                {"name": "X-Readback-Context", "in": "header", "schema": {"type": "object"}, "explode": True},
+                            ],
+                            "responses": {"200": {"description": "OK"}},
+                        }
+                    }
+                },
+            }
+            spec_file.write_text(json.dumps(spec), encoding="utf-8")
+
+            config = self._make_config()
+            auditor = APISentinelAuditor(
+                spec_path=str(spec_file),
+                target_base_url=self.target_url,
+                identities_config=config.get("identities"),
+                allow_http=True,
+                request_delay=0,
+            )
+
+            readback_mapping = {
+                "path": "/api/readback/{doc_id}",
+                "parameters": [
+                    {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "X-Readback-Tags", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False},
+                    {"name": "X-Readback-Context", "in": "header", "schema": {"type": "object"}, "explode": True},
+                ],
+                "parameter_values": {
+                    "X-Readback-Tags": ["audit", "compliance"],
+                    "X-Readback-Context": {"tenant": "acme", "env": "prod"},
+                },
+                "field_map": {"title": "title"},
+            }
+
+            dummy_ep = {"method": "GET", "path": "/api/items/{doc_id}"}
+
+            # 1. Test Owner readback
+            with ArrayObjectRecordingHandler.lock:
+                ArrayObjectRecordingHandler.requests.clear()
+            owner_url, owner_res = auditor._readback_result(dummy_ep, readback_mapping, "owner")
+            self.assertEqual(owner_res.status, 200)
+            self.assertTrue(owner_url.endswith("/api/readback/doc-owner"))
+            self.assertEqual(len(ArrayObjectRecordingHandler.requests), 1)
+            _, _, owner_headers = ArrayObjectRecordingHandler.requests[0]
+            self.assertEqual(owner_headers.get("X-Readback-Tags"), "audit,compliance")
+            self.assertEqual(owner_headers.get("X-Readback-Context"), "tenant=acme,env=prod")
+            self.assertEqual(owner_headers.get("Authorization"), "Bearer OWNER_TOKEN")
+
+            # 2. Test Visitor readback
+            with ArrayObjectRecordingHandler.lock:
+                ArrayObjectRecordingHandler.requests.clear()
+            visitor_url, visitor_res = auditor._readback_result(dummy_ep, readback_mapping, "visitor")
+            self.assertEqual(visitor_res.status, 200)
+            self.assertTrue(visitor_url.endswith("/api/readback/doc-visitor"))
+            self.assertEqual(len(ArrayObjectRecordingHandler.requests), 1)
+            _, _, visitor_headers = ArrayObjectRecordingHandler.requests[0]
+            self.assertEqual(visitor_headers.get("X-Readback-Tags"), "audit,compliance")
+            self.assertEqual(visitor_headers.get("X-Readback-Context"), "tenant=acme,env=prod")
+            self.assertEqual(visitor_headers.get("Authorization"), "Bearer VISITOR_TOKEN")
+
+    def test_get_independent_readback_invalid_header_fails_closed_zero_requests(self) -> None:
+        """Readback parameter serialization failure fails closed before request and never produces CONFIRMED."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spec_file = Path(temp_dir) / "spec.json"
+            spec = {
+                "openapi": "3.0.3",
+                "info": {"title": "Test Readback", "version": "1.0.0"},
+                "paths": {"/api/documents/{doc_id}": {"get": {"responses": {"200": {"description": "OK"}}}}},
+            }
+            spec_file.write_text(json.dumps(spec), encoding="utf-8")
+
+            config = self._make_config()
+            auditor = APISentinelAuditor(
+                spec_path=str(spec_file),
+                target_base_url=self.target_url,
+                identities_config=config.get("identities"),
+                allow_http=True,
+                request_delay=0,
+            )
+
+            # Readback has a delimiter comma in array item
+            invalid_readback = {
+                "path": "/api/readback/{doc_id}",
+                "parameters": [
+                    {"name": "doc_id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "X-Tags", "in": "header", "schema": {"type": "array", "items": {"type": "string"}}, "explode": False},
+                ],
+                "parameter_values": {"X-Tags": ["item,with,comma"]},
+                "field_map": {"title": "title"},
+            }
+
+            with ArrayObjectRecordingHandler.lock:
+                ArrayObjectRecordingHandler.requests.clear()
+
+            dummy_ep = {"method": "GET", "path": "/api/documents/{doc_id}"}
+            with self.assertRaises(ParameterSerializationError) as ctx:
+                auditor._readback_result(dummy_ep, invalid_readback, "visitor")
+            self.assertIn("delimiter comma ','", str(ctx.exception))
+            self.assertEqual(len(ArrayObjectRecordingHandler.requests), 0)
 
 
 if __name__ == "__main__":
