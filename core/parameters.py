@@ -119,6 +119,17 @@ def _kind(value: Any) -> str:
     return "primitive"
 
 
+def _validate_header_token(text: str, role: str = "Header parameter value") -> None:
+    if any(c in "\r\n\0" for c in text) or any(ord(c) < 32 and c != "\t" or ord(c) >= 127 for c in text):
+        _fail(f"{role} contains invalid characters or line breaks (CRLF injection prevented)")
+
+
+def _validate_cookie_token(text: str, role: str = "Cookie parameter value", *, forbid_equals: bool = False) -> None:
+    forbidden = '\",;\\=' if forbid_equals else '\",;\\'
+    if any(ord(c) < 33 or ord(c) >= 127 or c in forbidden for c in text):
+        _fail(f"{role} contains invalid characters, whitespace, or delimiters (CRLF or delimiter injection prevented)")
+
+
 def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str, str, str, bool]:
     if not isinstance(metadata, dict):
         _fail("Parameter metadata must be an object")
@@ -146,20 +157,6 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
     kind = _kind(value)
     if location == "path" and kind == "primitive" and _scalar(value) == "":
         _fail("Empty path parameter values are unsupported because they can select a different resource")
-    if location == "cookie":
-        if kind != "primitive":
-            _fail("Array and object cookie parameter serialization is ambiguous and unsupported")
-        text = _scalar(value)
-        if any(ord(c) < 33 or ord(c) >= 127 or c in '\",;\\' for c in text):
-            _fail("Cookie parameter value contains invalid characters, line breaks, or separators (CRLF or semicolon injection prevented)")
-    if location == "header":
-        if kind == "object":
-            _fail("Object header parameter serialization is ambiguous and unsupported")
-        if kind == "array":
-            _fail("Array header parameter serialization is ambiguous and unsupported")
-        text = _scalar(value)
-        if any(c in "\r\n\0" for c in text) or any(ord(c) < 32 and c != "\t" or ord(c) >= 127 for c in text):
-            _fail("Header parameter value contains invalid characters or line breaks (CRLF injection prevented)")
     schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
     if isinstance(schema, dict):
         declared = schema.get("type")
@@ -211,6 +208,62 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
             _fail("spaceDelimited/pipeDelimited require a flat array/object and explode=false")
     if style == "deepObject" and (kind != "object" or not explode):
         _fail("deepObject requires a flat object and explicit explode=true")
+    if location == "header":
+        if kind == "primitive":
+            text = _scalar(value)
+            _validate_header_token(text, "Header parameter value")
+        elif kind == "array":
+            for item in value:
+                text = _scalar(item)
+                if not text:
+                    _fail("Header array parameter items must not be empty")
+                _validate_header_token(text, "Header array parameter item")
+                if "," in text:
+                    _fail("Header array parameter item contains delimiter comma ',' which causes ambiguous deserialization")
+        elif kind == "object":
+            if swagger2:
+                _fail("Swagger 2 non-body object parameters are unsupported")
+            for k, v in value.items():
+                if not k:
+                    _fail("Header object parameter property names must be non-empty strings")
+                _validate_header_token(k, "Header object parameter property name")
+                text = _scalar(v)
+                if not text:
+                    _fail("Header object parameter property values must not be empty")
+                _validate_header_token(text, "Header object parameter property value")
+                if not explode:
+                    if "," in k or "," in text:
+                        _fail("Header object parameter property name or value contains delimiter comma ',' which causes ambiguous deserialization")
+                else:
+                    if "," in k or "=" in k:
+                        _fail("Header object parameter property name contains delimiter ',' or '=' which causes ambiguous deserialization")
+                    if "," in text or "=" in text:
+                        _fail("Header object parameter property value contains delimiter ',' or '=' which causes ambiguous deserialization")
+
+    elif location == "cookie":
+        if kind == "primitive":
+            text = _scalar(value)
+            _validate_cookie_token(text, "Cookie parameter value")
+        elif kind == "array":
+            if explode:
+                _fail("Cookie array parameter with explode=true produces duplicate cookie names, which is ambiguous under RFC 6265")
+            for item in value:
+                text = _scalar(item)
+                if not text:
+                    _fail("Cookie array parameter items must not be empty")
+                _validate_cookie_token(text, "Cookie array parameter item")
+        elif kind == "object":
+            if explode:
+                _fail("Cookie object parameter with explode=true produces un-namespaced cookies, which is ambiguous and conflicts with cookie isolation under RFC 6265")
+            for k, v in value.items():
+                if not k:
+                    _fail("Cookie object parameter property names must be non-empty strings")
+                _validate_cookie_token(k, "Cookie object parameter property name", forbid_equals=True)
+                text = _scalar(v)
+                if not text:
+                    _fail("Cookie object parameter property values must not be empty")
+                _validate_cookie_token(text, "Cookie object parameter property value", forbid_equals=True)
+
     return location, name, style, explode
 
 
@@ -288,7 +341,16 @@ def serialize_header_parameter(metadata: Dict[str, Any], value: Any, *, swagger2
     location, name, style, explode = _settings(metadata, value, swagger2)
     if location != "header":
         _fail("Header serialization requires in=header")
-    return name, _scalar(value)
+    kind = _kind(value)
+    if kind == "primitive":
+        return name, _scalar(value)
+    if kind == "array":
+        return name, ",".join(_scalar(item) for item in value)
+    if kind == "object":
+        if explode:
+            return name, ",".join(f"{k}={_scalar(v)}" for k, v in value.items())
+        return name, ",".join(f"{part}" for k, v in value.items() for part in (k, _scalar(v)))
+    _fail("Unsupported header parameter structure")
 
 
 def serialize_cookie_parameter(metadata: Dict[str, Any], value: Any, *, swagger2: bool = False) -> Tuple[str, str]:
@@ -296,4 +358,15 @@ def serialize_cookie_parameter(metadata: Dict[str, Any], value: Any, *, swagger2
     location, name, style, explode = _settings(metadata, value, swagger2)
     if location != "cookie":
         _fail("Cookie serialization requires in=cookie")
-    return name, _scalar(value)
+    kind = _kind(value)
+    if kind == "primitive":
+        return name, _scalar(value)
+    if kind == "array":
+        if explode:
+            _fail("Cookie array parameter with explode=true produces duplicate cookie names, which is ambiguous under RFC 6265")
+        return name, ",".join(_scalar(item) for item in value)
+    if kind == "object":
+        if explode:
+            _fail("Cookie object parameter with explode=true produces un-namespaced cookies, which is ambiguous and conflicts with cookie isolation under RFC 6265")
+        return name, ",".join(f"{part}" for k, v in value.items() for part in (k, _scalar(v)))
+    _fail("Unsupported cookie parameter structure")

@@ -547,10 +547,10 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self.assertIn("Missing required cookie parameter 'required_preference'", auditor.results[0]["reason"])
 
     def test_unsupported_serialization_formats(self) -> None:
-        """Arrays and objects in headers/cookies, or Swagger 2 cookies raise serialization errors."""
+        """Ambiguous cookie explode settings, delimiter conflicts, or Swagger 2 cookies raise serialization errors."""
         unsupported = [
-            ({"name": "arr_hdr", "in": "header", "schema": {"type": "array"}}, ["a", "b"], False),
-            ({"name": "obj_hdr", "in": "header", "schema": {"type": "object"}}, {"k": "v"}, False),
+            ({"name": "arr_hdr", "in": "header", "schema": {"type": "array"}}, ["a,b", "c"], False),
+            ({"name": "obj_hdr", "in": "header", "schema": {"type": "object"}}, {"k": "v"}, True),
             ({"name": "arr_cook", "in": "cookie", "schema": {"type": "array"}}, ["a", "b"], False),
             ({"name": "obj_cook", "in": "cookie", "schema": {"type": "object"}}, {"k": "v"}, False),
             ({"name": "swag_cook", "in": "cookie", "schema": {"type": "string"}}, "val", True),

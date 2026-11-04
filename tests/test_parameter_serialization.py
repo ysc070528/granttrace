@@ -343,8 +343,9 @@ class WireParameterTests(unittest.TestCase):
             self.assertEqual(self.requests[0][1]["Authorization"], "Bearer TOKEN_BOB_VISITOR_1002")
 
     def test_incomplete_or_unsupported_contracts_send_zero_requests(self):
-        for parameter, value in ((metadata("header"), [10, 20]), (metadata("cookie"), [10, 20]), (metadata(style="deepObject"), [10, 20]), (metadata(allowReserved=True), [10, 20]), (metadata(), "[10,20]")):
+        for parameter, value in ((metadata("header", style="matrix"), [10, 20]), (metadata("cookie"), [10, 20]), (metadata(style="deepObject"), [10, 20]), (metadata(allowReserved=True), [10, 20]), (metadata(), "[10,20]")):
             with self.subTest(parameter=parameter):
+                self.requests.clear()
                 auditor = self.make_auditor(parameter_values={"GET /items/{user_id}": {"common": {"ids": value}}})
                 endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [parameter]}
                 auditor.audit_endpoint_bola(endpoint)
@@ -419,3 +420,12 @@ class WireParameterTests(unittest.TestCase):
         transport.assert_not_called()
         self.assertEqual(auditor.results[0]["verdict"], "INCONCLUSIVE")
         self.assertEqual(self.requests, [])
+
+    def test_header_array_wire_delivery(self):
+        self.requests.clear()
+        auditor = self.make_auditor(parameter_values={"GET /items/{user_id}": {"common": {"ids": [10, 20]}}})
+        endpoint = {"method": "GET", "path": "/items/{user_id}", "parameters": [metadata("header")]}
+        auditor.audit_endpoint_bola(endpoint)
+        self.assertGreater(len(self.requests), 0)
+        for _, headers in self.requests:
+            self.assertEqual(headers.get("Ids"), "10,20")
