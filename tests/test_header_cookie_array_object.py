@@ -502,6 +502,157 @@ class HeaderCookieArrayObjectTests(unittest.TestCase):
         for _, _, headers in ArrayObjectRecordingHandler.requests:
             self.assertEqual(headers.get("X-Tags"), "v1,v2")
 
+    @staticmethod
+    def _unsafe_header_array_items() -> List[str]:
+        # HTAB remains permitted; every other C0 control and DEL is forbidden.
+        return (["prefix" + chr(code) + "suffix" for code in range(32) if code != 9]
+                + ["prefix\x7fsuffix", "prefix\x80suffix", "prefix\u4e2dsuffix",
+                   "prefix\r\n suffix", "prefix\r\n\tsuffix", "", "a,b"])
+
+    def test_swagger2_header_array_invalid_items_raise_before_serialization(self) -> None:
+        metadata = {"name": "X-Probe", "in": "header", "type": "array",
+                    "items": {"type": "string"}, "collectionFormat": "csv"}
+        for item in self._unsafe_header_array_items():
+            with self.subTest(item=repr(item)):
+                with self.assertRaises(ParameterSerializationError) as ctx:
+                    serialize_header_parameter(metadata, [item, "c"], swagger2=True)
+                self.assertIn("no request was sent", str(ctx.exception))
+                self.assertNotIn("prefix", str(ctx.exception))
+
+    def test_swagger2_header_array_invalid_items_rejected_before_transport(self) -> None:
+        metadata = {"name": "X-Probe", "in": "header", "type": "array",
+                    "items": {"type": "string"}, "collectionFormat": "csv"}
+        spec = self._make_spec([metadata], version="2.0")
+        for item in self._unsafe_header_array_items():
+            with self.subTest(item=repr(item)):
+                with ArrayObjectRecordingHandler.lock:
+                    ArrayObjectRecordingHandler.requests.clear()
+                auditor = self._run_audit(spec, self._make_config(parameter_values={
+                    "GET /api/documents/{doc_id}": {"common": {"X-Probe": [item, "c"]}},
+                }))
+                self.assertEqual(auditor.stats["transport_attempts"], 0)
+                self.assertEqual(ArrayObjectRecordingHandler.requests, [])
+                self.assertTrue(auditor.results)
+                for result in auditor.results:
+                    self.assertEqual(result["verdict"], Verdict.INCONCLUSIVE)
+                    self.assertIn("no request was sent", result["reason"])
+                    self.assertEqual(result["evidence"]["reason_category"], "invalid_input")
+                    self.assertEqual(result["evidence"]["requests_attempted"], 0)
+                    self.assertNotIn("prefix", result["reason"])
+
+    def test_swagger2_header_array_htab_preserves_wire_values_and_identities(self) -> None:
+        metadata = {"name": "X-Probe", "in": "header", "type": "array",
+                    "items": {"type": "string"}, "collectionFormat": "csv"}
+        value = ["a\tb", "c"]
+        self.assertEqual(serialize_header_parameter(metadata, value, swagger2=True),
+                         ("X-Probe", "a\tb,c"))
+        auditor = self._run_audit(self._make_spec([metadata], version="2.0"),
+                                  self._make_config(parameter_values={
+                                      "GET /api/documents/{doc_id}": {"common": {"X-Probe": value}},
+                                  }))
+        self.assertEqual(auditor.stats["transport_attempts"], 4)
+        self.assertEqual(len(ArrayObjectRecordingHandler.requests), 4)
+        auth_values = []
+        for method, _, headers in ArrayObjectRecordingHandler.requests:
+            self.assertEqual(method, "GET")
+            self.assertEqual(headers.get("X-Probe"), "a\tb,c")
+            auth_values.append(headers.get("Authorization"))
+        self.assertCountEqual(auth_values, ["Bearer OWNER_TOKEN", "Bearer VISITOR_TOKEN",
+                                           "Bearer VISITOR_TOKEN", None])
+
+    def test_swagger2_get_readback_invalid_headers_rejected_before_transport(self) -> None:
+        path = "/api/readback/{doc_id}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spec_file = Path(temp_dir) / "spec.json"
+            spec_file.write_text(json.dumps(self._make_spec([], path=path, version="2.0")),
+                                 encoding="utf-8")
+            auditor = APISentinelAuditor(
+                spec_path=str(spec_file), target_base_url=self.target_url,
+                identities_config=self._make_config()["identities"],
+                allow_http=True, request_delay=0,
+            )
+            for kind in ("string", "array"):
+                for item in self._unsafe_header_array_items():
+                    if kind == "string" and item in {"", "a,b"}:
+                        continue  # Scalar commas and empty values are unambiguous.
+                    with self.subTest(kind=kind, item=repr(item)):
+                        metadata: Dict[str, Any] = {"name": "X-Probe", "in": "header", "type": kind}
+                        if kind == "array":
+                            metadata.update(items={"type": "string"}, collectionFormat="csv")
+                        mapping = {
+                            "path": path,
+                            "parameters": [
+                                {"name": "doc_id", "in": "path", "required": True, "type": "string"},
+                                metadata,
+                            ],
+                            "parameter_values": {"X-Probe": [item, "c"] if kind == "array" else item},
+                            "field_map": {"title": "title"},
+                        }
+                        before_attempts = auditor.stats["transport_attempts"]
+                        before_requests = len(ArrayObjectRecordingHandler.requests)
+                        with self.assertRaises(ParameterSerializationError) as ctx:
+                            auditor._readback_result({"method": "PATCH", "path": "/api/documents/{doc_id}"},
+                                                     mapping, "visitor")
+                        self.assertIn("no request was sent", str(ctx.exception))
+                        self.assertNotIn("prefix", str(ctx.exception))
+                        self.assertEqual(auditor.stats["transport_attempts"] - before_attempts, 0)
+                        self.assertEqual(len(ArrayObjectRecordingHandler.requests) - before_requests, 0)
+
+    def test_swagger2_write_readback_invalid_headers_rejected_during_preflight(self) -> None:
+        # The write safety gate must remain closed, but malformed readback data
+        # must be diagnosed earlier, by the shared GET serializer itself.
+        path = "/api/documents/{doc_id}"
+        for method in ("PATCH", "PUT"):
+            for kind, value, diagnostic in (
+                ("string", "prefix\x00suffix", "invalid characters"),
+                ("array", ["a,b", "c"], "delimiter comma ','"),
+            ):
+                with self.subTest(method=method, kind=kind), tempfile.TemporaryDirectory() as temp_dir:
+                    with ArrayObjectRecordingHandler.lock:
+                        ArrayObjectRecordingHandler.requests.clear()
+                    spec = {
+                        "swagger": "2.0", "info": {"title": "Readback preflight", "version": "1"},
+                        "consumes": ["application/json"],
+                        "paths": {path: {method.lower(): {
+                            "parameters": [
+                                {"name": "doc_id", "in": "path", "required": True, "type": "string"},
+                                {"name": "body", "in": "body", "required": True,
+                                 "schema": {"type": "object", "properties": {"title": {"type": "string"}}}},
+                            ],
+                            "responses": {"200": {"description": "OK"}},
+                        }}},
+                    }
+                    spec_file = Path(temp_dir) / "spec.json"
+                    spec_file.write_text(json.dumps(spec), encoding="utf-8")
+                    metadata: Dict[str, Any] = {"name": "X-Probe", "in": "header", "type": kind}
+                    if kind == "array":
+                        metadata.update(items={"type": "string"}, collectionFormat="csv")
+                    auditor = APISentinelAuditor(
+                        spec_path=str(spec_file), target_base_url=self.target_url,
+                        identities_config=self._make_config()["identities"],
+                        allow_write_tests=True, write_allowlist=[f"{method} {path}"],
+                        readback_config={f"{method} {path}": {
+                            "path": "/api/readback/{doc_id}",
+                            "parameters": [
+                                {"name": "doc_id", "in": "path", "required": True, "type": "string"},
+                                metadata,
+                            ],
+                            "parameter_values": {"X-Probe": value},
+                            "field_map": {"title": "title"},
+                        }},
+                        allow_http=True, request_delay=0,
+                    )
+                    auditor.run()
+                    self.assertEqual(auditor.stats["transport_attempts"], 0)
+                    self.assertEqual(ArrayObjectRecordingHandler.requests, [])
+                    results = [r for r in auditor.results if r["check"] == "MASS_ASSIGNMENT"]
+                    self.assertEqual(len(results), 1)
+                    self.assertEqual(results[0]["verdict"], Verdict.INCONCLUSIVE)
+                    self.assertIn(diagnostic, results[0]["reason"])
+                    self.assertIn("no request was sent", results[0]["reason"])
+                    self.assertEqual(results[0]["evidence"]["reason_category"], "invalid_input")
+                    self.assertNotIn("prefix", results[0]["reason"])
+
     def test_swagger2_header_array_non_csv_rejected_zero_requests(self) -> None:
         """Swagger 2 header parameters only support collectionFormat=csv."""
         for fmt in ("pipes", "ssv", "tsv", "multi"):
