@@ -176,8 +176,10 @@ class TestDryRunSecretRedaction(unittest.TestCase):
             config_path = dir_path / "config.json"
             export_path = dir_path / "dry_run_plan.json"
 
-            secret_token = "TOP_SECRET_REDACTION_CHECK_12345"
-            secret_pass = "VERY_SECRET_PASSWORD_67890"
+            # Fake canary values for this redaction check, not credentials: the
+            # assertions below prove they never reach stdout, stderr or the plan.
+            redaction_canary_token = "TOP_SECRET_REDACTION_CHECK_12345"
+            redaction_canary_password = "VERY_SECRET_PASSWORD_67890"
 
             spec_content = {
                 "openapi": "3.0.3",
@@ -187,8 +189,8 @@ class TestDryRunSecretRedaction(unittest.TestCase):
                         "parameters": [
                             {
                                 "$ref": (
-                                    f"https://user:{secret_pass}@schemas.example.com/models.json"
-                                    f"?token={secret_token}#/components/parameters/UserId"
+                                    f"https://user:{redaction_canary_password}@schemas.example.com/models.json"
+                                    f"?token={redaction_canary_token}#/components/parameters/UserId"
                                 )
                             }
                         ],
@@ -233,16 +235,16 @@ class TestDryRunSecretRedaction(unittest.TestCase):
             plan_file_content = export_path.read_text(encoding="utf-8")
 
             # Assert secrets are completely absent from stdout
-            self.assertNotIn(secret_token, stdout_output)
-            self.assertNotIn(secret_pass, stdout_output)
+            self.assertNotIn(redaction_canary_token, stdout_output)
+            self.assertNotIn(redaction_canary_password, stdout_output)
 
             # Assert secrets are completely absent from stderr
-            self.assertNotIn(secret_token, stderr_output)
-            self.assertNotIn(secret_pass, stderr_output)
+            self.assertNotIn(redaction_canary_token, stderr_output)
+            self.assertNotIn(redaction_canary_password, stderr_output)
 
             # Assert secrets are completely absent from exported plan JSON
-            self.assertNotIn(secret_token, plan_file_content)
-            self.assertNotIn(secret_pass, plan_file_content)
+            self.assertNotIn(redaction_canary_token, plan_file_content)
+            self.assertNotIn(redaction_canary_password, plan_file_content)
 
             # Assert the redacted parameter is present
             self.assertIn("token=[REDACTED]", plan_file_content)
