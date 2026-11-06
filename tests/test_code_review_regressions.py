@@ -8,6 +8,7 @@ swallowed by its own exception handler, and response classification reuse.
 from __future__ import annotations
 
 import json
+import ssl
 import tempfile
 import threading
 import unittest
@@ -16,6 +17,7 @@ from pathlib import Path
 from core.auditor import APISentinelAuditor
 from core.diff import ResponseDiffEngine
 from core.parameters import ParameterSerializationError, normalize_parameter_value
+from core.remote_refs import PinnedIPHTTPSConnection, _verified_tls_context
 
 
 IDENTITIES = {
@@ -143,6 +145,17 @@ class ResponseAssessmentTests(unittest.TestCase):
         expected = round(ResponseDiffEngine.calculate_jaccard_similarity(owner, visitor), 6)
         self.assertEqual(result["evidence"]["structure_similarity"], expected)
         self.assertEqual(result["similarity"], expected)
+
+
+class RemoteReferenceTLSTests(unittest.TestCase):
+    def test_default_contexts_require_tls_1_2_with_verification(self) -> None:
+        # Python 3.9's create_default_context still permits TLS 1.0/1.1.
+        connection = PinnedIPHTTPSConnection(pinned_ip="192.0.2.1", target_hostname="schemas.example.com")
+        for context in (_verified_tls_context(), connection.ssl_ctx):
+            with self.subTest(context=context):
+                self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+                self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+                self.assertTrue(context.check_hostname)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,19 @@ _BLOCKED_EXACT_IPS = {
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`]+")
 
 
+def _verified_tls_context() -> ssl.SSLContext:
+    """Return a certificate- and hostname-verifying TLS 1.2+ client context.
+
+    Python 3.9 still permits TLS 1.0/1.1 in ``create_default_context``;
+    remote schema hosts never need those protocol versions.
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
+
+
 def validate_ssl_context(ctx: ssl.SSLContext) -> None:
     """Validate that an SSL context enforces strict certificate and hostname verification."""
     if not isinstance(ctx, ssl.SSLContext):
@@ -362,9 +375,7 @@ class PinnedIPHTTPSConnection(http.client.HTTPSConnection):
             validate_ssl_context(context)
             self.ssl_ctx = context
         else:
-            self.ssl_ctx = ssl.create_default_context()
-            self.ssl_ctx.check_hostname = True
-            self.ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+            self.ssl_ctx = _verified_tls_context()
 
         super().__init__(host=pinned_ip, port=port, timeout=timeout, context=self.ssl_ctx)
         self.target_hostname = target_hostname
@@ -536,9 +547,7 @@ class RemoteRefFetcher:
                 validate_ssl_context(self._custom_ssl_context)
                 ctx = self._custom_ssl_context
             else:
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = True
-                ctx.verify_mode = ssl.CERT_REQUIRED
+                ctx = _verified_tls_context()
 
             # Connection setup with IP pinning
             conn_time = _remaining_time()
