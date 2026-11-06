@@ -264,7 +264,22 @@ class ConfigValidator:
 
         # 2. Section: identities
         try:
-            spec_auth_names = cls._extract_spec_auth_headers(raw_spec, spec_path=spec_path, remote_ref_config=remote_ref_config)
+            spec_auth_names = cls._extract_spec_auth_headers(
+                raw_spec,
+                spec_path=spec_path,
+                remote_ref_config=remote_ref_config,
+                offline=offline,
+            )
+        except RemoteRefOfflineBlockedError as exc:
+            issues.append(ConfigIssue(
+                path="<spec>.securitySchemes",
+                message=f"Specification contains remote security scheme $ref which cannot be fetched in offline validation mode (无法离线验证): {exc}",
+                expected="locally resolvable security schemes without remote network requests",
+                actual="unresolved_reference",
+                suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
+                is_warning=allow_offline_unresolved,
+            ))
+            spec_auth_names = set()
         except (TypeError, ValueError) as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
@@ -398,7 +413,11 @@ class ConfigValidator:
                 with tempfile.TemporaryDirectory(prefix="granttrace-config-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    endpoints = OpenAPIParser(str(source), offline=offline).get_endpoints()
+                    endpoints = OpenAPIParser(
+                        str(source),
+                        remote_ref_config=remote_ref_config,
+                        offline=offline,
+                    ).get_endpoints()
         except RemoteRefOfflineBlockedError as exc:
             issues.append(ConfigIssue(
                 path="<spec>",
@@ -578,18 +597,28 @@ class ConfigValidator:
     def _extract_spec_auth_headers(
         cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True,
     ) -> Set[str]:
-        if not isinstance(raw_spec, dict):
+        if not isinstance(raw_spec, dict) and spec_path is None:
             return set()
         try:
             if spec_path is not None:
-                schemes = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config, offline=offline).get_security_schemes()
+                schemes = OpenAPIParser(
+                    spec_path,
+                    remote_ref_config=remote_ref_config,
+                    offline=offline,
+                ).get_security_schemes()
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.
                 with tempfile.TemporaryDirectory(prefix="granttrace-auth-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    schemes = OpenAPIParser(str(source), offline=offline).get_security_schemes()
+                    schemes = OpenAPIParser(
+                        str(source),
+                        remote_ref_config=remote_ref_config,
+                        offline=offline,
+                    ).get_security_schemes()
+        except RemoteRefOfflineBlockedError:
+            raise
         except (OSError, TypeError, ValueError, RuntimeError):
             raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
         return {

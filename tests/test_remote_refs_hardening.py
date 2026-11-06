@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 
 from api_sentinel import main
 from core.auditor import APISentinelAuditor
+from core.config_validator import ConfigValidator
 from core.models import Verdict
 from core.parser import OpenAPIParser
 from core.remote_refs import (
@@ -549,6 +550,611 @@ class TestCircularAndUnresolvedReferencesFailClosed(unittest.TestCase):
             self.assertEqual(op["check"], "INCONCLUSIVE")
             self.assertEqual(op["reason_category"], "unresolved_reference")
             self.assertFalse(op["writes_enabled"])
+
+
+class TestMaxDocsFailedRequestBudget(unittest.TestCase):
+    """Test Section 1: max_docs budget accounting including failed HTTP requests and deduplication."""
+
+    @patch("socket.getaddrinfo")
+    @patch.object(PinnedIPHTTPSConnection, "request")
+    @patch.object(PinnedIPHTTPSConnection, "getresponse")
+    def test_four_different_urls_fail_fifth_is_rejected_without_network(
+        self,
+        mock_getresponse: MagicMock,
+        mock_request: MagicMock,
+        mock_getaddrinfo: MagicMock,
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
+        session = RemoteRefSession()
+        cfg = RemoteRefConfig.create(
+            allow_remote_refs=True,
+            remote_ref_hosts=["schemas.example.com"],
+            max_docs=4,
+            session=session,
+        )
+        fetcher = RemoteRefFetcher(cfg)
+
+        resp404 = MagicMock(status=404, reason="Not Found")
+        resp500 = MagicMock(status=500, reason="Internal Server Error")
+
+        # 1. 404
+        mock_getresponse.return_value = resp404
+        with self.assertRaises(RemoteRefResolutionError):
+            fetcher.fetch_document("https://schemas.example.com/fail1.json")
+
+        # 2. Timeout
+        mock_getresponse.side_effect = socket.timeout("timed out")
+        with self.assertRaises(RemoteRefLimitExceededError):
+            fetcher.fetch_document("https://schemas.example.com/fail2.json")
+        mock_getresponse.side_effect = None
+
+        # 3. TLS error
+        mock_getresponse.side_effect = OSError("TLS handshake failed")
+        with self.assertRaises(RemoteRefResolutionError):
+            fetcher.fetch_document("https://schemas.example.com/fail3.json")
+        mock_getresponse.side_effect = None
+
+        # 4. 500 Internal Server Error
+        mock_getresponse.return_value = resp500
+        with self.assertRaises(RemoteRefResolutionError):
+            fetcher.fetch_document("https://schemas.example.com/fail4.json")
+
+        self.assertEqual(len(session.attempted_urls), 4)
+
+        # Reset mocks to verify URL 5 NEVER reaches DNS or Socket
+        mock_getaddrinfo.reset_mock()
+        mock_request.reset_mock()
+
+        # 5. Fifth distinct URL rejected by max_docs BEFORE DNS and Socket connection
+        with self.assertRaises(RemoteRefLimitExceededError) as ctx:
+            fetcher.fetch_document("https://schemas.example.com/fail5.json")
+
+        self.assertIn("Maximum remote document limit (4) reached", str(ctx.exception))
+        mock_getaddrinfo.assert_not_called()
+        mock_request.assert_not_called()
+
+    @patch("socket.getaddrinfo")
+    @patch.object(PinnedIPHTTPSConnection, "request")
+    @patch.object(PinnedIPHTTPSConnection, "getresponse")
+    def test_failed_url_repeated_access_does_not_consume_additional_budget_or_network(
+        self,
+        mock_getresponse: MagicMock,
+        mock_request: MagicMock,
+        mock_getaddrinfo: MagicMock,
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
+        session = RemoteRefSession()
+        cfg = RemoteRefConfig.create(
+            allow_remote_refs=True,
+            remote_ref_hosts=["schemas.example.com"],
+            max_docs=4,
+            session=session,
+        )
+        fetcher = RemoteRefFetcher(cfg)
+
+        mock_getresponse.return_value = MagicMock(status=404, reason="Not Found")
+        url = "https://schemas.example.com/fail_once.json"
+
+        # First attempt: sends request, fails 404
+        with self.assertRaises(RemoteRefResolutionError):
+            fetcher.fetch_document(url)
+
+        self.assertEqual(mock_request.call_count, 1)
+        self.assertEqual(len(session.attempted_urls), 1)
+        self.assertIn(url, session.failed_urls)
+
+        # Second attempt: fails fast from session.failed_urls, 0 new requests
+        with self.assertRaises(RemoteRefResolutionError) as ctx:
+            fetcher.fetch_document(url)
+
+        self.assertIn("Previous fetch attempt for remote schema failed", str(ctx.exception))
+        self.assertEqual(mock_request.call_count, 1)  # Still 1, no new request
+        self.assertEqual(len(session.attempted_urls), 1)  # Still 1, no extra budget consumed
+
+    @patch("socket.getaddrinfo")
+    @patch.object(PinnedIPHTTPSConnection, "request")
+    @patch.object(PinnedIPHTTPSConnection, "getresponse")
+    def test_max_docs_budget_shared_across_distinct_parser_instances(
+        self,
+        mock_getresponse: MagicMock,
+        mock_request: MagicMock,
+        mock_getaddrinfo: MagicMock,
+    ) -> None:
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
+        mock_getresponse.return_value = MagicMock(status=404, reason="Not Found")
+
+        session = RemoteRefSession()
+        cfg = RemoteRefConfig.create(
+            allow_remote_refs=True,
+            remote_ref_hosts=["schemas.example.com"],
+            max_docs=4,
+            session=session,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec1_path = dir_path / "spec1.json"
+            spec1_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/p1": {"get": {"parameters": [{"$ref": "https://schemas.example.com/p1.json#/param"}]}},
+                    "/p2": {"get": {"parameters": [{"$ref": "https://schemas.example.com/p2.json#/param"}]}},
+                }
+            }))
+
+            spec2_path = dir_path / "spec2.json"
+            spec2_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/p3": {"get": {"parameters": [{"$ref": "https://schemas.example.com/p3.json#/param"}]}},
+                    "/p4": {"get": {"parameters": [{"$ref": "https://schemas.example.com/p4.json#/param"}]}},
+                }
+            }))
+
+            spec3_path = dir_path / "spec3.json"
+            spec3_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/p5": {"get": {"parameters": [{"$ref": "https://schemas.example.com/p5.json#/param"}]}},
+                }
+            }))
+
+            parser1 = OpenAPIParser(str(spec1_path), remote_ref_config=cfg)
+            parser1.get_endpoints()
+
+            parser2 = OpenAPIParser(str(spec2_path), remote_ref_config=cfg)
+            parser2.get_endpoints()
+
+            self.assertEqual(len(session.attempted_urls), 4)
+
+            mock_request.reset_mock()
+            mock_getaddrinfo.reset_mock()
+
+            parser3 = OpenAPIParser(str(spec3_path), remote_ref_config=cfg)
+            endpoints3 = parser3.get_endpoints()
+            self.assertEqual(len(endpoints3), 1)
+            self.assertIn("unresolved_schema_error", endpoints3[0])
+            self.assertIn("Maximum remote document limit (4) reached", endpoints3[0]["unresolved_schema_error"])
+            mock_request.assert_not_called()
+            mock_getaddrinfo.assert_not_called()
+
+
+class TestCacheDepthAdversarialAndPointerCounting(unittest.TestCase):
+    """Test Section 2: Cache hits cannot bypass remote depth budget, and intra-document pointer hops count consistently."""
+
+    def test_cache_hit_cannot_bypass_remote_depth_budget(self) -> None:
+        """Adversarial test: shallow chain enters cache, then deeper reference to cached item exceeds 10."""
+        docs = {
+            "https://schemas.example.com/chain_head.json": {"Item": {"$ref": "https://schemas.example.com/hop2.json#/Item"}},
+            "https://schemas.example.com/hop2.json": {"Item": {"$ref": "https://schemas.example.com/hop3.json#/Item"}},
+            "https://schemas.example.com/hop3.json": {"Item": {"$ref": "https://schemas.example.com/hop4.json#/Item"}},
+            "https://schemas.example.com/hop4.json": {"Item": {"$ref": "https://schemas.example.com/hop5.json#/Item"}},
+            "https://schemas.example.com/hop5.json": {"Item": {"type": "object", "properties": {"val": {"type": "string"}}}},
+            "https://schemas.example.com/deep_head.json": {"Item": {"$ref": "https://schemas.example.com/d2.json#/Item"}},
+            "https://schemas.example.com/d2.json": {"Item": {"$ref": "https://schemas.example.com/d3.json#/Item"}},
+            "https://schemas.example.com/d3.json": {"Item": {"$ref": "https://schemas.example.com/d4.json#/Item"}},
+            "https://schemas.example.com/d4.json": {"Item": {"$ref": "https://schemas.example.com/d5.json#/Item"}},
+            "https://schemas.example.com/d5.json": {"Item": {"$ref": "https://schemas.example.com/d6.json#/Item"}},
+            "https://schemas.example.com/d6.json": {"Item": {"$ref": "https://schemas.example.com/chain_head.json#/Item"}},
+        }
+
+        session = RemoteRefSession()
+        cfg = RemoteRefConfig.create(
+            allow_remote_refs=True,
+            remote_ref_hosts=["schemas.example.com"],
+            max_depth=10,
+            session=session,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/shallow": {
+                        "post": {
+                            "operationId": "shallowOp",
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "https://schemas.example.com/chain_head.json#/Item"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "/deep": {
+                        "post": {
+                            "operationId": "deepOp",
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "https://schemas.example.com/deep_head.json#/Item"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }))
+
+            parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+            assert parser.remote_fetcher is not None
+            parser.remote_fetcher.fetch_document = MagicMock(side_effect=lambda u: docs[u])  # type: ignore
+
+            endpoints = parser.get_endpoints()
+            self.assertEqual(len(endpoints), 2)
+            shallow_ep = next(ep for ep in endpoints if ep["path"] == "/shallow")
+            deep_ep = next(ep for ep in endpoints if ep["path"] == "/deep")
+
+            # Shallow endpoint succeeds and chain_head is placed in cache with depth_cost = 5
+            self.assertIsNone(shallow_ep.get("unresolved_schema_error"))
+            self.assertIsNotNone(shallow_ep["request_schema"])
+            self.assertEqual(shallow_ep["request_schema"]["type"], "object")
+
+            # Deep endpoint hits cache for chain_head, but 6 + 5 = 11 > 10, so it MUST be rejected!
+            self.assertIn("unresolved_schema_error", deep_ep)
+            self.assertIn("Remote reference depth limit (10) exceeded", deep_ep["unresolved_schema_error"])
+
+    def test_intra_document_remote_json_pointers_counted_consistently(self) -> None:
+        """Multiple JSON Pointer hops within the same remote document count against remote depth budget."""
+        doc_content: Dict[str, Any] = {}
+        for i in range(11):
+            doc_content[f"Node{i}"] = {"$ref": f"#/Node{i+1}"}
+        doc_content["Node11"] = {"type": "string"}
+
+        session = RemoteRefSession()
+        cfg = RemoteRefConfig.create(
+            allow_remote_refs=True,
+            remote_ref_hosts=["schemas.example.com"],
+            max_depth=10,
+            session=session,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/intra": {
+                        "post": {
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "https://schemas.example.com/tree.json#/Node0"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }))
+
+            parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+            assert parser.remote_fetcher is not None
+            parser.remote_fetcher.fetch_document = MagicMock(return_value=doc_content)  # type: ignore
+
+            endpoints = parser.get_endpoints()
+            self.assertEqual(len(endpoints), 1)
+            self.assertIn("unresolved_schema_error", endpoints[0])
+            self.assertIn("Remote reference depth limit (10) exceeded", endpoints[0]["unresolved_schema_error"])
+
+
+class TestDepthExhaustionFailClosed(unittest.TestCase):
+    """Test Section 3: Depth exhaustion raises exception, never returns raw $ref, fails closed on parameters and request bodies."""
+
+    def test_depth_exhaustion_in_resolve_ref_chain_raises_exception_never_returns_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({"openapi": "3.0.3", "paths": {}}))
+            parser = OpenAPIParser(str(spec_path))
+
+            with self.assertRaises(ValueError) as ctx:
+                parser._resolve_ref_chain("#/dummy", spec_path, max_depth=0)
+            self.assertIn("Reference depth limit", str(ctx.exception))
+
+    def test_mixed_local_and_remote_depth_budget(self) -> None:
+        """Mixing local and remote references correctly tracks remote depth while respecting local max_depth."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/test": {
+                        "get": {
+                            "parameters": [{"$ref": "./local1.json#/param"}]
+                        }
+                    }
+                }
+            }))
+            local1_path = dir_path / "local1.json"
+            local1_path.write_text(json.dumps({
+                "param": {"$ref": "https://schemas.example.com/r1.json#/param"}
+            }))
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+                max_depth=10,
+            )
+
+            # 10 remote docs: allowed
+            def mock_fetch(url: str) -> Dict[str, Any]:
+                import re
+                m = re.search(r"r(\d+)\.json", url)
+                idx = int(m.group(1)) if m else 1
+                if idx < 10:
+                    return {"param": {"$ref": f"https://schemas.example.com/r{idx+1}.json#/param"}}
+                return {"param": {"name": "test_param", "in": "query", "schema": {"type": "string"}}}
+
+            parser10 = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+            assert parser10.remote_fetcher is not None
+            parser10.remote_fetcher.fetch_document = MagicMock(side_effect=mock_fetch)  # type: ignore
+            eps10 = parser10.get_endpoints()
+            self.assertIsNone(eps10[0].get("unresolved_schema_error"))
+            self.assertEqual(len(eps10[0]["parameters"]), 1)
+            self.assertEqual(eps10[0]["parameters"][0]["name"], "test_param")
+
+            # 11 remote docs: exceeds budget
+            def mock_fetch11(url: str) -> Dict[str, Any]:
+                import re
+                m = re.search(r"r(\d+)\.json", url)
+                idx = int(m.group(1)) if m else 1
+                if idx < 11:
+                    return {"param": {"$ref": f"https://schemas.example.com/r{idx+1}.json#/param"}}
+                return {"param": {"name": "test_param", "in": "query", "schema": {"type": "string"}}}
+
+            parser11 = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+            assert parser11.remote_fetcher is not None
+            parser11.remote_fetcher.fetch_document = MagicMock(side_effect=mock_fetch11)  # type: ignore
+            eps11 = parser11.get_endpoints()
+            self.assertIn("unresolved_schema_error", eps11[0])
+            self.assertIn("Remote reference depth limit (10) exceeded", eps11[0]["unresolved_schema_error"])
+
+    def test_unresolved_parameter_ref_fails_closed_marks_inconclusive_zero_requests(self) -> None:
+        """When parameter resolution fails due to remote error, auditor marks INCONCLUSIVE and sends 0 requests."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/users/{id}": {
+                        "get": {
+                            "parameters": [
+                                {"$ref": "https://schemas.example.com/unresolved_param.json#/param"}
+                            ],
+                            "responses": {"200": {"description": "OK"}}
+                        }
+                    }
+                }
+            }))
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+            )
+            with patch.object(RemoteRefFetcher, "fetch_document", side_effect=RemoteRefResolutionError("404 Not Found")):
+                parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+                endpoints = parser.get_endpoints()
+                self.assertEqual(len(endpoints), 1)
+                self.assertIn("unresolved_schema_error", endpoints[0])
+
+                auditor = APISentinelAuditor(
+                    spec_path=str(spec_path),
+                    target_base_url="https://api.example.com",
+                    remote_ref_config=cfg,
+                )
+                auditor.audit_endpoint_bola(endpoints[0])
+                self.assertEqual(len(auditor.results), 1)
+                self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE.value)
+                self.assertEqual(len(auditor.findings), 0)
+                self.assertEqual(auditor.results[0]["evidence"]["requests_sent"], 0)
+
+    def test_unresolved_request_body_schema_fails_closed_zero_requests(self) -> None:
+        """When requestBody schema resolution fails, Mass Assignment marks INCONCLUSIVE and sends 0 requests."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "paths": {
+                    "/users/{id}": {
+                        "patch": {
+                            "requestBody": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "https://schemas.example.com/unresolved_body.json#/Body"}
+                                    }
+                                }
+                            },
+                            "responses": {"200": {"description": "OK"}}
+                        }
+                    }
+                }
+            }))
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+            )
+            with patch.object(RemoteRefFetcher, "fetch_document", side_effect=RemoteRefResolutionError("404 Not Found")):
+                parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg)
+                endpoints = parser.get_endpoints()
+                self.assertEqual(len(endpoints), 1)
+                self.assertIn("unresolved_schema_error", endpoints[0])
+
+                auditor = APISentinelAuditor(
+                    spec_path=str(spec_path),
+                    target_base_url="https://api.example.com",
+                    remote_ref_config=cfg,
+                )
+                auditor._audit_endpoint_mass_assignment(endpoints[0], endpoints)
+                self.assertEqual(len(auditor.results), 1)
+                self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE.value)
+                self.assertEqual(len(auditor.findings), 0)
+                self.assertEqual(auditor.results[0]["evidence"]["requests_sent"], 0)
+
+
+class TestRemoteSecuritySchemesOnlineAndOffline(unittest.TestCase):
+    """Test Section 4: ConfigValidator and OpenAPIParser remote securitySchemes handling."""
+
+    @patch("socket.create_connection")
+    @patch("socket.getaddrinfo")
+    def test_offline_mode_remote_security_schemes_strictly_zero_network_reports_unresolved(
+        self,
+        mock_getaddrinfo: MagicMock,
+        mock_create_conn: MagicMock,
+    ) -> None:
+        mock_getaddrinfo.side_effect = AssertionError("DNS resolution must not occur in offline mode!")
+        mock_create_conn.side_effect = AssertionError("TCP connection must not occur in offline mode!")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "components": {
+                    "securitySchemes": {
+                        "RemoteAuth": {
+                            "$ref": "https://schemas.example.com/auth.yaml#/components/securitySchemes/ApiKey"
+                        }
+                    }
+                },
+                "paths": {
+                    "/users": {
+                        "get": {"responses": {"200": {"description": "OK"}}}
+                    }
+                }
+            }))
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+            )
+
+            result = ConfigValidator.validate(
+                {},
+                spec_path=str(spec_path),
+                remote_ref_config=cfg,
+                offline=True,
+            )
+
+            mock_getaddrinfo.assert_not_called()
+            mock_create_conn.assert_not_called()
+
+            self.assertFalse(result.is_valid)
+            issues = [i for i in result.errors if "无法离线验证" in i.message]
+            self.assertTrue(len(issues) >= 1)
+            self.assertEqual(issues[0].actual, "unresolved_reference")
+
+    def test_online_authorized_remote_security_scheme_resolves_successfully(self) -> None:
+        """Online mode with explicit authorization resolves remote security scheme."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "components": {
+                    "securitySchemes": {
+                        "RemoteToken": {
+                            "$ref": "https://schemas.example.com/auth.yaml#/components/securitySchemes/ApiKey"
+                        }
+                    }
+                },
+                "paths": {
+                    "/users": {
+                        "get": {
+                            "security": [{"RemoteToken": []}],
+                            "responses": {"200": {"description": "OK"}}
+                        }
+                    }
+                }
+            }))
+
+            auth_doc = {
+                "components": {
+                    "securitySchemes": {
+                        "ApiKey": {
+                            "type": "apiKey",
+                            "name": "X-Custom-Auth",
+                            "in": "header"
+                        }
+                    }
+                }
+            }
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+            )
+
+            with patch.object(RemoteRefFetcher, "fetch_document", return_value=auth_doc):
+                parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg, offline=False)
+                schemes = parser.get_security_schemes()
+                self.assertIn("RemoteToken", schemes)
+                self.assertEqual(schemes["RemoteToken"]["name"], "X-Custom-Auth")
+                self.assertEqual(schemes["RemoteToken"]["in"], "header")
+
+                # ConfigValidator in online mode also resolves auth headers safely
+                auth_names = ConfigValidator._extract_spec_auth_headers(
+                    parser.raw_spec,
+                    spec_path=str(spec_path),
+                    remote_ref_config=cfg,
+                    offline=False,
+                )
+                self.assertIn("x-custom-auth", auth_names)
+
+    def test_unsupported_remote_security_scheme_type_raises_error(self) -> None:
+        """Unsupported remote security scheme definition raises explicit ValueError."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dir_path = Path(temp_dir)
+            spec_path = dir_path / "openapi.json"
+            spec_path.write_text(json.dumps({
+                "openapi": "3.0.3",
+                "components": {
+                    "securitySchemes": {
+                        "BadScheme": {
+                            "$ref": "https://schemas.example.com/auth.yaml#/components/securitySchemes/Bad"
+                        }
+                    }
+                },
+                "paths": {}
+            }))
+
+            auth_doc = {
+                "components": {
+                    "securitySchemes": {
+                        "Bad": {
+                            "type": "unsupported_protocol_scheme",
+                        }
+                    }
+                }
+            }
+
+            cfg = RemoteRefConfig.create(
+                allow_remote_refs=True,
+                remote_ref_hosts=["schemas.example.com"],
+            )
+
+            parser = OpenAPIParser(str(spec_path), remote_ref_config=cfg, offline=False)
+            assert parser.remote_fetcher is not None
+            parser.remote_fetcher.fetch_document = MagicMock(return_value=auth_doc)  # type: ignore
+
+            with self.assertRaises(ValueError) as ctx:
+                parser.get_security_schemes()
+
+            self.assertIn("not a supported security scheme", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -325,7 +325,12 @@ class TestRemoteRefFetcherLimitsAndMock(unittest.TestCase):
                 mock_resp.getheader.return_value = "https://schemas.example.com/redirected.json"
                 mock_getresponse.return_value = mock_resp
 
-                fetcher = RemoteRefFetcher(self.cfg)
+                cfg = RemoteRefConfig.create(
+                    allow_remote_refs=True,
+                    remote_ref_hosts=["schemas.example.com"],
+                    timeout=1.0,
+                )
+                fetcher = RemoteRefFetcher(cfg)
                 with self.assertRaises(RemoteRefSecurityError) as ctx:
                     fetcher.fetch_document(f"https://schemas.example.com/doc-{code}.json")
                 self.assertIn("HTTP redirect", str(ctx.exception))

@@ -24,6 +24,7 @@ import ipaddress
 import json
 import socket
 import ssl
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
@@ -79,6 +80,8 @@ class RemoteRefSession:
     document_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     total_bytes_downloaded: int = 0
     failed_urls: Set[str] = field(default_factory=set)
+    attempted_urls: Set[str] = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 @dataclass(frozen=True)
@@ -278,6 +281,10 @@ class RemoteRefFetcher:
         return len(self.session.document_cache)
 
     @property
+    def attempted_document_count(self) -> int:
+        return len(self.session.attempted_urls)
+
+    @property
     def total_bytes_downloaded(self) -> int:
         return self.session.total_bytes_downloaded
 
@@ -341,49 +348,56 @@ class RemoteRefFetcher:
 
     def fetch_document(self, doc_url: str) -> Dict[str, Any]:
         """Fetch, validate, and parse a remote OpenAPI JSON/YAML schema document."""
-        # Check cache first (deduplication across entire execution)
         canonical_url = urlunsplit(urlsplit(doc_url)[:4] + ("",))
-        if canonical_url in self.session.document_cache:
-            return self.session.document_cache[canonical_url]
 
-        if canonical_url in self.session.failed_urls:
-            raise RemoteRefResolutionError(
-                f"Previous fetch attempt for remote schema failed: {canonical_url}"
-            )
-
-        # Check document count limit before network request
-        if len(self.session.document_cache) >= self.config.max_docs:
-            raise RemoteRefLimitExceededError(
-                f"Maximum remote document limit ({self.config.max_docs}) reached; "
-                f"refusing to fetch: {doc_url}"
-            )
-
+        # Host allowlist and URL syntax validation
         hostname, path, port = self.validate_ref_url(canonical_url)
 
-        # DNS resolution and SSRF defense
-        safe_ips = resolve_safe_ips(
-            hostname, allow_loopback=self.config.allow_loopback_for_testing
-        )
-        pinned_ip = safe_ips[0]
+        with self.session.lock:
+            # 1. Check cache first (deduplication across entire execution)
+            if canonical_url in self.session.document_cache:
+                return self.session.document_cache[canonical_url]
 
-        # Prepare SSL context
-        if self._custom_ssl_context is not None:
-            ctx = self._custom_ssl_context
-        else:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = True
-            ctx.verify_mode = ssl.CERT_REQUIRED
+            # 2. Check failed URLs
+            if canonical_url in self.session.failed_urls:
+                raise RemoteRefResolutionError(
+                    f"Previous fetch attempt for remote schema failed: {canonical_url}"
+                )
 
-        # Connection setup with IP pinning
-        conn = PinnedIPHTTPSConnection(
-            pinned_ip=pinned_ip,
-            target_hostname=hostname,
-            port=port,
-            timeout=self.config.timeout,
-            context=ctx,
-        )
+            # 3. Check document count limit before DNS and Socket connection
+            if canonical_url not in self.session.attempted_urls:
+                if len(self.session.attempted_urls) >= self.config.max_docs:
+                    raise RemoteRefLimitExceededError(
+                        f"Maximum remote document limit ({self.config.max_docs}) reached; "
+                        f"refusing to fetch: {doc_url}"
+                    )
+                self.session.attempted_urls.add(canonical_url)
 
+        conn: Optional[PinnedIPHTTPSConnection] = None
         try:
+            # DNS resolution and SSRF defense
+            safe_ips = resolve_safe_ips(
+                hostname, allow_loopback=self.config.allow_loopback_for_testing
+            )
+            pinned_ip = safe_ips[0]
+
+            # Prepare SSL context
+            if self._custom_ssl_context is not None:
+                ctx = self._custom_ssl_context
+            else:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = True
+                ctx.verify_mode = ssl.CERT_REQUIRED
+
+            # Connection setup with IP pinning
+            conn = PinnedIPHTTPSConnection(
+                pinned_ip=pinned_ip,
+                target_hostname=hostname,
+                port=port,
+                timeout=self.config.timeout,
+                context=ctx,
+            )
+
             req_path = path
             parsed_query = urlsplit(canonical_url).query
             if parsed_query:
@@ -432,62 +446,62 @@ class RemoteRefFetcher:
                 if not chunk:
                     break
                 doc_bytes += len(chunk)
-                self.session.total_bytes_downloaded += len(chunk)
-                if doc_bytes > self.config.max_doc_bytes:
-                    self.session.failed_urls.add(canonical_url)
-                    raise RemoteRefLimitExceededError(
-                        f"Remote document body exceeded limit of {self.config.max_doc_bytes} bytes: {canonical_url}"
-                    )
-                if self.session.total_bytes_downloaded > self.config.max_total_bytes:
-                    self.session.failed_urls.add(canonical_url)
-                    raise RemoteRefLimitExceededError(
-                        f"Cumulative remote download exceeded limit of {self.config.max_total_bytes} bytes"
-                    )
+                with self.session.lock:
+                    self.session.total_bytes_downloaded += len(chunk)
+                    if doc_bytes > self.config.max_doc_bytes:
+                        self.session.failed_urls.add(canonical_url)
+                        raise RemoteRefLimitExceededError(
+                            f"Remote document body exceeded limit of {self.config.max_doc_bytes} bytes: {canonical_url}"
+                        )
+                    if self.session.total_bytes_downloaded > self.config.max_total_bytes:
+                        self.session.failed_urls.add(canonical_url)
+                        raise RemoteRefLimitExceededError(
+                            f"Cumulative remote download exceeded limit of {self.config.max_total_bytes} bytes"
+                        )
                 chunks.append(chunk)
 
             raw_bytes = b"".join(chunks)
 
+            # Decode and parse JSON/YAML
+            try:
+                text = raw_bytes.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise RemoteRefResolutionError(
+                    f"Remote document is not valid UTF-8: {canonical_url}"
+                ) from exc
+
+            parsed_data = self._parse_schema_content(text, canonical_url)
+
+            if not isinstance(parsed_data, dict):
+                raise RemoteRefResolutionError(
+                    f"Remote schema root must be a JSON/YAML mapping: {canonical_url}"
+                )
+
+            with self.session.lock:
+                self.session.document_cache[canonical_url] = parsed_data
+            return parsed_data
+
         except (socket.timeout, TimeoutError) as exc:
-            self.session.failed_urls.add(canonical_url)
+            with self.session.lock:
+                self.session.failed_urls.add(canonical_url)
             raise RemoteRefLimitExceededError(
                 f"Timed out fetching remote $ref after {self.config.timeout}s: {canonical_url}"
             ) from exc
         except (ssl.SSLError, OSError) as exc:
-            self.session.failed_urls.add(canonical_url)
+            with self.session.lock:
+                self.session.failed_urls.add(canonical_url)
             if isinstance(exc, RemoteRefError):
                 raise
             raise RemoteRefResolutionError(
                 f"Network/TLS error fetching remote $ref '{canonical_url}': {exc}"
             ) from exc
         except Exception:
-            self.session.failed_urls.add(canonical_url)
+            with self.session.lock:
+                self.session.failed_urls.add(canonical_url)
             raise
         finally:
-            conn.close()
-
-        # Decode and parse JSON/YAML
-        try:
-            text = raw_bytes.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            self.session.failed_urls.add(canonical_url)
-            raise RemoteRefResolutionError(
-                f"Remote document is not valid UTF-8: {canonical_url}"
-            ) from exc
-
-        try:
-            parsed_data = self._parse_schema_content(text, canonical_url)
-        except Exception:
-            self.session.failed_urls.add(canonical_url)
-            raise
-
-        if not isinstance(parsed_data, dict):
-            self.session.failed_urls.add(canonical_url)
-            raise RemoteRefResolutionError(
-                f"Remote schema root must be a JSON/YAML mapping: {canonical_url}"
-            )
-
-        self.session.document_cache[canonical_url] = parsed_data
-        return parsed_data
+            if conn is not None:
+                conn.close()
 
     @staticmethod
     def _parse_schema_content(text: str, source_url: str) -> Any:

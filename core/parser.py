@@ -52,6 +52,7 @@ class OpenAPIParser:
         self._document_cache: Dict[Path, Dict[str, Any]] = {}
         self._ref_cache: Dict[str, Any] = {}
         self._ref_file_cache: Dict[str, Union[Path, str]] = {}
+        self._ref_depth_cost: Dict[str, int] = {}
         self.remote_ref_config = remote_ref_config
         self.offline = bool(offline)
         self.remote_fetcher: Optional[RemoteRefFetcher] = (
@@ -270,7 +271,11 @@ class OpenAPIParser:
     ) -> Tuple[Any, Union[Path, str], int]:
         """Resolve aliases while retaining the document context of the value."""
         if max_depth <= 0:
-            return {"$ref": ref_uri}, base_context, remote_depth
+            if isinstance(base_context, str) or remote_depth > 0:
+                raise RemoteRefLimitExceededError(
+                    f"Reference depth limit ({self.max_remote_depth}) exceeded resolving remote ref: {ref_uri}"
+                )
+            raise ValueError(f"Reference depth limit exceeded resolving ref: {ref_uri}")
 
         target_doc, fragment, cache_key = self._reference_target(ref_uri, base_context)
         is_remote_step = isinstance(target_doc, str)
@@ -289,10 +294,16 @@ class OpenAPIParser:
             return {"$ref": ref_uri}, target_doc, current_remote_depth
 
         if cache_key in self._ref_cache:
+            depth_cost = self._ref_depth_cost.get(cache_key, 1 if is_remote_step else 0)
+            accumulated_remote_depth = remote_depth + depth_cost
+            if accumulated_remote_depth > self.max_remote_depth:
+                raise RemoteRefLimitExceededError(
+                    f"Remote reference depth limit ({self.max_remote_depth}) exceeded via cached reference at depth {accumulated_remote_depth}: {ref_uri}"
+                )
             return (
                 copy.deepcopy(self._ref_cache[cache_key]),
                 self._ref_file_cache.get(cache_key, target_doc),
-                current_remote_depth,
+                accumulated_remote_depth,
             )
 
         target, target_doc, _ = self._lookup_ref(ref_uri, base_context)
@@ -320,6 +331,7 @@ class OpenAPIParser:
         if not (isinstance(value, dict) and set(value) == {"$ref"}):
             self._ref_cache[cache_key] = copy.deepcopy(value)
             self._ref_file_cache[cache_key] = target_doc
+            self._ref_depth_cost[cache_key] = current_remote_depth - remote_depth
         return value, target_doc, current_remote_depth
 
     def get_security_schemes(self) -> Dict[str, Dict[str, Any]]:
@@ -336,9 +348,13 @@ class OpenAPIParser:
         resolved: Dict[str, Dict[str, Any]] = {}
         for name, scheme in schemes.items():
             if isinstance(scheme, dict) and "$ref" in scheme:
+                ref_uri = scheme["$ref"]
                 try:
                     self._reference_siblings(scheme, schema=False)
-                    scheme, _, _ = self._resolve_ref_chain(scheme["$ref"], self._spec_file, 20)
+                    resolved_scheme, _, _ = self._resolve_ref_chain(ref_uri, self._spec_file, 20)
+                    scheme = resolved_scheme
+                except RemoteRefOfflineBlockedError:
+                    raise
                 except (OSError, TypeError, ValueError, RuntimeError, RemoteRefError):
                     raise ValueError(
                         "Authentication scheme reference cannot be resolved safely; no request was sent"
@@ -405,8 +421,15 @@ class OpenAPIParser:
         remote_depth: int = 0,
     ) -> Union[Dict[str, Any], bool]:
         """Recursively resolve schema refs, compositions, properties and items."""
-        if not isinstance(schema, dict) or depth <= 0:
+        if not isinstance(schema, dict):
             return copy.deepcopy(schema)
+        if depth <= 0:
+            raw_ctx = _base_context if _base_context is not None else _base_file
+            if isinstance(raw_ctx, str) or remote_depth > 0:
+                raise RemoteRefLimitExceededError(
+                    f"Schema recursion depth limit exceeded for remote schema: {schema}"
+                )
+            raise ValueError(f"Schema recursion depth limit exceeded: {schema}")
 
         raw_context = _base_context if _base_context is not None else _base_file
         base_context: Union[Path, str] = (
@@ -593,11 +616,22 @@ class OpenAPIParser:
         )
         current_remote_depth = remote_depth
         if "$ref" in current:
+            ref_uri = current["$ref"]
             resolved, param_context, current_remote_depth = self._resolve_ref_chain(
-                current["$ref"], param_context, 20, remote_depth=current_remote_depth
+                ref_uri, param_context, 20, remote_depth=current_remote_depth
             )
             if not isinstance(resolved, dict):
-                return {}
+                if isinstance(param_context, str) or current_remote_depth > 0:
+                    raise RemoteRefResolutionError(
+                        f"Parameter $ref '{ref_uri}' resolved to non-object: {type(resolved).__name__}"
+                    )
+                raise ValueError(f"Parameter $ref '{ref_uri}' resolved to non-object: {type(resolved).__name__}")
+            if "$ref" in resolved and set(resolved) == {"$ref"}:
+                if isinstance(param_context, str) or current_remote_depth > 0:
+                    raise RemoteRefResolutionError(
+                        f"Parameter $ref '{ref_uri}' could not be fully resolved"
+                    )
+                raise ValueError(f"Parameter $ref '{ref_uri}' could not be fully resolved")
             siblings = self._reference_siblings(current, schema=False)
             current = dict(resolved)
             current.update(siblings)
@@ -661,13 +695,25 @@ class OpenAPIParser:
         )
         current_remote_depth = remote_depth
         if isinstance(request_body, dict) and "$ref" in request_body:
+            body_ref = request_body["$ref"]
             resolved, request_context, current_remote_depth = self._resolve_ref_chain(
-                request_body["$ref"], request_context, 20, remote_depth=current_remote_depth
+                body_ref, request_context, 20, remote_depth=current_remote_depth
             )
-            if isinstance(resolved, dict):
-                siblings = self._reference_siblings(request_body, schema=False)
-                request_body = dict(resolved)
-                request_body.update(siblings)
+            if not isinstance(resolved, dict):
+                if isinstance(request_context, str) or current_remote_depth > 0:
+                    raise RemoteRefResolutionError(
+                        f"requestBody $ref '{body_ref}' resolved to non-object: {type(resolved).__name__}"
+                    )
+                raise ValueError(f"requestBody $ref '{body_ref}' resolved to non-object: {type(resolved).__name__}")
+            if "$ref" in resolved and set(resolved) == {"$ref"}:
+                if isinstance(request_context, str) or current_remote_depth > 0:
+                    raise RemoteRefResolutionError(
+                        f"requestBody $ref '{body_ref}' could not be fully resolved"
+                    )
+                raise ValueError(f"requestBody $ref '{body_ref}' could not be fully resolved")
+            siblings = self._reference_siblings(request_body, schema=False)
+            request_body = dict(resolved)
+            request_body.update(siblings)
 
         if isinstance(request_body, dict):
             content = request_body.get("content", {})
@@ -680,12 +726,19 @@ class OpenAPIParser:
             media = content.get(selected_type, {})
             schema = media.get("schema", {}) if isinstance(media, dict) else {}
             if isinstance(schema, dict):
+                resolved_schema = self._deep_resolve_schema(
+                    schema,
+                    _base_context=request_context,
+                    remote_depth=current_remote_depth,
+                )
+                if isinstance(resolved_schema, dict) and "$ref" in resolved_schema and set(resolved_schema) == {"$ref"}:
+                    if isinstance(request_context, str) or current_remote_depth > 0:
+                        raise RemoteRefResolutionError(
+                            f"requestBody schema $ref '{resolved_schema['$ref']}' could not be resolved safely"
+                        )
+                    raise ValueError("requestBody schema $ref could not be resolved safely")
                 return (
-                    self._deep_resolve_schema(
-                        schema,
-                        _base_context=request_context,
-                        remote_depth=current_remote_depth,
-                    ),
+                    resolved_schema,
                     selected_type,
                     content_types,
                 )
