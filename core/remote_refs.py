@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
+from core.yaml_safety import safe_load_yaml
+
 
 class RemoteRefError(ValueError):
     """Base exception for all remote $ref errors."""
@@ -678,7 +680,7 @@ class RemoteRefFetcher:
             pass
 
         try:
-            import yaml
+            import yaml  # noqa: F401  # Availability check for a clear error message.
         except ImportError as exc:
             raise RuntimeError(
                 "YAML remote schema files require the PyYAML package; "
@@ -686,7 +688,8 @@ class RemoteRefFetcher:
             ) from exc
 
         try:
-            return yaml.safe_load(text)
+            # Bounded: a small remote document cannot expand exponentially.
+            return safe_load_yaml(text)
         except Exception as exc:
             raise RemoteRefResolutionError(
                 f"Failed to parse remote schema as JSON or YAML: {source_url}: {exc}"

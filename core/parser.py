@@ -35,6 +35,7 @@ from core.remote_refs import (
     sanitize_ref_url,
     split_remote_ref,
 )
+from core.yaml_safety import safe_load_yaml
 
 
 class OpenAPIParser:
@@ -94,7 +95,8 @@ class OpenAPIParser:
                             "install it with 'pip install PyYAML'."
                         ) from exc
                     try:
-                        data = yaml.safe_load(handle)
+                        # Bounded: aliases cannot expand a small file exponentially.
+                        data = safe_load_yaml(handle)
                     except yaml.YAMLError as exc:
                         raise ValueError("Invalid YAML specification") from exc
                 else:
