@@ -7,10 +7,23 @@
 """
 
 import json
+import re
+from functools import lru_cache
+from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 from core.models import json_values_equal, strict_json_loads
-import re
-from typing import Any, Dict, Iterable, Optional, Set, Tuple
+
+
+_JSON_PARSE_FAILED = object()
+
+
+@lru_cache(maxsize=8192)
+def _normalised_key_text(text: str) -> str:
+    # Response walks normalise every key of every record; keys repeat heavily.
+    text = text.strip().replace("-", "_")
+    text = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", text)
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
+    return text.lower()
 
 
 class ResponseDiffEngine:
@@ -121,10 +134,7 @@ class ResponseDiffEngine:
 
     @staticmethod
     def _normalise_key(key: Any) -> str:
-        text = str(key).strip().replace("-", "_")
-        text = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", text)
-        text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
-        return text.lower()
+        return _normalised_key_text(str(key))
 
     @classmethod
     def _walk_fields(cls, obj: Any, path: str = "") -> Iterable[Tuple[str, str, Any]]:
@@ -250,10 +260,13 @@ class ResponseDiffEngine:
 
         # Error bodies are evidence too: keep JSON even for 401/403 so that an
         # apparent denial cannot conceal business data returned in its body.
+        # Parse once; success responses reuse this result below.
+        parsed: Any
         try:
-            error_data = strict_json_loads(body_str)
+            parsed = strict_json_loads(body_str)
         except (TypeError, ValueError, RecursionError):
-            error_data = None
+            parsed = _JSON_PARSE_FAILED
+        error_data = None if parsed is _JSON_PARSE_FAILED else parsed
 
         if status in (401, 403):
             return {
@@ -305,9 +318,8 @@ class ResponseDiffEngine:
                 "data": None,
             }
 
-        try:
-            data = strict_json_loads(body_str)
-        except (TypeError, ValueError, RecursionError):
+        data = parsed
+        if data is _JSON_PARSE_FAILED:
             return {
                 "kind": cls.RESPONSE_INVALID,
                 "status_code": status,
@@ -457,6 +469,14 @@ class ResponseDiffEngine:
         try:
             a = strict_json_loads(json_str_a)
             b = strict_json_loads(json_str_b)
+        except (TypeError, ValueError, RecursionError):
+            return 0.0
+        return cls._structure_similarity(a, b)
+
+    @classmethod
+    def _structure_similarity(cls, a: Any, b: Any) -> float:
+        """Jaccard similarity of already parsed documents' structural keys."""
+        try:
             keys_a = cls._extract_keys(a)
             keys_b = cls._extract_keys(b)
 
@@ -611,12 +631,17 @@ class ResponseDiffEngine:
         visitor: Dict[str, Any],
         anonymous: Dict[str, Any],
         visitor_self: Optional[Dict[str, Any]],
-        body_owner: str,
-        body_visitor: str,
         resource_id_paths: Optional[Set[str]] = None,
+        *,
+        owner_values: Optional[Set[Tuple[str, str]]] = None,
+        visitor_values: Optional[Set[Tuple[str, str]]] = None,
     ) -> Dict[str, Any]:
-        owner_values = cls._meaningful_leaf_pairs(owner["data"])
-        visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
+        # Callers may pass already computed value pairs; walking a large
+        # response is the dominant cost of a comparison.
+        if owner_values is None:
+            owner_values = cls._meaningful_leaf_pairs(owner["data"])
+        if visitor_values is None:
+            visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
         shared_values = owner_values.intersection(visitor_values)
 
         owner_ids = cls._resource_identifier_pairs(owner["data"], resource_id_paths)
@@ -626,7 +651,8 @@ class ResponseDiffEngine:
         exact_match = bool(owner_values and owner_values == visitor_values)
         structure_similarity = 0.0
         if owner["data"] is not None and visitor["data"] is not None:
-            structure_similarity = cls.calculate_jaccard_similarity(body_owner, body_visitor)
+            # Same strictly parsed documents calculate_jaccard_similarity would decode.
+            structure_similarity = cls._structure_similarity(owner["data"], visitor["data"])
 
         visitor_self_exact_match = False
         visitor_self_value_similarity = 0.0
@@ -805,14 +831,18 @@ class ResponseDiffEngine:
                 raise ValueError("resource_id_paths 必须包含非空的响应字段路径")
             trusted_paths.add(cls._normalise_resource_path(path.strip()))
 
+        owner_values = cls._meaningful_leaf_pairs(owner["data"])
+        visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
+        anon_values = cls._meaningful_leaf_pairs(anonymous["data"])
+
         evidence = cls._build_evidence(
             owner,
             visitor,
             anonymous,
             self_assessment,
-            body_owner,
-            body_visitor,
             trusted_paths,
+            owner_values=owner_values,
+            visitor_values=visitor_values,
         )
         evidence["expected_public"] = bool(expected_public)
         evidence["requires_auth"] = bool(requires_auth)
@@ -828,9 +858,6 @@ class ResponseDiffEngine:
             requires_auth and anonymous["kind"] == cls.RESPONSE_VALID
         )
 
-        owner_values = cls._meaningful_leaf_pairs(owner["data"])
-        visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
-        anon_values = cls._meaningful_leaf_pairs(anonymous["data"])
         evidence["anonymous_owner_value_match"] = bool(
             owner["kind"] == cls.RESPONSE_VALID and anonymous["kind"] == cls.RESPONSE_VALID
             and owner_values and owner_values == anon_values

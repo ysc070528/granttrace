@@ -70,11 +70,14 @@ def normalize_parameter_value(metadata: Dict[str, Any], value: Any, *, swagger2:
             _fail("Number parameter strings must use canonical JSON number notation")
         try:
             parsed = json.loads(value)
-            if not math.isfinite(parsed) or str(parsed) != value:
-                _fail("Number parameter strings must retain their native wire representation without precision loss")
-            return parsed
+            finite = math.isfinite(parsed)  # A huge integer overflows float conversion.
         except (ValueError, OverflowError):
             _fail("Number parameter string cannot be represented safely")
+        # Outside the try: ParameterSerializationError is itself a ValueError,
+        # so failing inside it would replace this specific diagnostic.
+        if not finite or str(parsed) != value:
+            _fail("Number parameter strings must retain their native wire representation without precision loss")
+        return parsed
     return value
 
 
@@ -330,7 +333,7 @@ def serialize_header_parameter(metadata: Dict[str, Any], value: Any, *, swagger2
     if kind == "object":
         if explode:
             return name, ",".join(f"{k}={_scalar(v)}" for k, v in value.items())
-        return name, ",".join(f"{part}" for k, v in value.items() for part in (k, _scalar(v)))
+        return name, ",".join(part for k, v in value.items() for part in (k, _scalar(v)))
     _fail("Unsupported header parameter structure")
 
 

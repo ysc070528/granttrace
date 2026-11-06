@@ -284,7 +284,12 @@ class OpenAPIParser:
         if not isinstance(schema, dict) or depth <= 0:
             return copy.deepcopy(schema)
 
-        base_file = (_base_file or self._spec_file).resolve()
+        # Recursive calls always pass an already resolved document path; skip
+        # the filesystem lookup there. Reference containment is enforced on
+        # the resolved target in _reference_target either way.
+        base_file = (_base_file or self._spec_file)
+        if _seen is None:
+            base_file = base_file.resolve()
         seen = set() if _seen is None else set(_seen)
         working: Dict[str, Any] = copy.deepcopy(schema)
 
