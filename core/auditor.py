@@ -78,10 +78,12 @@ class APISentinelAuditor:
         bola_config: Optional[Dict[str, Any]] = None,
         bopla_config: Optional[Dict[str, Any]] = None,
         remote_ref_config: Optional[RemoteRefConfig] = None,
+        offline: bool = False,
     ) -> None:
         self._validate_target(target_base_url, allow_http)
         self.remote_ref_config = remote_ref_config
-        self.parser = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config)
+        self.offline = bool(offline)
+        self.parser = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config, offline=self.offline)
         self.parser.get_security_schemes()  # Validate authentication before identity checks or transport.
         self.target_base_url = target_base_url.rstrip("/")
         self.max_workers = max(1, int(max_workers))
@@ -1099,6 +1101,12 @@ class APISentinelAuditor:
 
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         key = self._operation_key(ep)
+        if ep.get("unresolved_schema_error"):
+            reason = f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent"
+            if key in self.bopla_config:
+                self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
+            return
         if key not in self.bopla_config:
             self._audit_endpoint_bola(ep)
             return
@@ -1748,6 +1756,15 @@ class APISentinelAuditor:
     def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        if ep.get("unresolved_schema_error"):
+            self._record_result(
+                ep,
+                "MASS_ASSIGNMENT",
+                Verdict.INCONCLUSIVE,
+                f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent",
+                evidence={"reason_category": "unresolved_reference", "requests_attempted": 0, "requests_sent": 0},
+            )
+            return
         if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only explicitly allowlisted reversible PATCH/PUT checks are supported; no method substitution or request was made",
@@ -2075,6 +2092,13 @@ class APISentinelAuditor:
             key = self._operation_key(ep)
             readback = self.readback_config.get(key, {})
             entry = {"endpoint": key, "check": "UNSUPPORTED", "writes_enabled": False}
+            if ep.get("unresolved_schema_error"):
+                entry["check"] = "INCONCLUSIVE"
+                entry["reason_category"] = "unresolved_reference"
+                entry["reason"] = f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent"
+                entry["writes_enabled"] = False
+                entries.append(entry)
+                continue
             if ep["method"] == "GET":
                 entry["check"] = "BOLA"
                 risk = read_only_risk(ep)

@@ -37,6 +37,10 @@ class RemoteRefDisabledError(RemoteRefError):
     """Raised when remote $ref resolution is not enabled."""
 
 
+class RemoteRefOfflineBlockedError(RemoteRefDisabledError):
+    """Raised when a remote $ref is encountered in an offline mode."""
+
+
 class RemoteRefNotAllowedHostError(RemoteRefError):
     """Raised when the target host is not in the allowlist."""
 
@@ -68,6 +72,15 @@ _BLOCKED_EXACT_IPS = {
 }
 
 
+@dataclass
+class RemoteRefSession:
+    """State shared across all RemoteRefFetcher and OpenAPIParser instances in a session."""
+
+    document_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    total_bytes_downloaded: int = 0
+    failed_urls: Set[str] = field(default_factory=set)
+
+
 @dataclass(frozen=True)
 class RemoteRefConfig:
     """Security configuration for remote $ref resolution."""
@@ -80,6 +93,7 @@ class RemoteRefConfig:
     max_depth: int = 10
     timeout: float = 3.0
     allow_loopback_for_testing: bool = False  # ONLY for internal tests
+    session: RemoteRefSession = field(default_factory=RemoteRefSession)
 
     @classmethod
     def create(
@@ -92,6 +106,7 @@ class RemoteRefConfig:
         max_depth: int = 10,
         timeout: float = 3.0,
         allow_loopback_for_testing: bool = False,
+        session: Optional[RemoteRefSession] = None,
     ) -> RemoteRefConfig:
         normalized_hosts = frozenset(
             h.strip().lower() for h in (remote_ref_hosts or []) if h and h.strip()
@@ -105,6 +120,7 @@ class RemoteRefConfig:
             max_depth=max_depth,
             timeout=timeout,
             allow_loopback_for_testing=allow_loopback_for_testing,
+            session=session if session is not None else RemoteRefSession(),
         )
 
 
@@ -251,16 +267,19 @@ class RemoteRefFetcher:
     ) -> None:
         self.config = config
         self._custom_ssl_context = ssl_context
-        self._document_cache: Dict[str, Dict[str, Any]] = {}
-        self._total_bytes_read = 0
+        self.session = config.session
+
+    @property
+    def _document_cache(self) -> Dict[str, Dict[str, Any]]:
+        return self.session.document_cache
 
     @property
     def fetched_document_count(self) -> int:
-        return len(self._document_cache)
+        return len(self.session.document_cache)
 
     @property
     def total_bytes_downloaded(self) -> int:
-        return self._total_bytes_read
+        return self.session.total_bytes_downloaded
 
     def is_remote_ref(self, ref_uri: str) -> bool:
         if not isinstance(ref_uri, str) or not ref_uri:
@@ -322,13 +341,18 @@ class RemoteRefFetcher:
 
     def fetch_document(self, doc_url: str) -> Dict[str, Any]:
         """Fetch, validate, and parse a remote OpenAPI JSON/YAML schema document."""
-        # Check cache first
+        # Check cache first (deduplication across entire execution)
         canonical_url = urlunsplit(urlsplit(doc_url)[:4] + ("",))
-        if canonical_url in self._document_cache:
-            return self._document_cache[canonical_url]
+        if canonical_url in self.session.document_cache:
+            return self.session.document_cache[canonical_url]
+
+        if canonical_url in self.session.failed_urls:
+            raise RemoteRefResolutionError(
+                f"Previous fetch attempt for remote schema failed: {canonical_url}"
+            )
 
         # Check document count limit before network request
-        if len(self._document_cache) >= self.config.max_docs:
+        if len(self.session.document_cache) >= self.config.max_docs:
             raise RemoteRefLimitExceededError(
                 f"Maximum remote document limit ({self.config.max_docs}) reached; "
                 f"refusing to fetch: {doc_url}"
@@ -408,12 +432,14 @@ class RemoteRefFetcher:
                 if not chunk:
                     break
                 doc_bytes += len(chunk)
+                self.session.total_bytes_downloaded += len(chunk)
                 if doc_bytes > self.config.max_doc_bytes:
+                    self.session.failed_urls.add(canonical_url)
                     raise RemoteRefLimitExceededError(
                         f"Remote document body exceeded limit of {self.config.max_doc_bytes} bytes: {canonical_url}"
                     )
-                self._total_bytes_read += len(chunk)
-                if self._total_bytes_read > self.config.max_total_bytes:
+                if self.session.total_bytes_downloaded > self.config.max_total_bytes:
+                    self.session.failed_urls.add(canonical_url)
                     raise RemoteRefLimitExceededError(
                         f"Cumulative remote download exceeded limit of {self.config.max_total_bytes} bytes"
                     )
@@ -422,15 +448,20 @@ class RemoteRefFetcher:
             raw_bytes = b"".join(chunks)
 
         except (socket.timeout, TimeoutError) as exc:
+            self.session.failed_urls.add(canonical_url)
             raise RemoteRefLimitExceededError(
                 f"Timed out fetching remote $ref after {self.config.timeout}s: {canonical_url}"
             ) from exc
         except (ssl.SSLError, OSError) as exc:
+            self.session.failed_urls.add(canonical_url)
             if isinstance(exc, RemoteRefError):
                 raise
             raise RemoteRefResolutionError(
                 f"Network/TLS error fetching remote $ref '{canonical_url}': {exc}"
             ) from exc
+        except Exception:
+            self.session.failed_urls.add(canonical_url)
+            raise
         finally:
             conn.close()
 
@@ -438,17 +469,24 @@ class RemoteRefFetcher:
         try:
             text = raw_bytes.decode("utf-8-sig")
         except UnicodeDecodeError as exc:
+            self.session.failed_urls.add(canonical_url)
             raise RemoteRefResolutionError(
                 f"Remote document is not valid UTF-8: {canonical_url}"
             ) from exc
 
-        parsed_data = self._parse_schema_content(text, canonical_url)
+        try:
+            parsed_data = self._parse_schema_content(text, canonical_url)
+        except Exception:
+            self.session.failed_urls.add(canonical_url)
+            raise
+
         if not isinstance(parsed_data, dict):
+            self.session.failed_urls.add(canonical_url)
             raise RemoteRefResolutionError(
                 f"Remote schema root must be a JSON/YAML mapping: {canonical_url}"
             )
 
-        self._document_cache[canonical_url] = parsed_data
+        self.session.document_cache[canonical_url] = parsed_data
         return parsed_data
 
     @staticmethod

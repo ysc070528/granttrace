@@ -23,7 +23,12 @@ from urllib.parse import unquote, urlsplit
 from core.remote_refs import (
     RemoteRefConfig,
     RemoteRefDisabledError,
+    RemoteRefError,
     RemoteRefFetcher,
+    RemoteRefLimitExceededError,
+    RemoteRefNotAllowedHostError,
+    RemoteRefOfflineBlockedError,
+    RemoteRefResolutionError,
     RemoteRefSecurityError,
     resolve_remote_reference_uri,
     split_remote_ref,
@@ -39,6 +44,7 @@ class OpenAPIParser:
         self,
         spec_path: str,
         remote_ref_config: Optional[RemoteRefConfig] = None,
+        offline: bool = False,
     ):
         self.spec_path = str(spec_path)
         self._spec_file = Path(spec_path).expanduser().resolve()
@@ -47,11 +53,20 @@ class OpenAPIParser:
         self._ref_cache: Dict[str, Any] = {}
         self._ref_file_cache: Dict[str, Union[Path, str]] = {}
         self.remote_ref_config = remote_ref_config
+        self.offline = bool(offline)
         self.remote_fetcher: Optional[RemoteRefFetcher] = (
-            RemoteRefFetcher(remote_ref_config) if remote_ref_config is not None else None
+            RemoteRefFetcher(remote_ref_config)
+            if (remote_ref_config is not None and not self.offline)
+            else None
         )
         self.raw_spec: Dict[str, Any] = self._read_file(str(self._spec_file))
         self.version = self._detect_version()
+
+    @property
+    def max_remote_depth(self) -> int:
+        if self.remote_ref_config is not None:
+            return self.remote_ref_config.max_depth
+        return 10
 
     @property
     def source_files(self) -> Tuple[Path, ...]:
@@ -137,6 +152,10 @@ class OpenAPIParser:
                 raise RemoteRefSecurityError(
                     f"Remote document cannot reference local files: {ref_uri}"
                 )
+            if self.offline:
+                raise RemoteRefOfflineBlockedError(
+                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                )
             if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
                 raise RemoteRefDisabledError(
                     f"Remote $ref resolution is disabled: {ref_uri}"
@@ -151,6 +170,10 @@ class OpenAPIParser:
         if parsed.scheme or parsed.netloc:
             if parsed.scheme.lower() == "file":
                 raise ValueError(f"Remote $ref values are not supported: {ref_uri}")
+            if self.offline:
+                raise RemoteRefOfflineBlockedError(
+                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                )
             if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
                 raise RemoteRefDisabledError(
                     f"Remote $ref values are not supported: {ref_uri}"
@@ -196,6 +219,10 @@ class OpenAPIParser:
             document = self._read_file(str(target_doc))
             doc_display: str = target_doc.name
         else:
+            if self.offline:
+                raise RemoteRefOfflineBlockedError(
+                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                )
             if self.remote_fetcher is None:
                 raise RemoteRefDisabledError(f"Remote $ref resolution is disabled: {ref_uri}")
             document = self.remote_fetcher.fetch_document(target_doc)
@@ -205,17 +232,29 @@ class OpenAPIParser:
 
         if fragment:
             if not fragment.startswith("/"):
+                if isinstance(target_doc, str):
+                    raise RemoteRefResolutionError(
+                        f"Only JSON Pointer fragments are supported in remote $ref: {ref_uri}"
+                    )
                 raise ValueError(f"Only JSON Pointer fragments are supported in $ref: {ref_uri}")
             try:
                 for raw_part in fragment[1:].split("/"):
                     part = self._decode_pointer_part(raw_part)
                     if isinstance(current, list):
                         if not part.isdigit() or (len(part) > 1 and part.startswith("0")):
+                            if isinstance(target_doc, str):
+                                raise RemoteRefResolutionError(
+                                    f"Invalid array index in JSON Pointer for remote $ref: {ref_uri}"
+                                )
                             raise ValueError("Invalid array index in JSON Pointer")
                         current = current[int(part)]
                     else:
                         current = current[part]
             except (KeyError, IndexError, TypeError, ValueError) as exc:
+                if isinstance(target_doc, str):
+                    raise RemoteRefResolutionError(
+                        f"Unresolved remote $ref '{ref_uri}' in '{doc_display}'"
+                    ) from exc
                 raise ValueError(f"Unresolved $ref '{ref_uri}' in '{doc_display}'") from exc
 
         return current, target_doc, cache_key
@@ -224,31 +263,51 @@ class OpenAPIParser:
         self,
         ref_uri: object,
         base_context: Union[Path, str],
-        max_depth: int,
+        max_depth: int = 20,
         seen: Optional[Set[str]] = None,
-    ) -> Tuple[Any, Union[Path, str]]:
+        *,
+        remote_depth: int = 0,
+    ) -> Tuple[Any, Union[Path, str], int]:
         """Resolve aliases while retaining the document context of the value."""
         if max_depth <= 0:
-            return {"$ref": ref_uri}, base_context
+            return {"$ref": ref_uri}, base_context, remote_depth
 
-        target, target_doc, cache_key = self._lookup_ref(ref_uri, base_context)
+        target_doc, fragment, cache_key = self._reference_target(ref_uri, base_context)
+        is_remote_step = isinstance(target_doc, str)
+        current_remote_depth = remote_depth + (1 if is_remote_step else 0)
+        if is_remote_step and current_remote_depth > self.max_remote_depth:
+            raise RemoteRefLimitExceededError(
+                f"Remote reference depth limit ({self.max_remote_depth}) exceeded at depth {current_remote_depth}: {ref_uri}"
+            )
+
         chain = set() if seen is None else set(seen)
         if cache_key in chain:
-            return {"$ref": ref_uri}, target_doc
+            if is_remote_step or isinstance(base_context, str):
+                raise RemoteRefResolutionError(
+                    f"Circular reference detected in remote $ref chain: {ref_uri}"
+                )
+            return {"$ref": ref_uri}, target_doc, current_remote_depth
 
         if cache_key in self._ref_cache:
             return (
                 copy.deepcopy(self._ref_cache[cache_key]),
                 self._ref_file_cache.get(cache_key, target_doc),
+                current_remote_depth,
             )
+
+        target, target_doc, _ = self._lookup_ref(ref_uri, base_context)
 
         chain.add(cache_key)
         value = copy.deepcopy(target)
         if isinstance(value, dict) and "$ref" in value:
             nested_ref = value.get("$ref")
             siblings = self._reference_siblings(value, schema=False)
-            resolved, resolved_doc = self._resolve_ref_chain(
-                nested_ref, target_doc, max_depth - 1, chain
+            resolved, resolved_doc, current_remote_depth = self._resolve_ref_chain(
+                nested_ref,
+                target_doc,
+                max_depth - 1,
+                chain,
+                remote_depth=current_remote_depth,
             )
             if isinstance(resolved, dict):
                 value = dict(resolved)
@@ -261,7 +320,7 @@ class OpenAPIParser:
         if not (isinstance(value, dict) and set(value) == {"$ref"}):
             self._ref_cache[cache_key] = copy.deepcopy(value)
             self._ref_file_cache[cache_key] = target_doc
-        return value, target_doc
+        return value, target_doc, current_remote_depth
 
     def get_security_schemes(self) -> Dict[str, Dict[str, Any]]:
         """Resolve authentication definitions with the existing local-reference limits."""
@@ -279,8 +338,8 @@ class OpenAPIParser:
             if isinstance(scheme, dict) and "$ref" in scheme:
                 try:
                     self._reference_siblings(scheme, schema=False)
-                    scheme, _ = self._resolve_ref_chain(scheme["$ref"], self._spec_file, 20)
-                except (OSError, TypeError, ValueError, RuntimeError):
+                    scheme, _, _ = self._resolve_ref_chain(scheme["$ref"], self._spec_file, 20)
+                except (OSError, TypeError, ValueError, RuntimeError, RemoteRefError):
                     raise ValueError(
                         "Authentication scheme reference cannot be resolved safely; no request was sent"
                     ) from None
@@ -306,7 +365,7 @@ class OpenAPIParser:
         """Resolve a root-relative or local external ``$ref``.
 
         Malformed/nonexistent pointers, unsafe paths, and remote URLs raise
-        ``ValueError`` rather than silently becoming an unconstrained schema.
+        ``ValueError`` or ``RemoteRefError`` rather than silently becoming an unconstrained schema.
         """
         target, target_doc, _ = self._lookup_ref(ref_uri, self._spec_file)
         value = self._deep_resolve_schema(target, max_depth, _base_context=target_doc)
@@ -343,6 +402,7 @@ class OpenAPIParser:
         _base_file: Optional[Union[Path, str]] = None,
         _base_context: Optional[Union[Path, str]] = None,
         _seen: Optional[Set[str]] = None,
+        remote_depth: int = 0,
     ) -> Union[Dict[str, Any], bool]:
         """Recursively resolve schema refs, compositions, properties and items."""
         if not isinstance(schema, dict) or depth <= 0:
@@ -359,9 +419,22 @@ class OpenAPIParser:
 
         if "$ref" in working:
             ref_uri = working["$ref"]
-            target, target_doc, cache_key = self._lookup_ref(ref_uri, base_context)
+            target_doc, fragment, cache_key = self._reference_target(ref_uri, base_context)
+            is_remote_step = isinstance(target_doc, str)
+            current_remote_depth = remote_depth + (1 if is_remote_step else 0)
+            if is_remote_step and current_remote_depth > self.max_remote_depth:
+                raise RemoteRefLimitExceededError(
+                    f"Remote reference depth limit ({self.max_remote_depth}) exceeded at depth {current_remote_depth}: {ref_uri}"
+                )
+
             if cache_key in seen:
+                if is_remote_step or isinstance(base_context, str):
+                    raise RemoteRefResolutionError(
+                        f"Circular remote schema reference detected: {ref_uri}"
+                    )
                 return working
+
+            target, target_doc, _ = self._lookup_ref(ref_uri, base_context)
             if not isinstance(target, (dict, bool)):
                 raise ValueError(f"$ref '{ref_uri}' does not reference a schema")
             siblings = self._reference_siblings(working, schema=True)
@@ -369,12 +442,20 @@ class OpenAPIParser:
             # Resolve the target and siblings separately; their local refs are
             # relative to different source documents. Retain both constraints.
             inherited = self._deep_resolve_schema(
-                target, depth - 1, _base_context=target_doc, _seen=seen
+                target,
+                depth - 1,
+                _base_context=target_doc,
+                _seen=seen,
+                remote_depth=current_remote_depth,
             )
             if not siblings:
                 return inherited
             local = self._deep_resolve_schema(
-                siblings, depth - 1, _base_context=base_context, _seen=_seen
+                siblings,
+                depth - 1,
+                _base_context=base_context,
+                _seen=_seen,
+                remote_depth=current_remote_depth,
             )
             combined: Dict[str, Any] = {"allOf": [inherited, local]}
             for branch in (inherited, local):
@@ -392,6 +473,7 @@ class OpenAPIParser:
                     depth - 1,
                     _base_context=base_context,
                     _seen=seen,
+                    remote_depth=remote_depth,
                 )
                 if isinstance(value, dict)
                 else copy.deepcopy(value)
@@ -401,11 +483,21 @@ class OpenAPIParser:
         items = working.get("items")
         if isinstance(items, dict):
             resolved["items"] = self._deep_resolve_schema(
-                items, depth - 1, _base_context=base_context, _seen=seen
+                items,
+                depth - 1,
+                _base_context=base_context,
+                _seen=seen,
+                remote_depth=remote_depth,
             )
         elif isinstance(items, list):
             resolved["items"] = [
-                self._deep_resolve_schema(item, depth - 1, _base_context=base_context, _seen=seen)
+                self._deep_resolve_schema(
+                    item,
+                    depth - 1,
+                    _base_context=base_context,
+                    _seen=seen,
+                    remote_depth=remote_depth,
+                )
                 if isinstance(item, dict)
                 else copy.deepcopy(item)
                 for item in items
@@ -414,7 +506,11 @@ class OpenAPIParser:
         additional = working.get("additionalProperties")
         if isinstance(additional, dict):
             resolved["additionalProperties"] = self._deep_resolve_schema(
-                additional, depth - 1, _base_context=base_context, _seen=seen
+                additional,
+                depth - 1,
+                _base_context=base_context,
+                _seen=seen,
+                remote_depth=remote_depth,
             )
 
         for keyword in ("allOf", "oneOf", "anyOf"):
@@ -423,7 +519,11 @@ class OpenAPIParser:
                 continue
             resolved_branches = [
                 self._deep_resolve_schema(
-                    branch, depth - 1, _base_context=base_context, _seen=seen
+                    branch,
+                    depth - 1,
+                    _base_context=base_context,
+                    _seen=seen,
+                    remote_depth=remote_depth,
                 )
                 if isinstance(branch, dict)
                 else copy.deepcopy(branch)
@@ -439,13 +539,23 @@ class OpenAPIParser:
             child = working.get(keyword)
             if isinstance(child, dict):
                 resolved[keyword] = self._deep_resolve_schema(
-                    child, depth - 1, _base_context=base_context, _seen=seen
+                    child,
+                    depth - 1,
+                    _base_context=base_context,
+                    _seen=seen,
+                    remote_depth=remote_depth,
                 )
 
         prefix_items = working.get("prefixItems")
         if isinstance(prefix_items, list):
             resolved["prefixItems"] = [
-                self._deep_resolve_schema(child, depth - 1, _base_context=base_context, _seen=seen)
+                self._deep_resolve_schema(
+                    child,
+                    depth - 1,
+                    _base_context=base_context,
+                    _seen=seen,
+                    remote_depth=remote_depth,
+                )
                 if isinstance(child, dict) else copy.deepcopy(child)
                 for child in prefix_items
             ]
@@ -453,7 +563,13 @@ class OpenAPIParser:
             children = working.get(keyword)
             if isinstance(children, dict):
                 resolved[keyword] = {
-                    name: self._deep_resolve_schema(child, depth - 1, _base_context=base_context, _seen=seen)
+                    name: self._deep_resolve_schema(
+                        child,
+                        depth - 1,
+                        _base_context=base_context,
+                        _seen=seen,
+                        remote_depth=remote_depth,
+                    )
                     if isinstance(child, dict) else copy.deepcopy(child)
                     for name, child in children.items()
                 }
@@ -461,7 +577,11 @@ class OpenAPIParser:
         return resolved
 
     def _resolve_parameter(
-        self, parameter: Any, base_context: Optional[Union[Path, str]] = None
+        self,
+        parameter: Any,
+        base_context: Optional[Union[Path, str]] = None,
+        *,
+        remote_depth: int = 0,
     ) -> Dict[str, Any]:
         if not isinstance(parameter, dict):
             return {}
@@ -471,9 +591,10 @@ class OpenAPIParser:
             if isinstance(base_context, Path)
             else (base_context if isinstance(base_context, str) else self._spec_file.resolve())
         )
+        current_remote_depth = remote_depth
         if "$ref" in current:
-            resolved, param_context = self._resolve_ref_chain(
-                current["$ref"], param_context, 20
+            resolved, param_context, current_remote_depth = self._resolve_ref_chain(
+                current["$ref"], param_context, 20, remote_depth=current_remote_depth
             )
             if not isinstance(resolved, dict):
                 return {}
@@ -484,7 +605,7 @@ class OpenAPIParser:
         schema = current.get("schema")
         if isinstance(schema, dict):
             current["schema"] = self._deep_resolve_schema(
-                schema, _base_context=param_context
+                schema, _base_context=param_context, remote_depth=current_remote_depth
             )
         return current
 
@@ -529,6 +650,8 @@ class OpenAPIParser:
         op_data: Dict[str, Any],
         parameters: Optional[List[Dict[str, Any]]] = None,
         base_context: Optional[Union[Path, str]] = None,
+        *,
+        remote_depth: int = 0,
     ) -> Tuple[Optional[Union[Dict[str, Any], bool]], Optional[str], List[str]]:
         request_body = op_data.get("requestBody", {})
         request_context: Union[Path, str] = (
@@ -536,9 +659,10 @@ class OpenAPIParser:
             if isinstance(base_context, Path)
             else (base_context if isinstance(base_context, str) else self._spec_file.resolve())
         )
+        current_remote_depth = remote_depth
         if isinstance(request_body, dict) and "$ref" in request_body:
-            resolved, request_context = self._resolve_ref_chain(
-                request_body["$ref"], request_context, 20
+            resolved, request_context, current_remote_depth = self._resolve_ref_chain(
+                request_body["$ref"], request_context, 20, remote_depth=current_remote_depth
             )
             if isinstance(resolved, dict):
                 siblings = self._reference_siblings(request_body, schema=False)
@@ -557,7 +681,11 @@ class OpenAPIParser:
             schema = media.get("schema", {}) if isinstance(media, dict) else {}
             if isinstance(schema, dict):
                 return (
-                    self._deep_resolve_schema(schema, _base_context=request_context),
+                    self._deep_resolve_schema(
+                        schema,
+                        _base_context=request_context,
+                        remote_depth=current_remote_depth,
+                    ),
                     selected_type,
                     content_types,
                 )
@@ -567,7 +695,8 @@ class OpenAPIParser:
         effective_parameters = parameters
         if effective_parameters is None:
             effective_parameters = [
-                self._resolve_parameter(item, request_context) for item in op_data.get("parameters", [])
+                self._resolve_parameter(item, request_context, remote_depth=current_remote_depth)
+                for item in op_data.get("parameters", [])
             ]
         for parameter in effective_parameters:
             if parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
@@ -600,14 +729,43 @@ class OpenAPIParser:
                 continue
             path_item = raw_path_item
             path_context: Union[Path, str] = self._spec_file
+            path_error: Optional[str] = None
             if "$ref" in path_item:
-                resolved, path_context = self._resolve_ref_chain(
-                    path_item["$ref"], self._spec_file, 20
+                try:
+                    resolved, path_context, _ = self._resolve_ref_chain(
+                        path_item["$ref"], self._spec_file, 20
+                    )
+                    if isinstance(resolved, dict):
+                        siblings = self._reference_siblings(path_item, schema=False)
+                        path_item = dict(resolved)
+                        path_item.update(siblings)
+                except RemoteRefOfflineBlockedError as exc:
+                    path_error = str(exc)
+                except (RemoteRefDisabledError, RemoteRefNotAllowedHostError, RemoteRefSecurityError):
+                    raise
+                except (RemoteRefResolutionError, RemoteRefLimitExceededError) as exc:
+                    path_error = str(exc)
+
+            if path_error:
+                endpoints.append(
+                    {
+                        "path": path_url,
+                        "method": "UNKNOWN",
+                        "operation_id": f"ref_{path_url}",
+                        "summary": "",
+                        "description": "",
+                        "tags": [],
+                        "parameters": [],
+                        "spec_version": str(self.raw_spec.get("openapi", self.raw_spec.get("swagger", ""))),
+                        "request_schema": None,
+                        "request_content_type": None,
+                        "request_content_types": [],
+                        "security": [],
+                        "security_declared": False,
+                        "unresolved_schema_error": path_error,
+                    }
                 )
-                if isinstance(resolved, dict):
-                    siblings = self._reference_siblings(path_item, schema=False)
-                    path_item = dict(resolved)
-                    path_item.update(siblings)
+                continue
 
             common_parameters = path_item.get("parameters", [])
             for method in self.HTTP_METHODS:
@@ -615,29 +773,42 @@ class OpenAPIParser:
                 if not isinstance(op_data, dict):
                     continue
 
-                parameters = self._merge_parameters(
-                    common_parameters, op_data.get("parameters", []), path_context
-                )
-                request_schema, content_type, content_types = self._extract_request_body_details(
-                    op_data, parameters, path_context
-                )
+                op_error: Optional[str] = None
+                parameters: List[Dict[str, Any]] = []
+                request_schema = None
+                content_type = None
+                content_types: List[str] = []
+                try:
+                    parameters = self._merge_parameters(
+                        common_parameters, op_data.get("parameters", []), path_context
+                    )
+                    request_schema, content_type, content_types = self._extract_request_body_details(
+                        op_data, parameters, path_context
+                    )
+                except RemoteRefOfflineBlockedError as exc:
+                    op_error = str(exc)
+                except (RemoteRefDisabledError, RemoteRefNotAllowedHostError, RemoteRefSecurityError):
+                    raise
+                except (RemoteRefResolutionError, RemoteRefLimitExceededError) as exc:
+                    op_error = str(exc)
 
-                endpoints.append(
-                    {
-                        "path": path_url,
-                        "method": method.upper(),
-                        "operation_id": op_data.get("operationId", f"{method}_{path_url}"),
-                        "summary": op_data.get("summary", ""),
-                        "description": op_data.get("description", ""),
-                        "tags": op_data.get("tags", []),
-                        "parameters": parameters,
-                        "spec_version": str(self.raw_spec.get("openapi", self.raw_spec.get("swagger", ""))),
-                        "request_schema": request_schema,
-                        "request_content_type": content_type,
-                        "request_content_types": content_types,
-                        "security": op_data.get("security", self.raw_spec.get("security", [])),
-                        "security_declared": "security" in op_data or "security" in self.raw_spec,
-                    }
-                )
+                endpoint_record: Dict[str, Any] = {
+                    "path": path_url,
+                    "method": method.upper(),
+                    "operation_id": op_data.get("operationId", f"{method}_{path_url}"),
+                    "summary": op_data.get("summary", ""),
+                    "description": op_data.get("description", ""),
+                    "tags": op_data.get("tags", []),
+                    "parameters": parameters,
+                    "spec_version": str(self.raw_spec.get("openapi", self.raw_spec.get("swagger", ""))),
+                    "request_schema": request_schema,
+                    "request_content_type": content_type,
+                    "request_content_types": content_types,
+                    "security": op_data.get("security", self.raw_spec.get("security", [])),
+                    "security_declared": "security" in op_data or "security" in self.raw_spec,
+                }
+                if op_error:
+                    endpoint_record["unresolved_schema_error"] = op_error
+                endpoints.append(endpoint_record)
 
         return endpoints

@@ -329,7 +329,7 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None,
         _print_validation_failure(selected_spec, config_path_str, private_values=private_values)
         return 2
 
-    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec, spec_path=selected_spec, remote_ref_config=remote_ref_config)
+    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec, spec_path=selected_spec, remote_ref_config=remote_ref_config, offline=True)
     if not result.is_valid:
         error_word = "error" if result.summary.errors_count == 1 else "errors"
         print(
@@ -522,7 +522,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.write_endpoint:
             val_config["write_allowlist"] = list(args.write_endpoint)
 
-        val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec, spec_path=spec_path, remote_ref_config=remote_ref_config)
+        val_result = ConfigValidator.validate(
+            val_config,
+            raw_spec=raw_spec,
+            spec_path=spec_path,
+            remote_ref_config=remote_ref_config,
+            offline=bool(args.dry_run or args.validate_config),
+            allow_offline_unresolved=bool(args.dry_run),
+        )
         if not val_result.is_valid:
             private_values = _onboarding_private_values(config)
             safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
@@ -568,6 +575,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             bola_config=config.get("bola"),
             bopla_config=config.get("bopla"),
             remote_ref_config=remote_ref_config,
+            offline=bool(args.dry_run),
         )
         # Local $ref documents become inputs when endpoint schemas resolve.
         # Protect them before running the audit or writing an offline plan.
