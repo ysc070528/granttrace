@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
 from decimal import Decimal, InvalidOperation
 from http.cookies import CookieError, SimpleCookie
+from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlencode, urlsplit, urlunsplit
 
@@ -55,14 +57,25 @@ _COOKIE_PAIR = r'''[!#$%&'*+\-.^_`|~0-9A-Za-z]+\s*=\s*(?:"(?:\\.|[^"\\])*"|[^\x0
 _COOKIE_PAIR_PATTERN = re.compile(_COOKIE_PAIR)
 _COOKIE_HEADER = re.compile(r"\s*" + _COOKIE_PAIR + r"(?:\s*;\s*" + _COOKIE_PAIR + r")*\s*;?\s*")
 _NUMERIC_SECRET = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+# Inline scrubbing runs on every evidence string; keep its patterns compiled.
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]+ )?PRIVATE KEY-----|$)", re.DOTALL,
+)
+_AUTH_SCHEME_VALUE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_CN_MOBILE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
+_US_SSN = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 
 
+@lru_cache(maxsize=4096)
 def _normalized_key(key: str) -> str:
     key = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", key)
     key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
     return re.sub(r"[\s.-]+", "_", key.lower())
 
 
+@lru_cache(maxsize=4096)
 def _is_sensitive_key(key: str) -> bool:
     key = _normalized_key(key)
     compact = key.replace("_", "")
@@ -146,16 +159,13 @@ class _Sanitizer:
 
     def _scrub_inline(self, text: str) -> str:
         text = self._replace_known_secrets(text)
-        text = re.sub(
-            r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]+ )?PRIVATE KEY-----|$)",
-            "[PRIVATE KEY REDACTED]", text, flags=re.DOTALL,
-        )
-        text = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", r"\1 [REDACTED]", text)
+        text = _PRIVATE_KEY_BLOCK.sub("[PRIVATE KEY REDACTED]", text)
+        text = _AUTH_SCHEME_VALUE.sub(r"\1 [REDACTED]", text)
         text = _SENSITIVE_ASSIGNMENT.sub(lambda m: m.group(1) + "=" + REDACTED, text)
-        text = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", REDACTED, text)
-        text = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "[EMAIL REDACTED]", text)
-        text = re.sub(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)", "[PHONE REDACTED]", text)
-        text = re.sub(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)", "[SSN REDACTED]", text)
+        text = _JWT.sub(REDACTED, text)
+        text = _EMAIL.sub("[EMAIL REDACTED]", text)
+        text = _CN_MOBILE.sub("[PHONE REDACTED]", text)
+        text = _US_SSN.sub("[SSN REDACTED]", text)
         return text
 
     def url(self, url: str) -> str:
@@ -272,7 +282,7 @@ class _Sanitizer:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             # JSON can turn an echoed numeric credential into a number, so
             # string-only substitution cannot protect this output boundary.
-            if not self.include_sensitive and Decimal(str(value)) in self.numeric_secrets:
+            if self.numeric_secrets and Decimal(str(value)) in self.numeric_secrets:
                 return REDACTED
             return value
         if value is None or isinstance(value, bool):
@@ -477,7 +487,6 @@ def safe_diagnostic_value(value: Any, depth: int = 0, secret_values: Iterable[st
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
-        import math
         if math.isnan(value):
             return "NaN"
         if math.isinf(value):
@@ -490,7 +499,7 @@ def safe_diagnostic_value(value: Any, depth: int = 0, secret_values: Iterable[st
         # Scrub assignments like api_key=xyz or secret=xyz
         sanitized = _SENSITIVE_ASSIGNMENT.sub(lambda m: m.group(1) + "=" + REDACTED, sanitized)
         # Also clean raw JWT
-        sanitized = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", REDACTED, sanitized)
+        sanitized = _JWT.sub(REDACTED, sanitized)
         # Limit length to avoid huge log dumps
         truncated = sanitized if len(sanitized) <= 120 else sanitized[:117] + "..."
         return sanitize_log_text(repr(truncated))

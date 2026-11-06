@@ -21,7 +21,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
@@ -33,6 +33,7 @@ from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
+from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
 from core.parameters import ParameterSerializationError, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
 
@@ -76,9 +77,13 @@ class APISentinelAuditor:
         include_sensitive_evidence: bool = False,
         bola_config: Optional[Dict[str, Any]] = None,
         bopla_config: Optional[Dict[str, Any]] = None,
+        remote_ref_config: Optional[RemoteRefConfig] = None,
+        offline: bool = False,
     ) -> None:
         self._validate_target(target_base_url, allow_http)
-        self.parser = OpenAPIParser(spec_path)
+        self.remote_ref_config = remote_ref_config
+        self.offline = bool(offline)
+        self.parser = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config, offline=self.offline)
         self.parser.get_security_schemes()  # Validate authentication before identity checks or transport.
         self.target_base_url = target_base_url.rstrip("/")
         self.max_workers = max(1, int(max_workers))
@@ -335,6 +340,19 @@ class APISentinelAuditor:
 
         return secrets
 
+    def _publish_secret_values(self, values: Set[str]) -> None:
+        """Replace the published secret set; never mutate a shared snapshot.
+
+        Workers iterate ``_secret_values`` without a lock while recording
+        evidence, and ``_read_observation`` replaces it under the result lock.
+        An unlocked in-place ``add`` could raise during that iteration or land
+        in a set that was already replaced, losing a value from redaction.
+        """
+        if not values or values <= self._secret_values:
+            return
+        with self._result_lock:
+            self._secret_values = self._secret_values | values
+
     def _ensure_parser_auth(self) -> None:
         # Replacing the parser is supported only between scans. Publish its
         # authentication state after validation, including for direct requests.
@@ -560,6 +578,9 @@ class APISentinelAuditor:
         emitted_headers: Set[str] = set()
         cookie_pairs: List[Tuple[str, str]] = []
         emitted_cookies: Set[str] = set()
+        # Collected locally and published once: other workers iterate the
+        # published set without a lock, and it is replaced atomically elsewhere.
+        discovered_secrets: Set[str] = set()
 
         for metadata in parameters:
             if not isinstance(metadata, dict):
@@ -620,22 +641,22 @@ class APISentinelAuditor:
                 hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
                 business_headers[hdr_name] = hdr_val
                 if is_auth_hdr or _is_sensitive_key(name):
-                    self._secret_values.add(hdr_val)
+                    discovered_secrets.add(hdr_val)
                     if isinstance(val, (str, int, float)) and str(val):
-                        self._secret_values.add(str(val))
+                        discovered_secrets.add(str(val))
                     elif isinstance(val, list):
                         for item in val:
                             if isinstance(item, (str, int, float)) and str(item):
-                                self._secret_values.add(str(item))
+                                discovered_secrets.add(str(item))
                     elif isinstance(val, dict):
                         for k, v in val.items():
                             if isinstance(v, (str, int, float)) and str(v):
-                                self._secret_values.add(str(v))
+                                discovered_secrets.add(str(v))
                 elif isinstance(val, dict):
                     for k, v in val.items():
                         if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
                             if isinstance(v, (str, int, float)) and str(v):
-                                self._secret_values.add(str(v))
+                                discovered_secrets.add(str(v))
 
             elif location == "cookie":
                 if swagger2:
@@ -708,9 +729,11 @@ class APISentinelAuditor:
                 emitted_cookies.add(c_name)
                 cookie_pairs.append((c_name, c_val))
                 if is_auth_cookie or _is_sensitive_key(name):
-                    self._secret_values.add(c_val)
+                    discovered_secrets.add(c_val)
                     if isinstance(val, (str, int, float)) and str(val):
-                        self._secret_values.add(str(val))
+                        discovered_secrets.add(str(val))
+
+        self._publish_secret_values(discovered_secrets)
 
         if cookie_pairs:
             identity_cookie_names: Set[str] = set()
@@ -1096,6 +1119,13 @@ class APISentinelAuditor:
 
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         key = self._operation_key(ep)
+        if ep.get("unresolved_schema_error"):
+            sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
+            reason = f"Schema could not be resolved safely: {sanitized_err}; no request was sent"
+            if key in self.bopla_config:
+                self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
+            self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
+            return
         if key not in self.bopla_config:
             self._audit_endpoint_bola(ep)
             return
@@ -1118,7 +1148,7 @@ class APISentinelAuditor:
                 identity: self._build_request_headers(ep, "owner", identity)
                 for identity in ("owner", "visitor", "anonymous")
             }
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE,
                                 f"Property resource parameters cannot be serialized: {exc}",
                                 {"requests_attempted": 0, "reason_category": "invalid_input"})
@@ -1188,7 +1218,7 @@ class APISentinelAuditor:
             visitor_cross_headers = self._build_request_headers(ep, "owner", "visitor")
             anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
             visitor_self_headers = self._build_request_headers(ep, "visitor", "visitor")
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1367,7 +1397,7 @@ class APISentinelAuditor:
             owner_headers = self._build_request_headers(ep, "owner", "owner")
             visitor_headers = self._build_request_headers(ep, "owner", "visitor")
             anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1451,73 +1481,6 @@ class APISentinelAuditor:
             return None
         assessment = ResponseDiffEngine.classify_response(result.status, result.body)
         return value if assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID else None
-
-    @staticmethod
-    def _path_parts(path: Any) -> Tuple[Any, ...]:
-        if isinstance(path, (tuple, list)):
-            return tuple(path)
-        tokens: List[Any] = []
-        for name, index in re.findall(r"(?:^|\.)([^.\[]+)|\[(\d+)\]", str(path)):
-            tokens.append(int(index) if index else name)
-        return tuple(tokens)
-
-    @classmethod
-    def _get_path(cls, value: Any, path: Any) -> Tuple[bool, Any]:
-        current = value
-        if not path:
-            return True, current
-        for part in cls._path_parts(path):
-            if isinstance(part, str) and isinstance(current, dict) and part in current:
-                current = current[part]
-            elif isinstance(part, int) and isinstance(current, list) and part < len(current):
-                current = current[part]
-            else:
-                return False, None
-        return True, current
-
-    @classmethod
-    def _set_path(cls, payload: Dict[str, Any], path: Any, value: Any) -> None:
-        parts = cls._path_parts(path)
-        if not parts:
-            raise ValueError("mutation path must not be empty")
-        cursor: Any = payload
-        for position, part in enumerate(parts):
-            last = position == len(parts) - 1
-            next_part = None if last else parts[position + 1]
-            if isinstance(part, str):
-                if not isinstance(cursor, dict):
-                    raise ValueError(f"cannot place object field '{part}' inside a non-object")
-                if last:
-                    cursor[part] = value
-                    return
-                expected: Union[List[object], Dict[str, object]] = [] if isinstance(next_part, int) else {}
-                if not isinstance(cursor.get(part), type(expected)):
-                    cursor[part] = expected
-                cursor = cursor[part]
-
-            else:
-                if not isinstance(cursor, list):
-                    raise ValueError(f"cannot place array index {part} inside a non-array")
-                while len(cursor) <= part:
-                    cursor.append([] if isinstance(next_part, int) else {})
-                if last:
-                    cursor[part] = value
-                    return
-                expected = [] if isinstance(next_part, int) else {}
-                if not isinstance(cursor[part], type(expected)):
-                    cursor[part] = expected
-                cursor = cursor[part]
-
-    @classmethod
-    def _merge_payloads(cls, base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively overlay configured valid fields without discarding generated ones."""
-        merged = copy.deepcopy(base)
-        for key, value in overlay.items():
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = cls._merge_payloads(merged[key], value)
-            else:
-                merged[key] = copy.deepcopy(value)
-        return merged
 
     def _normalise_mutation_cases(self, schema: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         cases: List[Dict[str, Any]] = []
@@ -1745,6 +1708,16 @@ class APISentinelAuditor:
     def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        if ep.get("unresolved_schema_error"):
+            sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
+            self._record_result(
+                ep,
+                "MASS_ASSIGNMENT",
+                Verdict.INCONCLUSIVE,
+                f"Schema could not be resolved safely: {sanitized_err}; no request was sent",
+                evidence={"reason_category": "unresolved_reference", "requests_attempted": 0, "requests_sent": 0},
+            )
+            return
         if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only explicitly allowlisted reversible PATCH/PUT checks are supported; no method substitution or request was made",
@@ -1817,12 +1790,13 @@ class APISentinelAuditor:
             p_name = p.get("name", "")
             if loc == "header" and str(p_name).lower() in {"authorization", "accept", "content-type"}:
                 continue
-            schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
-            p_type = schema.get("type", p.get("type"))
+            # Distinct name: ``schema`` above is the request body schema.
+            param_schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
+            p_type = param_schema.get("type", p.get("type"))
             configured_val = self._operation_parameter_values(ep, "visitor").get(p_name)
-            is_array = (p_type == "array" or "items" in p or "items" in schema
+            is_array = (p_type == "array" or "items" in p or "items" in param_schema
                         or p.get("collectionFormat") or isinstance(configured_val, list))
-            is_object = (p_type == "object" or "properties" in p or "properties" in schema
+            is_object = (p_type == "object" or "properties" in p or "properties" in param_schema
                          or isinstance(configured_val, dict))
             if loc == "cookie":
                 self._record_result(
@@ -1844,7 +1818,7 @@ class APISentinelAuditor:
             read_ep = self._readback_endpoint(ep, readback)
             readback_url = self._build_url(read_ep, "visitor", readback.get("parameter_values"))
             self._build_request_headers(read_ep, "visitor", "visitor", readback.get("parameter_values"))
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1870,7 +1844,7 @@ class APISentinelAuditor:
                 field_path = case["field_path"]
                 try:
                     read_url, before_http = self._readback_result(ep, readback, "visitor")
-                except ParameterSerializationError as exc:
+                except (ParameterSerializationError, RemoteRefError) as exc:
                     self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
                     return
                 if before_http.error:
@@ -2072,6 +2046,14 @@ class APISentinelAuditor:
             key = self._operation_key(ep)
             readback = self.readback_config.get(key, {})
             entry = {"endpoint": key, "check": "UNSUPPORTED", "writes_enabled": False}
+            if ep.get("unresolved_schema_error"):
+                sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
+                entry["check"] = "INCONCLUSIVE"
+                entry["reason_category"] = "unresolved_reference"
+                entry["reason"] = f"Schema could not be resolved safely: {sanitized_err}; no request was sent"
+                entry["writes_enabled"] = False
+                entries.append(entry)
+                continue
             if ep["method"] == "GET":
                 entry["check"] = "BOLA"
                 risk = read_only_risk(ep)
@@ -2080,7 +2062,7 @@ class APISentinelAuditor:
                     try:
                         risk = (self._read_request_risk("GET", self._build_url(ep, "owner"))
                                 or self._read_request_risk("GET", self._build_url(ep, "visitor")))
-                    except ParameterSerializationError as exc:
+                    except (ParameterSerializationError, RemoteRefError) as exc:
                         parameter_error = str(exc)
                 if risk:
                     entry.update({"safety_blocked": True, "reason_category": "safety_policy",
@@ -2117,7 +2099,7 @@ class APISentinelAuditor:
                     if not risk and read_ep["method"] == "GET":
                         try:
                             risk = self._read_request_risk("GET", self._build_url(read_ep, "visitor", readback.get("parameter_values")))
-                        except ParameterSerializationError:
+                        except (ParameterSerializationError, RemoteRefError):
                             pass
                     if risk:
                         entry.update({"writes_enabled": False, "safety_blocked": True,

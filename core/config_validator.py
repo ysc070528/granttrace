@@ -22,6 +22,7 @@ from core.generator import SmartDataGenerator
 from core.models import parse_operation_key
 from core.parameters import ParameterSerializationError, normalize_parameter_value
 from core.parser import OpenAPIParser
+from core.remote_refs import RemoteRefConfig, RemoteRefOfflineBlockedError, sanitize_error_message
 from core.transactions import path_parts, paths_collide
 
 
@@ -178,7 +179,7 @@ class ConfigValidator:
 
     @classmethod
     def validate(
-        cls, config: Any, raw_spec: Optional[Dict[str, Any]] = None, *, spec_path: Optional[str] = None,
+        cls, config: Any, raw_spec: Optional[Dict[str, Any]] = None, *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True, allow_offline_unresolved: bool = False,
     ) -> ConfigValidationResult:
         """Validate a loaded configuration mapping and collect all issues without early exit."""
         issues: List[ConfigIssue] = []
@@ -263,7 +264,22 @@ class ConfigValidator:
 
         # 2. Section: identities
         try:
-            spec_auth_names = cls._extract_spec_auth_headers(raw_spec, spec_path=spec_path)
+            spec_auth_names = cls._extract_spec_auth_headers(
+                raw_spec,
+                spec_path=spec_path,
+                remote_ref_config=remote_ref_config,
+                offline=offline,
+            )
+        except RemoteRefOfflineBlockedError as exc:
+            issues.append(ConfigIssue(
+                path="<spec>.securitySchemes",
+                message=f"Specification contains remote security scheme $ref which cannot be fetched in offline validation mode (无法离线验证): {exc}",
+                expected="locally resolvable security schemes without remote network requests",
+                actual="unresolved_reference",
+                suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
+                is_warning=allow_offline_unresolved,
+            ))
+            spec_auth_names = set()
         except (TypeError, ValueError) as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
@@ -370,7 +386,7 @@ class ConfigValidator:
         checked_parameters: Set[Tuple[str, str]] = set()
         cls._validate_configured_readback_parameters(config, issues, checked_parameters)
         if raw_spec is not None:
-            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters)
+            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters, remote_ref_config=remote_ref_config, offline=offline, allow_offline_unresolved=allow_offline_unresolved)
 
         errors = [issue for issue in issues if not issue.is_warning]
         summary.total_issues = len(issues)
@@ -386,28 +402,54 @@ class ConfigValidator:
     @classmethod
     def _validate_spec_cross_checks(
         cls, config: Dict[str, Any], raw_spec: Dict[str, Any], issues: List[ConfigIssue],
-        *, spec_path: Optional[str], seen: Set[Tuple[str, str]],
+        *, spec_path: Optional[str], seen: Set[Tuple[str, str]], remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True, allow_offline_unresolved: bool = False,
     ) -> None:
         try:
             if spec_path is not None:
-                endpoints = OpenAPIParser(spec_path).get_endpoints()
+                endpoints = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config, offline=offline).get_endpoints()
             else:
                 # A mapping has no base directory for relative file references.
                 # A temporary root permits internal refs without guessing a source path.
                 with tempfile.TemporaryDirectory(prefix="granttrace-config-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    endpoints = OpenAPIParser(str(source)).get_endpoints()
+                    endpoints = OpenAPIParser(
+                        str(source),
+                        remote_ref_config=remote_ref_config,
+                        offline=offline,
+                    ).get_endpoints()
+        except RemoteRefOfflineBlockedError as exc:
+            issues.append(ConfigIssue(
+                path="<spec>",
+                message=f"Specification contains remote $ref which cannot be fetched in offline validation mode (无法离线验证): {exc}",
+                expected="locally resolvable operations and parameter schemas without remote network requests",
+                actual="unresolved_reference",
+                suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
+                is_warning=allow_offline_unresolved,
+            ))
+            return
         except Exception as exc:
             issues.append(ConfigIssue(
                 path="<spec>",
-                message="Selected specification operation metadata could not be resolved for cross-checking",
-                expected="locally resolvable operations and parameter schemas",
+                message=f"Selected specification operation metadata could not be resolved for cross-checking: {exc}",
+                expected="locally resolvable operations and parameter schemas without remote network requests",
                 actual=type(exc).__name__,
                 suggestion=("Pass the original spec_path when validating a mapping with relative file references"
                             if spec_path is None else "Fix the specification's local references and supported schemas"),
             ))
             return
+
+        for endpoint in endpoints:
+            if endpoint.get("unresolved_schema_error"):
+                sanitized_err = sanitize_error_message(endpoint["unresolved_schema_error"])
+                issues.append(ConfigIssue(
+                    path=f"{endpoint['method']} {endpoint['path']}",
+                    message=f"Endpoint schema could not be resolved safely: {sanitized_err} (无法离线验证)",
+                    expected="resolvable endpoint schema without unresolvable remote dependencies",
+                    actual="unresolved_reference",
+                    suggestion="Fix the reference or provide a resolvable local specification",
+                    is_warning=allow_offline_unresolved,
+                ))
 
         operations = {f"{endpoint['method']} {endpoint['path']}": endpoint for endpoint in endpoints}
         allowlist = config.get("write_allowlist")
@@ -554,20 +596,30 @@ class ConfigValidator:
 
     @classmethod
     def _extract_spec_auth_headers(
-        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None,
+        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True,
     ) -> Set[str]:
-        if not isinstance(raw_spec, dict):
+        if not isinstance(raw_spec, dict) and spec_path is None:
             return set()
         try:
             if spec_path is not None:
-                schemes = OpenAPIParser(spec_path).get_security_schemes()
+                schemes = OpenAPIParser(
+                    spec_path,
+                    remote_ref_config=remote_ref_config,
+                    offline=offline,
+                ).get_security_schemes()
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.
                 with tempfile.TemporaryDirectory(prefix="granttrace-auth-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    schemes = OpenAPIParser(str(source)).get_security_schemes()
+                    schemes = OpenAPIParser(
+                        str(source),
+                        remote_ref_config=remote_ref_config,
+                        offline=offline,
+                    ).get_security_schemes()
+        except RemoteRefOfflineBlockedError:
+            raise
         except (OSError, TypeError, ValueError, RuntimeError):
             raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
         return {
