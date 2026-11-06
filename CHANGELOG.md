@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Bound YAML anchor/alias expansion in local specifications, referenced YAML
+  files and remote `$ref` documents. A ~1 KB alias "bomb" previously stalled
+  parsing for 13 s or more (merge keys inside `yaml.safe_load` itself); aliases
+  may now add at most max(250,000, 10 x the document's own nodes) nodes, and
+  recursive aliases are rejected before any object is built or request is sent.
 - Fail closed before external CLI PATCH tests when authoritative resource state
   cannot be independently observed; write flags, mappings and a declared strong
   readback cannot supply that proof. Existing CLI/config syntax remains accepted.
