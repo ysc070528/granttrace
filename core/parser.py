@@ -437,10 +437,13 @@ class OpenAPIParser:
 
         raw_context = _base_context if _base_context is not None else _base_file
         base_context: Union[Path, str] = (
-            raw_context.resolve()
-            if isinstance(raw_context, Path)
-            else (raw_context if isinstance(raw_context, str) else self._spec_file.resolve())
+            raw_context if isinstance(raw_context, (Path, str)) else self._spec_file
         )
+        # Recursive calls always pass an already resolved local path (or a
+        # remote URL); skip the filesystem lookup there. Reference containment
+        # is enforced on the resolved target in _reference_target either way.
+        if _seen is None and isinstance(base_context, Path):
+            base_context = base_context.resolve()
         seen = set() if _seen is None else set(_seen)
         working: Dict[str, Any] = copy.deepcopy(schema)
 

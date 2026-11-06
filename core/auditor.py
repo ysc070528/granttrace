@@ -21,7 +21,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
@@ -340,6 +340,19 @@ class APISentinelAuditor:
 
         return secrets
 
+    def _publish_secret_values(self, values: Set[str]) -> None:
+        """Replace the published secret set; never mutate a shared snapshot.
+
+        Workers iterate ``_secret_values`` without a lock while recording
+        evidence, and ``_read_observation`` replaces it under the result lock.
+        An unlocked in-place ``add`` could raise during that iteration or land
+        in a set that was already replaced, losing a value from redaction.
+        """
+        if not values or values <= self._secret_values:
+            return
+        with self._result_lock:
+            self._secret_values = self._secret_values | values
+
     def _ensure_parser_auth(self) -> None:
         # Replacing the parser is supported only between scans. Publish its
         # authentication state after validation, including for direct requests.
@@ -565,6 +578,9 @@ class APISentinelAuditor:
         emitted_headers: Set[str] = set()
         cookie_pairs: List[Tuple[str, str]] = []
         emitted_cookies: Set[str] = set()
+        # Collected locally and published once: other workers iterate the
+        # published set without a lock, and it is replaced atomically elsewhere.
+        discovered_secrets: Set[str] = set()
 
         for metadata in parameters:
             if not isinstance(metadata, dict):
@@ -625,22 +641,22 @@ class APISentinelAuditor:
                 hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
                 business_headers[hdr_name] = hdr_val
                 if is_auth_hdr or _is_sensitive_key(name):
-                    self._secret_values.add(hdr_val)
+                    discovered_secrets.add(hdr_val)
                     if isinstance(val, (str, int, float)) and str(val):
-                        self._secret_values.add(str(val))
+                        discovered_secrets.add(str(val))
                     elif isinstance(val, list):
                         for item in val:
                             if isinstance(item, (str, int, float)) and str(item):
-                                self._secret_values.add(str(item))
+                                discovered_secrets.add(str(item))
                     elif isinstance(val, dict):
                         for k, v in val.items():
                             if isinstance(v, (str, int, float)) and str(v):
-                                self._secret_values.add(str(v))
+                                discovered_secrets.add(str(v))
                 elif isinstance(val, dict):
                     for k, v in val.items():
                         if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
                             if isinstance(v, (str, int, float)) and str(v):
-                                self._secret_values.add(str(v))
+                                discovered_secrets.add(str(v))
 
             elif location == "cookie":
                 if swagger2:
@@ -713,9 +729,11 @@ class APISentinelAuditor:
                 emitted_cookies.add(c_name)
                 cookie_pairs.append((c_name, c_val))
                 if is_auth_cookie or _is_sensitive_key(name):
-                    self._secret_values.add(c_val)
+                    discovered_secrets.add(c_val)
                     if isinstance(val, (str, int, float)) and str(val):
-                        self._secret_values.add(str(val))
+                        discovered_secrets.add(str(val))
+
+        self._publish_secret_values(discovered_secrets)
 
         if cookie_pairs:
             identity_cookie_names: Set[str] = set()
@@ -1464,73 +1482,6 @@ class APISentinelAuditor:
         assessment = ResponseDiffEngine.classify_response(result.status, result.body)
         return value if assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID else None
 
-    @staticmethod
-    def _path_parts(path: Any) -> Tuple[Any, ...]:
-        if isinstance(path, (tuple, list)):
-            return tuple(path)
-        tokens: List[Any] = []
-        for name, index in re.findall(r"(?:^|\.)([^.\[]+)|\[(\d+)\]", str(path)):
-            tokens.append(int(index) if index else name)
-        return tuple(tokens)
-
-    @classmethod
-    def _get_path(cls, value: Any, path: Any) -> Tuple[bool, Any]:
-        current = value
-        if not path:
-            return True, current
-        for part in cls._path_parts(path):
-            if isinstance(part, str) and isinstance(current, dict) and part in current:
-                current = current[part]
-            elif isinstance(part, int) and isinstance(current, list) and part < len(current):
-                current = current[part]
-            else:
-                return False, None
-        return True, current
-
-    @classmethod
-    def _set_path(cls, payload: Dict[str, Any], path: Any, value: Any) -> None:
-        parts = cls._path_parts(path)
-        if not parts:
-            raise ValueError("mutation path must not be empty")
-        cursor: Any = payload
-        for position, part in enumerate(parts):
-            last = position == len(parts) - 1
-            next_part = None if last else parts[position + 1]
-            if isinstance(part, str):
-                if not isinstance(cursor, dict):
-                    raise ValueError(f"cannot place object field '{part}' inside a non-object")
-                if last:
-                    cursor[part] = value
-                    return
-                expected: Union[List[object], Dict[str, object]] = [] if isinstance(next_part, int) else {}
-                if not isinstance(cursor.get(part), type(expected)):
-                    cursor[part] = expected
-                cursor = cursor[part]
-
-            else:
-                if not isinstance(cursor, list):
-                    raise ValueError(f"cannot place array index {part} inside a non-array")
-                while len(cursor) <= part:
-                    cursor.append([] if isinstance(next_part, int) else {})
-                if last:
-                    cursor[part] = value
-                    return
-                expected = [] if isinstance(next_part, int) else {}
-                if not isinstance(cursor[part], type(expected)):
-                    cursor[part] = expected
-                cursor = cursor[part]
-
-    @classmethod
-    def _merge_payloads(cls, base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively overlay configured valid fields without discarding generated ones."""
-        merged = copy.deepcopy(base)
-        for key, value in overlay.items():
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = cls._merge_payloads(merged[key], value)
-            else:
-                merged[key] = copy.deepcopy(value)
-        return merged
-
     def _normalise_mutation_cases(self, schema: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         cases: List[Dict[str, Any]] = []
         builder = getattr(SmartDataGenerator, "build_mass_assignment_cases", None)
@@ -1839,12 +1790,13 @@ class APISentinelAuditor:
             p_name = p.get("name", "")
             if loc == "header" and str(p_name).lower() in {"authorization", "accept", "content-type"}:
                 continue
-            schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
-            p_type = schema.get("type", p.get("type"))
+            # Distinct name: ``schema`` above is the request body schema.
+            param_schema = p.get("schema", {}) if isinstance(p.get("schema"), dict) else {}
+            p_type = param_schema.get("type", p.get("type"))
             configured_val = self._operation_parameter_values(ep, "visitor").get(p_name)
-            is_array = (p_type == "array" or "items" in p or "items" in schema
+            is_array = (p_type == "array" or "items" in p or "items" in param_schema
                         or p.get("collectionFormat") or isinstance(configured_val, list))
-            is_object = (p_type == "object" or "properties" in p or "properties" in schema
+            is_object = (p_type == "object" or "properties" in p or "properties" in param_schema
                          or isinstance(configured_val, dict))
             if loc == "cookie":
                 self._record_result(

@@ -224,8 +224,6 @@ def build_reproduction_templates(
                 continue
         else:
             continue
-        evidence = finding.get("evidence")
-        evidence = evidence if isinstance(evidence, Mapping) else {}
         evidence_target = evidence.get("target_url")
         finding_target = finding.get("target_url")
         if evidence_target and finding_target and evidence_target != finding_target:
