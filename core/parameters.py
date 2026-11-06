@@ -170,6 +170,19 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
             _fail("File parameter serialization is unsupported")
     if not SmartDataGenerator.validate_schema_value(value, schema, request=False):
         _fail("Parameter value does not satisfy its declared schema or the schema is unsupported")
+    # Header scalar/array safety applies before either specification can return.
+    if location == "header":
+        if kind == "primitive":
+            text = _scalar(value)
+            _validate_header_token(text, "Header parameter value")
+        elif kind == "array":
+            for item in value:
+                text = _scalar(item)
+                if not text:
+                    _fail("Header array parameter items must not be empty")
+                _validate_header_token(text, "Header array parameter item")
+                if "," in text:
+                    _fail("Header array parameter item contains delimiter comma ',' which causes ambiguous deserialization")
     if swagger2:
         if "style" in metadata or "explode" in metadata:
             _fail("Swagger 2 parameters use collectionFormat; style/explode are unsupported")
@@ -208,37 +221,23 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
             _fail("spaceDelimited/pipeDelimited require a flat array/object and explode=false")
     if style == "deepObject" and (kind != "object" or not explode):
         _fail("deepObject requires a flat object and explicit explode=true")
-    if location == "header":
-        if kind == "primitive":
-            text = _scalar(value)
-            _validate_header_token(text, "Header parameter value")
-        elif kind == "array":
-            for item in value:
-                text = _scalar(item)
-                if not text:
-                    _fail("Header array parameter items must not be empty")
-                _validate_header_token(text, "Header array parameter item")
-                if "," in text:
-                    _fail("Header array parameter item contains delimiter comma ',' which causes ambiguous deserialization")
-        elif kind == "object":
-            if swagger2:
-                _fail("Swagger 2 non-body object parameters are unsupported")
-            for k, v in value.items():
-                if not k:
-                    _fail("Header object parameter property names must be non-empty strings")
-                _validate_header_token(k, "Header object parameter property name")
-                text = _scalar(v)
-                if not text:
-                    _fail("Header object parameter property values must not be empty")
-                _validate_header_token(text, "Header object parameter property value")
-                if not explode:
-                    if "," in k or "," in text:
-                        _fail("Header object parameter property name or value contains delimiter comma ',' which causes ambiguous deserialization")
-                else:
-                    if "," in k or "=" in k:
-                        _fail("Header object parameter property name contains delimiter ',' or '=' which causes ambiguous deserialization")
-                    if "," in text or "=" in text:
-                        _fail("Header object parameter property value contains delimiter ',' or '=' which causes ambiguous deserialization")
+    if location == "header" and kind == "object":
+        for k, v in value.items():
+            if not k:
+                _fail("Header object parameter property names must be non-empty strings")
+            _validate_header_token(k, "Header object parameter property name")
+            text = _scalar(v)
+            if not text:
+                _fail("Header object parameter property values must not be empty")
+            _validate_header_token(text, "Header object parameter property value")
+            if not explode:
+                if "," in k or "," in text:
+                    _fail("Header object parameter property name or value contains delimiter comma ',' which causes ambiguous deserialization")
+            else:
+                if "," in k or "=" in k:
+                    _fail("Header object parameter property name contains delimiter ',' or '=' which causes ambiguous deserialization")
+                if "," in text or "=" in text:
+                    _fail("Header object parameter property value contains delimiter ',' or '=' which causes ambiguous deserialization")
 
     elif location == "cookie":
         if kind != "primitive":
