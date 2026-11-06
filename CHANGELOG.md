@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- Enforce the remote `$ref` fetch timeout as an absolute deadline. Socket
+  timeouts applied per receive, so a server dripping header or body bytes held
+  a 0.3 s fetch for 3 s or longer; a close-delimited body cut off at the
+  deadline is no longer accepted as complete.
+- Reject remote documents that end before their declared Content-Length, and
+  turn malformed HTTP responses and over-nested JSON into per-reference
+  resolution failures instead of errors that aborted the whole scan.
+- Check the IPv4 destination embedded in 6to4, Teredo and NAT64 addresses and
+  block IPv4-compatible, local-use NAT64 and site-local IPv6 ranges. CPython
+  releases before its 2024 `ipaddress` update (e.g. 3.9.19, 3.12.3) treated
+  6to4 addresses embedding 169.254.169.254 or 127.0.0.1 as global.
+- Report a path item whose remote `$ref` fails as `INCONCLUSIVE`
+  (`unresolved_reference`), as documented, instead of a skipped "UNKNOWN"
+  method that `--fail-on-error` did not count.
 - Bound YAML anchor/alias expansion in local specifications, referenced YAML
   files and remote `$ref` documents. A ~1 KB alias "bomb" previously stalled
   parsing for 13 s or more (merge keys inside `yaml.safe_load` itself); aliases

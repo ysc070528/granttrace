@@ -2153,6 +2153,17 @@ class APISentinelAuditor:
             try:
                 if ep["method"] in self.WRITE_METHODS:
                     self.audit_endpoint_mass_assignment(ep, endpoints)
+                elif ep["method"] != "GET" and ep.get("unresolved_schema_error"):
+                    # A failed path-item reference hides which operations exist
+                    # (method UNKNOWN). Keep it INCONCLUSIVE like other unresolved
+                    # operations; a skipped "unsupported method" would let
+                    # --fail-on-error pass an unaudited path.
+                    sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
+                    self._record_result(
+                        ep, "BOLA", Verdict.INCONCLUSIVE,
+                        f"Schema could not be resolved safely: {sanitized_err}; no request was sent",
+                        {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"},
+                    )
                 elif ep["method"] != "GET":
                     self._record_result(
                         ep,
