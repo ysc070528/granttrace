@@ -76,6 +76,37 @@ _BLOCKED_EXACT_IPS = {
     "169.254.170.2",    # AWS ECS task metadata
 }
 
+# Never globally routable, whatever they embed. Listed explicitly because
+# CPython's is_private/is_global tables differ between patch releases.
+_BLOCKED_IPV6_NETWORKS = (
+    ipaddress.ip_network("::/96"),           # Deprecated IPv4-compatible addresses
+    ipaddress.ip_network("64:ff9b:1::/48"),  # Local-use NAT64 prefix (RFC 8215)
+    ipaddress.ip_network("fec0::/10"),       # Deprecated site-local addresses (RFC 3879)
+)
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052
+
+
+def _embedded_ipv4_addresses(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> List[ipaddress.IPv4Address]:
+    """Return the IPv4 destinations an IPv6 transition address delivers to.
+
+    6to4, Teredo, NAT64 and IPv4-mapped addresses route to an embedded IPv4
+    address, so they must pass the IPv4 checks too. CPython before its 2024
+    ipaddress update (for example 3.9.19 and 3.12.3) classifies 6to4 addresses
+    embedding 169.254.169.254 or 127.0.0.1 as global.
+    """
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return []
+    embedded: List[ipaddress.IPv4Address] = []
+    if ip.ipv4_mapped is not None:
+        embedded.append(ip.ipv4_mapped)
+    if ip.sixtofour is not None:
+        embedded.append(ip.sixtofour)
+    if ip.teredo is not None:
+        embedded.extend(ip.teredo)  # (server, client); the client is de-obfuscated.
+    if ip in _NAT64_WELL_KNOWN_PREFIX:
+        embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    return embedded
+
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`]+")
 
 
@@ -230,6 +261,19 @@ def validate_ip_address(ip_str: str, allow_loopback: bool = False) -> None:
         ip = ipaddress.ip_address(ip_str)
     except ValueError as exc:
         raise RemoteRefSecurityError(f"Invalid IP address format: {ip_str}") from exc
+
+    if isinstance(ip, ipaddress.IPv6Address):
+        for net in _BLOCKED_IPV6_NETWORKS:
+            # :: and ::1 lie in ::/96 but keep their unspecified/loopback handling.
+            if ip in net and int(ip) > 1:
+                raise RemoteRefSecurityError(f"Access to non-global IPv6 range {net} is blocked: {ip_str}")
+        for embedded in _embedded_ipv4_addresses(ip):
+            try:
+                validate_ip_address(str(embedded), allow_loopback=allow_loopback)
+            except RemoteRefSecurityError as exc:
+                raise RemoteRefSecurityError(
+                    f"IPv6 address {ip_str} delivers to a blocked IPv4 destination: {exc}"
+                ) from exc
 
     # Unpack IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
@@ -526,16 +570,42 @@ class RemoteRefFetcher:
                 self.session.attempted_urls.add(canonical_url)
 
         deadline = time.monotonic() + self.config.timeout
+        deadline_expired = threading.Event()
+
+        def _timeout_error() -> RemoteRefLimitExceededError:
+            return RemoteRefLimitExceededError(
+                f"Overall timeout exceeded ({self.config.timeout}s) fetching remote schema: {clean_canonical_url}"
+            )
 
         def _remaining_time() -> float:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RemoteRefLimitExceededError(
-                    f"Overall timeout exceeded ({self.config.timeout}s) fetching remote schema: {clean_canonical_url}"
-                )
+                raise _timeout_error()
             return remaining
 
         conn: Optional[PinnedIPHTTPSConnection] = None
+
+        # getresponse() detaches the socket from a connection that will close,
+        # so remember the one in use once the request has been sent.
+        request_sockets: List[socket.socket] = []
+
+        def _abort_at_deadline() -> None:
+            # Socket timeouts apply per receive, and one getresponse() or read()
+            # spans many receives: a server dripping bytes could hold it far past
+            # the deadline. Shutting the socket down wakes the blocked call.
+            deadline_expired.set()
+            for sock in (getattr(conn, "sock", None), *request_sockets):
+                if sock is None:
+                    continue
+                try:
+                    # The base method leaves an SSLSocket's own state untouched.
+                    socket.socket.shutdown(sock, socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), _abort_at_deadline)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             # DNS resolution and SSRF defense
             dns_time = _remaining_time()
@@ -575,6 +645,8 @@ class RemoteRefFetcher:
 
             conn.update_timeout(_remaining_time())
             conn.request("GET", req_path, headers=headers)
+            if conn.sock is not None:
+                request_sockets.append(conn.sock)
 
             conn.update_timeout(_remaining_time())
             resp = conn.getresponse()
@@ -628,6 +700,19 @@ class RemoteRefFetcher:
                         )
                 chunks.append(chunk)
 
+            # A read cut short at the deadline can end like a complete
+            # close-delimited body; never accept it as the document.
+            if deadline_expired.is_set():
+                raise _timeout_error()
+            # On a premature close, http.client's read(n) returns b"" instead of
+            # raising, leaving the undelivered byte count in resp.length. A
+            # truncated prefix often still parses (YAML especially); reject it.
+            undelivered = getattr(resp, "length", None)
+            if isinstance(undelivered, int) and not isinstance(undelivered, bool) and undelivered > 0:
+                raise RemoteRefResolutionError(
+                    f"Remote document ended {undelivered} bytes before its declared Content-Length: "
+                    f"{clean_canonical_url}"
+                )
             raw_bytes = b"".join(chunks)
 
             # Decode and parse JSON/YAML
@@ -655,19 +740,25 @@ class RemoteRefFetcher:
             raise RemoteRefLimitExceededError(
                 f"Timed out fetching remote $ref after {self.config.timeout}s: {clean_canonical_url}"
             ) from exc
-        except (ssl.SSLError, OSError) as exc:
+        except (ssl.SSLError, OSError, http.client.HTTPException) as exc:
+            # HTTPException covers malformed status lines, oversized headers and
+            # truncated bodies; like transport errors, they fail this reference
+            # instead of escaping as an unexpected error that aborts the scan.
             with self.session.lock:
                 self.session.failed_urls.add(canonical_url)
-            if isinstance(exc, RemoteRefError):
-                raise
+            if deadline_expired.is_set():
+                raise _timeout_error() from exc
+            # HTTPException text echoes raw server bytes; report only its type.
+            detail = type(exc).__name__ if isinstance(exc, http.client.HTTPException) else str(exc)
             raise RemoteRefResolutionError(
-                f"Network/TLS error fetching remote $ref '{clean_canonical_url}': {exc}"
+                f"Network/TLS error fetching remote $ref '{clean_canonical_url}': {detail}"
             ) from exc
         except Exception:
             with self.session.lock:
                 self.session.failed_urls.add(canonical_url)
             raise
         finally:
+            watchdog.cancel()
             if conn is not None:
                 conn.close()
 
@@ -678,6 +769,11 @@ class RemoteRefFetcher:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
+        except RecursionError as exc:
+            # Excessively nested JSON fails this reference, not the whole scan.
+            raise RemoteRefResolutionError(
+                f"Remote schema nesting exceeds the supported depth: {source_url}"
+            ) from exc
 
         try:
             import yaml  # noqa: F401  # Availability check for a clear error message.
