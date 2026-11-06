@@ -33,6 +33,7 @@ from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
+from core.remote_refs import RemoteRefConfig, RemoteRefError
 from core.parameters import ParameterSerializationError, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
 
@@ -76,9 +77,11 @@ class APISentinelAuditor:
         include_sensitive_evidence: bool = False,
         bola_config: Optional[Dict[str, Any]] = None,
         bopla_config: Optional[Dict[str, Any]] = None,
+        remote_ref_config: Optional[RemoteRefConfig] = None,
     ) -> None:
         self._validate_target(target_base_url, allow_http)
-        self.parser = OpenAPIParser(spec_path)
+        self.remote_ref_config = remote_ref_config
+        self.parser = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config)
         self.parser.get_security_schemes()  # Validate authentication before identity checks or transport.
         self.target_base_url = target_base_url.rstrip("/")
         self.max_workers = max(1, int(max_workers))
@@ -1118,7 +1121,7 @@ class APISentinelAuditor:
                 identity: self._build_request_headers(ep, "owner", identity)
                 for identity in ("owner", "visitor", "anonymous")
             }
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE,
                                 f"Property resource parameters cannot be serialized: {exc}",
                                 {"requests_attempted": 0, "reason_category": "invalid_input"})
@@ -1188,7 +1191,7 @@ class APISentinelAuditor:
             visitor_cross_headers = self._build_request_headers(ep, "owner", "visitor")
             anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
             visitor_self_headers = self._build_request_headers(ep, "visitor", "visitor")
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1367,7 +1370,7 @@ class APISentinelAuditor:
             owner_headers = self._build_request_headers(ep, "owner", "owner")
             visitor_headers = self._build_request_headers(ep, "owner", "visitor")
             anonymous_headers = self._build_request_headers(ep, "owner", "anonymous")
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1844,7 +1847,7 @@ class APISentinelAuditor:
             read_ep = self._readback_endpoint(ep, readback)
             readback_url = self._build_url(read_ep, "visitor", readback.get("parameter_values"))
             self._build_request_headers(read_ep, "visitor", "visitor", readback.get("parameter_values"))
-        except ParameterSerializationError as exc:
+        except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
@@ -1870,7 +1873,7 @@ class APISentinelAuditor:
                 field_path = case["field_path"]
                 try:
                     read_url, before_http = self._readback_result(ep, readback, "visitor")
-                except ParameterSerializationError as exc:
+                except (ParameterSerializationError, RemoteRefError) as exc:
                     self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
                     return
                 if before_http.error:
@@ -2080,7 +2083,7 @@ class APISentinelAuditor:
                     try:
                         risk = (self._read_request_risk("GET", self._build_url(ep, "owner"))
                                 or self._read_request_risk("GET", self._build_url(ep, "visitor")))
-                    except ParameterSerializationError as exc:
+                    except (ParameterSerializationError, RemoteRefError) as exc:
                         parameter_error = str(exc)
                 if risk:
                     entry.update({"safety_blocked": True, "reason_category": "safety_policy",
@@ -2117,7 +2120,7 @@ class APISentinelAuditor:
                     if not risk and read_ep["method"] == "GET":
                         try:
                             risk = self._read_request_risk("GET", self._build_url(read_ep, "visitor", readback.get("parameter_values")))
-                        except ParameterSerializationError:
+                        except (ParameterSerializationError, RemoteRefError):
                             pass
                     if risk:
                         entry.update({"writes_enabled": False, "safety_blocked": True,

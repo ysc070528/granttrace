@@ -24,6 +24,7 @@ from core.onboarding import (
     display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
 )
 from core.parser import OpenAPIParser
+from core.remote_refs import RemoteRefConfig
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
@@ -120,6 +121,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--fail-on-error",
         action="store_true",
         help="Exit 2 on errors, inconclusive results, or no conclusive checks",
+    )
+    parser.add_argument(
+        "--allow-remote-refs",
+        action="store_true",
+        default=False,
+        help="Explicitly allow fetching external OpenAPI $ref documents via HTTPS",
+    )
+    parser.add_argument(
+        "--remote-ref-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="Authorize a specific exact remote hostname for $ref resolution; repeat as needed",
     )
     parser.add_argument("--dry-run", action="store_true",
                         help="Print/export a local-only plan without sending any target requests")
@@ -262,7 +276,7 @@ def _reject_incomplete_draft(config: Any) -> None:
         )
 
 
-def run_config_validation(config_path_str: str, spec_path: Optional[str] = None) -> int:
+def run_config_validation(config_path_str: str, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None) -> int:
     config_file = Path(config_path_str)
     safe_path_str = display_path(config_path_str)
     if not config_file.is_file():
@@ -315,7 +329,7 @@ def run_config_validation(config_path_str: str, spec_path: Optional[str] = None)
         _print_validation_failure(selected_spec, config_path_str, private_values=private_values)
         return 2
 
-    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec, spec_path=selected_spec)
+    result = ConfigValidator.validate(raw_data, raw_spec=raw_spec, spec_path=selected_spec, remote_ref_config=remote_ref_config)
     if not result.is_valid:
         error_word = "error" if result.summary.errors_count == 1 else "errors"
         print(
@@ -414,6 +428,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from core.demo import demo_main
         return demo_main(selected[1:])
     args = build_argument_parser().parse_args(selected)
+    if args.allow_remote_refs and not args.remote_ref_host:
+        print("[ERROR] --allow-remote-refs requires at least one --remote-ref-host <HOST>", file=sys.stderr)
+        return 2
+    if args.remote_ref_host and not args.allow_remote_refs:
+        print("[ERROR] --remote-ref-host requires --allow-remote-refs to be set", file=sys.stderr)
+        return 2
+
+    remote_ref_config = (
+        RemoteRefConfig.create(
+            allow_remote_refs=args.allow_remote_refs,
+            remote_ref_hosts=args.remote_ref_host,
+        )
+        if args.allow_remote_refs
+        else None
+    )
     if args.export_sarif is not None:
         if not args.export_sarif.strip() or any(ord(char) < 32 or ord(char) == 127
                                               for char in args.export_sarif):
@@ -434,9 +463,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     print(BANNER)
     if args.init_config is not None:
-        if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint:
+        if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint or args.allow_remote_refs or args.remote_ref_host:
             print("[ERROR] --init-config cannot be combined with --config, --validate-config, "
-                  "--dry-run, --allow-write-tests, or --write-endpoint", file=sys.stderr)
+                  "--dry-run, --allow-write-tests, --write-endpoint, --allow-remote-refs, or --remote-ref-host", file=sys.stderr)
             return 2
         try:
             output, checklist = write_config_scaffold(
@@ -457,7 +486,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if args.validate_config:
         config_path = args.config or "config.json"
-        return run_config_validation(config_path, args.spec)
+        return run_config_validation(config_path, args.spec, remote_ref_config=remote_ref_config)
 
     spec_path = args.spec if args.spec is not None else "openapi.json"
     if (args.workers < 1 or args.delay < 0 or args.timeout <= 0 or args.max_response_bytes < 1024
@@ -493,7 +522,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.write_endpoint:
             val_config["write_allowlist"] = list(args.write_endpoint)
 
-        val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec, spec_path=spec_path)
+        val_result = ConfigValidator.validate(val_config, raw_spec=raw_spec, spec_path=spec_path, remote_ref_config=remote_ref_config)
         if not val_result.is_valid:
             private_values = _onboarding_private_values(config)
             safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
@@ -538,6 +567,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             include_sensitive_evidence=args.include_sensitive_evidence,
             bola_config=config.get("bola"),
             bopla_config=config.get("bopla"),
+            remote_ref_config=remote_ref_config,
         )
         # Local $ref documents become inputs when endpoint schemas resolve.
         # Protect them before running the audit or writing an offline plan.

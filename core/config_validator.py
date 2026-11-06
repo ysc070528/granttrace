@@ -22,6 +22,7 @@ from core.generator import SmartDataGenerator
 from core.models import parse_operation_key
 from core.parameters import ParameterSerializationError, normalize_parameter_value
 from core.parser import OpenAPIParser
+from core.remote_refs import RemoteRefConfig
 from core.transactions import path_parts, paths_collide
 
 
@@ -178,7 +179,7 @@ class ConfigValidator:
 
     @classmethod
     def validate(
-        cls, config: Any, raw_spec: Optional[Dict[str, Any]] = None, *, spec_path: Optional[str] = None,
+        cls, config: Any, raw_spec: Optional[Dict[str, Any]] = None, *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None,
     ) -> ConfigValidationResult:
         """Validate a loaded configuration mapping and collect all issues without early exit."""
         issues: List[ConfigIssue] = []
@@ -263,7 +264,7 @@ class ConfigValidator:
 
         # 2. Section: identities
         try:
-            spec_auth_names = cls._extract_spec_auth_headers(raw_spec, spec_path=spec_path)
+            spec_auth_names = cls._extract_spec_auth_headers(raw_spec, spec_path=spec_path, remote_ref_config=remote_ref_config)
         except (TypeError, ValueError) as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
@@ -370,7 +371,7 @@ class ConfigValidator:
         checked_parameters: Set[Tuple[str, str]] = set()
         cls._validate_configured_readback_parameters(config, issues, checked_parameters)
         if raw_spec is not None:
-            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters)
+            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters, remote_ref_config=remote_ref_config)
 
         errors = [issue for issue in issues if not issue.is_warning]
         summary.total_issues = len(issues)
@@ -386,11 +387,11 @@ class ConfigValidator:
     @classmethod
     def _validate_spec_cross_checks(
         cls, config: Dict[str, Any], raw_spec: Dict[str, Any], issues: List[ConfigIssue],
-        *, spec_path: Optional[str], seen: Set[Tuple[str, str]],
+        *, spec_path: Optional[str], seen: Set[Tuple[str, str]], remote_ref_config: Optional[RemoteRefConfig] = None,
     ) -> None:
         try:
             if spec_path is not None:
-                endpoints = OpenAPIParser(spec_path).get_endpoints()
+                endpoints = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config).get_endpoints()
             else:
                 # A mapping has no base directory for relative file references.
                 # A temporary root permits internal refs without guessing a source path.
@@ -554,13 +555,13 @@ class ConfigValidator:
 
     @classmethod
     def _extract_spec_auth_headers(
-        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None,
+        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None,
     ) -> Set[str]:
         if not isinstance(raw_spec, dict):
             return set()
         try:
             if spec_path is not None:
-                schemes = OpenAPIParser(spec_path).get_security_schemes()
+                schemes = OpenAPIParser(spec_path, remote_ref_config=remote_ref_config).get_security_schemes()
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.

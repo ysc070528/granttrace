@@ -5,7 +5,9 @@ The parser deliberately keeps its public endpoint shape small, but resolves the
 parts that the scanner needs before returning them. References may point at the
 root document or another JSON/YAML document below the root specification's
 directory. Remote, absolute, and directory-traversing references are rejected
-so loading an untrusted contract cannot read arbitrary local files.
+so loading an untrusted contract cannot read arbitrary local files. When remote
+$ref resolution is explicitly enabled and authorized, external HTTPS schemas are
+retrieved under strict SSRF, DNS rebinding, and resource limits.
 """
 
 from __future__ import annotations
@@ -18,19 +20,36 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import unquote, urlsplit
 
+from core.remote_refs import (
+    RemoteRefConfig,
+    RemoteRefDisabledError,
+    RemoteRefFetcher,
+    RemoteRefSecurityError,
+    resolve_remote_reference_uri,
+    split_remote_ref,
+)
+
 
 class OpenAPIParser:
     """Load and normalize the subset of OpenAPI used by the auditor."""
 
     HTTP_METHODS = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
 
-    def __init__(self, spec_path: str):
+    def __init__(
+        self,
+        spec_path: str,
+        remote_ref_config: Optional[RemoteRefConfig] = None,
+    ):
         self.spec_path = str(spec_path)
         self._spec_file = Path(spec_path).expanduser().resolve()
         self._spec_dir = self._spec_file.parent
         self._document_cache: Dict[Path, Dict[str, Any]] = {}
         self._ref_cache: Dict[str, Any] = {}
-        self._ref_file_cache: Dict[str, Path] = {}
+        self._ref_file_cache: Dict[str, Union[Path, str]] = {}
+        self.remote_ref_config = remote_ref_config
+        self.remote_fetcher: Optional[RemoteRefFetcher] = (
+            RemoteRefFetcher(remote_ref_config) if remote_ref_config is not None else None
+        )
         self.raw_spec: Dict[str, Any] = self._read_file(str(self._spec_file))
         self.version = self._detect_version()
 
@@ -105,13 +124,47 @@ class OpenAPIParser:
             )
         return siblings
 
-    def _reference_target(self, ref_uri: object, base_file: Path) -> Tuple[Path, str, str]:
+    def _reference_target(
+        self, ref_uri: object, base_context: Union[Path, str]
+    ) -> Tuple[Union[Path, str], str, str]:
         if not isinstance(ref_uri, str) or not ref_uri:
             raise ValueError("$ref must be a non-empty string")
 
         parsed = urlsplit(ref_uri)
+        if isinstance(base_context, str):
+            # Base context is a remote document
+            if parsed.scheme.lower() == "file":
+                raise RemoteRefSecurityError(
+                    f"Remote document cannot reference local files: {ref_uri}"
+                )
+            if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
+                raise RemoteRefDisabledError(
+                    f"Remote $ref resolution is disabled: {ref_uri}"
+                )
+            doc_url, fragment = resolve_remote_reference_uri(base_context, ref_uri)
+            if self.remote_fetcher is not None:
+                self.remote_fetcher.validate_ref_url(doc_url)
+            cache_key = f"{doc_url}#{fragment}"
+            return doc_url, fragment, cache_key
+
+        # Base context is a local file (Path)
         if parsed.scheme or parsed.netloc:
-            raise ValueError(f"Remote $ref values are not supported: {ref_uri}")
+            if parsed.scheme.lower() == "file":
+                raise ValueError(f"Remote $ref values are not supported: {ref_uri}")
+            if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
+                raise RemoteRefDisabledError(
+                    f"Remote $ref values are not supported: {ref_uri}"
+                )
+            if not self.remote_ref_config.remote_ref_hosts:
+                raise RemoteRefDisabledError(
+                    f"Remote $ref values are not supported without authorized hosts: {ref_uri}"
+                )
+            if self.remote_fetcher is not None:
+                self.remote_fetcher.validate_ref_url(ref_uri)
+            doc_url, fragment = split_remote_ref(ref_uri)
+            cache_key = f"{doc_url}#{fragment}"
+            return doc_url, fragment, cache_key
+
         if parsed.query:
             raise ValueError(f"Query strings are not valid in local $ref values: {ref_uri}")
 
@@ -120,9 +173,9 @@ class OpenAPIParser:
             candidate = Path(raw_document_path)
             if candidate.is_absolute():
                 raise ValueError(f"Absolute paths are not allowed in $ref values: {ref_uri}")
-            target_file = (base_file.parent / candidate).resolve()
+            target_file = (base_context.parent / candidate).resolve()
         else:
-            target_file = base_file.resolve()
+            target_file = base_context.resolve()
 
         try:
             common = Path(os.path.commonpath((str(self._spec_dir), str(target_file))))
@@ -135,9 +188,19 @@ class OpenAPIParser:
         cache_key = f"{target_file}#{fragment}"
         return target_file, fragment, cache_key
 
-    def _lookup_ref(self, ref_uri: object, base_file: Path) -> Tuple[Any, Path, str]:
-        target_file, fragment, cache_key = self._reference_target(ref_uri, base_file)
-        document = self._read_file(str(target_file))
+    def _lookup_ref(
+        self, ref_uri: object, base_context: Union[Path, str]
+    ) -> Tuple[Any, Union[Path, str], str]:
+        target_doc, fragment, cache_key = self._reference_target(ref_uri, base_context)
+        if isinstance(target_doc, Path):
+            document = self._read_file(str(target_doc))
+            doc_display: str = target_doc.name
+        else:
+            if self.remote_fetcher is None:
+                raise RemoteRefDisabledError(f"Remote $ref resolution is disabled: {ref_uri}")
+            document = self.remote_fetcher.fetch_document(target_doc)
+            doc_display = target_doc
+
         current: Any = document
 
         if fragment:
@@ -153,30 +216,30 @@ class OpenAPIParser:
                     else:
                         current = current[part]
             except (KeyError, IndexError, TypeError, ValueError) as exc:
-                raise ValueError(f"Unresolved $ref '{ref_uri}' in '{base_file.name}'") from exc
+                raise ValueError(f"Unresolved $ref '{ref_uri}' in '{doc_display}'") from exc
 
-        return current, target_file, cache_key
+        return current, target_doc, cache_key
 
     def _resolve_ref_chain(
         self,
         ref_uri: object,
-        base_file: Path,
+        base_context: Union[Path, str],
         max_depth: int,
         seen: Optional[Set[str]] = None,
-    ) -> Tuple[Any, Path]:
+    ) -> Tuple[Any, Union[Path, str]]:
         """Resolve aliases while retaining the document context of the value."""
         if max_depth <= 0:
-            return {"$ref": ref_uri}, base_file
+            return {"$ref": ref_uri}, base_context
 
-        target, target_file, cache_key = self._lookup_ref(ref_uri, base_file)
+        target, target_doc, cache_key = self._lookup_ref(ref_uri, base_context)
         chain = set() if seen is None else set(seen)
         if cache_key in chain:
-            return {"$ref": ref_uri}, target_file
+            return {"$ref": ref_uri}, target_doc
 
         if cache_key in self._ref_cache:
             return (
                 copy.deepcopy(self._ref_cache[cache_key]),
-                self._ref_file_cache.get(cache_key, target_file),
+                self._ref_file_cache.get(cache_key, target_doc),
             )
 
         chain.add(cache_key)
@@ -184,21 +247,21 @@ class OpenAPIParser:
         if isinstance(value, dict) and "$ref" in value:
             nested_ref = value.get("$ref")
             siblings = self._reference_siblings(value, schema=False)
-            resolved, resolved_file = self._resolve_ref_chain(
-                nested_ref, target_file, max_depth - 1, chain
+            resolved, resolved_doc = self._resolve_ref_chain(
+                nested_ref, target_doc, max_depth - 1, chain
             )
             if isinstance(resolved, dict):
                 value = dict(resolved)
                 value.update(siblings)
             else:
                 value = resolved
-            target_file = resolved_file
+            target_doc = resolved_doc
 
         # Do not cache an unresolved cycle marker.
         if not (isinstance(value, dict) and set(value) == {"$ref"}):
             self._ref_cache[cache_key] = copy.deepcopy(value)
-            self._ref_file_cache[cache_key] = target_file
-        return value, target_file
+            self._ref_file_cache[cache_key] = target_doc
+        return value, target_doc
 
     def get_security_schemes(self) -> Dict[str, Dict[str, Any]]:
         """Resolve authentication definitions with the existing local-reference limits."""
@@ -245,8 +308,8 @@ class OpenAPIParser:
         Malformed/nonexistent pointers, unsafe paths, and remote URLs raise
         ``ValueError`` rather than silently becoming an unconstrained schema.
         """
-        target, target_file, _ = self._lookup_ref(ref_uri, self._spec_file)
-        value = self._deep_resolve_schema(target, max_depth, _base_file=target_file)
+        target, target_doc, _ = self._lookup_ref(ref_uri, self._spec_file)
+        value = self._deep_resolve_schema(target, max_depth, _base_context=target_doc)
         return value if isinstance(value, dict) else {}
 
     @staticmethod
@@ -277,20 +340,26 @@ class OpenAPIParser:
         schema: Union[Dict[str, Any], bool],
         depth: int = 20,
         *,
-        _base_file: Optional[Path] = None,
+        _base_file: Optional[Union[Path, str]] = None,
+        _base_context: Optional[Union[Path, str]] = None,
         _seen: Optional[Set[str]] = None,
     ) -> Union[Dict[str, Any], bool]:
         """Recursively resolve schema refs, compositions, properties and items."""
         if not isinstance(schema, dict) or depth <= 0:
             return copy.deepcopy(schema)
 
-        base_file = (_base_file or self._spec_file).resolve()
+        raw_context = _base_context if _base_context is not None else _base_file
+        base_context: Union[Path, str] = (
+            raw_context.resolve()
+            if isinstance(raw_context, Path)
+            else (raw_context if isinstance(raw_context, str) else self._spec_file.resolve())
+        )
         seen = set() if _seen is None else set(_seen)
         working: Dict[str, Any] = copy.deepcopy(schema)
 
         if "$ref" in working:
             ref_uri = working["$ref"]
-            target, target_file, cache_key = self._lookup_ref(ref_uri, base_file)
+            target, target_doc, cache_key = self._lookup_ref(ref_uri, base_context)
             if cache_key in seen:
                 return working
             if not isinstance(target, (dict, bool)):
@@ -300,12 +369,12 @@ class OpenAPIParser:
             # Resolve the target and siblings separately; their local refs are
             # relative to different source documents. Retain both constraints.
             inherited = self._deep_resolve_schema(
-                target, depth - 1, _base_file=target_file, _seen=seen
+                target, depth - 1, _base_context=target_doc, _seen=seen
             )
             if not siblings:
                 return inherited
             local = self._deep_resolve_schema(
-                siblings, depth - 1, _base_file=base_file, _seen=_seen
+                siblings, depth - 1, _base_context=base_context, _seen=_seen
             )
             combined: Dict[str, Any] = {"allOf": [inherited, local]}
             for branch in (inherited, local):
@@ -321,7 +390,7 @@ class OpenAPIParser:
                 name: self._deep_resolve_schema(
                     value,
                     depth - 1,
-                    _base_file=base_file,
+                    _base_context=base_context,
                     _seen=seen,
                 )
                 if isinstance(value, dict)
@@ -332,11 +401,11 @@ class OpenAPIParser:
         items = working.get("items")
         if isinstance(items, dict):
             resolved["items"] = self._deep_resolve_schema(
-                items, depth - 1, _base_file=base_file, _seen=seen
+                items, depth - 1, _base_context=base_context, _seen=seen
             )
         elif isinstance(items, list):
             resolved["items"] = [
-                self._deep_resolve_schema(item, depth - 1, _base_file=base_file, _seen=seen)
+                self._deep_resolve_schema(item, depth - 1, _base_context=base_context, _seen=seen)
                 if isinstance(item, dict)
                 else copy.deepcopy(item)
                 for item in items
@@ -345,7 +414,7 @@ class OpenAPIParser:
         additional = working.get("additionalProperties")
         if isinstance(additional, dict):
             resolved["additionalProperties"] = self._deep_resolve_schema(
-                additional, depth - 1, _base_file=base_file, _seen=seen
+                additional, depth - 1, _base_context=base_context, _seen=seen
             )
 
         for keyword in ("allOf", "oneOf", "anyOf"):
@@ -354,7 +423,7 @@ class OpenAPIParser:
                 continue
             resolved_branches = [
                 self._deep_resolve_schema(
-                    branch, depth - 1, _base_file=base_file, _seen=seen
+                    branch, depth - 1, _base_context=base_context, _seen=seen
                 )
                 if isinstance(branch, dict)
                 else copy.deepcopy(branch)
@@ -370,13 +439,13 @@ class OpenAPIParser:
             child = working.get(keyword)
             if isinstance(child, dict):
                 resolved[keyword] = self._deep_resolve_schema(
-                    child, depth - 1, _base_file=base_file, _seen=seen
+                    child, depth - 1, _base_context=base_context, _seen=seen
                 )
 
         prefix_items = working.get("prefixItems")
         if isinstance(prefix_items, list):
             resolved["prefixItems"] = [
-                self._deep_resolve_schema(child, depth - 1, _base_file=base_file, _seen=seen)
+                self._deep_resolve_schema(child, depth - 1, _base_context=base_context, _seen=seen)
                 if isinstance(child, dict) else copy.deepcopy(child)
                 for child in prefix_items
             ]
@@ -384,21 +453,27 @@ class OpenAPIParser:
             children = working.get(keyword)
             if isinstance(children, dict):
                 resolved[keyword] = {
-                    name: self._deep_resolve_schema(child, depth - 1, _base_file=base_file, _seen=seen)
+                    name: self._deep_resolve_schema(child, depth - 1, _base_context=base_context, _seen=seen)
                     if isinstance(child, dict) else copy.deepcopy(child)
                     for name, child in children.items()
                 }
 
         return resolved
 
-    def _resolve_parameter(self, parameter: Any, base_file: Optional[Path] = None) -> Dict[str, Any]:
+    def _resolve_parameter(
+        self, parameter: Any, base_context: Optional[Union[Path, str]] = None
+    ) -> Dict[str, Any]:
         if not isinstance(parameter, dict):
             return {}
         current = copy.deepcopy(parameter)
-        parameter_file = (base_file or self._spec_file).resolve()
+        param_context: Union[Path, str] = (
+            base_context.resolve()
+            if isinstance(base_context, Path)
+            else (base_context if isinstance(base_context, str) else self._spec_file.resolve())
+        )
         if "$ref" in current:
-            resolved, parameter_file = self._resolve_ref_chain(
-                current["$ref"], parameter_file, 20
+            resolved, param_context = self._resolve_ref_chain(
+                current["$ref"], param_context, 20
             )
             if not isinstance(resolved, dict):
                 return {}
@@ -409,7 +484,7 @@ class OpenAPIParser:
         schema = current.get("schema")
         if isinstance(schema, dict):
             current["schema"] = self._deep_resolve_schema(
-                schema, _base_file=parameter_file
+                schema, _base_context=param_context
             )
         return current
 
@@ -417,7 +492,7 @@ class OpenAPIParser:
         self,
         path_parameters: Any,
         operation_parameters: Any,
-        base_file: Optional[Path] = None,
+        base_context: Optional[Union[Path, str]] = None,
     ) -> List[Dict[str, Any]]:
         """Apply OAS override semantics using the (name, in) identity tuple."""
         merged: List[Dict[str, Any]] = []
@@ -425,7 +500,7 @@ class OpenAPIParser:
         path_parameters = path_parameters if isinstance(path_parameters, list) else []
         operation_parameters = operation_parameters if isinstance(operation_parameters, list) else []
         for source in path_parameters + operation_parameters:
-            parameter = self._resolve_parameter(source, base_file)
+            parameter = self._resolve_parameter(source, base_context)
             if not parameter:
                 continue
             identity = (parameter.get("name"), parameter.get("in"))
@@ -453,13 +528,17 @@ class OpenAPIParser:
         self,
         op_data: Dict[str, Any],
         parameters: Optional[List[Dict[str, Any]]] = None,
-        base_file: Optional[Path] = None,
+        base_context: Optional[Union[Path, str]] = None,
     ) -> Tuple[Optional[Union[Dict[str, Any], bool]], Optional[str], List[str]]:
         request_body = op_data.get("requestBody", {})
-        request_file = (base_file or self._spec_file).resolve()
+        request_context: Union[Path, str] = (
+            base_context.resolve()
+            if isinstance(base_context, Path)
+            else (base_context if isinstance(base_context, str) else self._spec_file.resolve())
+        )
         if isinstance(request_body, dict) and "$ref" in request_body:
-            resolved, request_file = self._resolve_ref_chain(
-                request_body["$ref"], request_file, 20
+            resolved, request_context = self._resolve_ref_chain(
+                request_body["$ref"], request_context, 20
             )
             if isinstance(resolved, dict):
                 siblings = self._reference_siblings(request_body, schema=False)
@@ -478,7 +557,7 @@ class OpenAPIParser:
             schema = media.get("schema", {}) if isinstance(media, dict) else {}
             if isinstance(schema, dict):
                 return (
-                    self._deep_resolve_schema(schema, _base_file=request_file),
+                    self._deep_resolve_schema(schema, _base_context=request_context),
                     selected_type,
                     content_types,
                 )
@@ -488,7 +567,7 @@ class OpenAPIParser:
         effective_parameters = parameters
         if effective_parameters is None:
             effective_parameters = [
-                self._resolve_parameter(item, request_file) for item in op_data.get("parameters", [])
+                self._resolve_parameter(item, request_context) for item in op_data.get("parameters", [])
             ]
         for parameter in effective_parameters:
             if parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
@@ -503,10 +582,10 @@ class OpenAPIParser:
         self,
         op_data: Dict[str, Any],
         parameters: Optional[List[Dict[str, Any]]] = None,
-        base_file: Optional[Path] = None,
+        base_context: Optional[Union[Path, str]] = None,
     ) -> Optional[Union[Dict[str, Any], bool]]:
         """Backward-compatible request schema helper."""
-        schema, _, _ = self._extract_request_body_details(op_data, parameters, base_file)
+        schema, _, _ = self._extract_request_body_details(op_data, parameters, base_context)
         return schema
 
     def get_endpoints(self) -> List[Dict[str, Any]]:
@@ -520,9 +599,9 @@ class OpenAPIParser:
             if not isinstance(raw_path_item, dict):
                 continue
             path_item = raw_path_item
-            path_file = self._spec_file
+            path_context: Union[Path, str] = self._spec_file
             if "$ref" in path_item:
-                resolved, path_file = self._resolve_ref_chain(
+                resolved, path_context = self._resolve_ref_chain(
                     path_item["$ref"], self._spec_file, 20
                 )
                 if isinstance(resolved, dict):
@@ -537,10 +616,10 @@ class OpenAPIParser:
                     continue
 
                 parameters = self._merge_parameters(
-                    common_parameters, op_data.get("parameters", []), path_file
+                    common_parameters, op_data.get("parameters", []), path_context
                 )
                 request_schema, content_type, content_types = self._extract_request_body_details(
-                    op_data, parameters, path_file
+                    op_data, parameters, path_context
                 )
 
                 endpoints.append(
