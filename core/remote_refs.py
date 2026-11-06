@@ -22,9 +22,11 @@ import errno
 import http.client
 import ipaddress
 import json
+import re
 import socket
 import ssl
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
@@ -72,6 +74,82 @@ _BLOCKED_EXACT_IPS = {
     "169.254.170.2",    # AWS ECS task metadata
 }
 
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`]+")
+
+
+def validate_ssl_context(ctx: ssl.SSLContext) -> None:
+    """Validate that an SSL context enforces strict certificate and hostname verification."""
+    if not isinstance(ctx, ssl.SSLContext):
+        raise RemoteRefSecurityError(f"Invalid SSL context type: {type(ctx).__name__}")
+    if ctx.verify_mode != ssl.CERT_REQUIRED:
+        raise RemoteRefSecurityError(
+            f"Insecure TLS configuration: certificate verification cannot be disabled "
+            f"(verify_mode must be CERT_REQUIRED, got {ctx.verify_mode})"
+        )
+    if not ctx.check_hostname:
+        raise RemoteRefSecurityError(
+            "Insecure TLS configuration: hostname verification cannot be disabled "
+            "(check_hostname must be True)"
+        )
+
+
+def sanitize_ref_url(url: Any) -> str:
+    """Sanitize a URL or $ref string by removing userinfo and redacting query parameters."""
+    if not isinstance(url, str) or not url.strip():
+        return ""
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme or parsed.netloc:
+            netloc = parsed.netloc
+            if "@" in netloc:
+                netloc = netloc.rsplit("@", 1)[-1]
+
+            query = ""
+            if parsed.query:
+                pairs = []
+                for item in parsed.query.split("&"):
+                    if not item:
+                        continue
+                    if "=" in item:
+                        k, _, _ = item.partition("=")
+                        pairs.append(f"{k}=[REDACTED]")
+                    else:
+                        pairs.append(f"{item}=[REDACTED]")
+                query = "&".join(pairs)
+
+            return urlunsplit((
+                parsed.scheme,
+                netloc,
+                parsed.path,
+                query,
+                parsed.fragment,
+            ))
+        if "?" in url or "@" in url:
+            path, sep, query = url.partition("?")
+            if sep:
+                pairs = []
+                for item in query.split("&"):
+                    if not item:
+                        continue
+                    if "=" in item:
+                        k, _, _ = item.partition("=")
+                        pairs.append(f"{k}=[REDACTED]")
+                    else:
+                        pairs.append(f"{item}=[REDACTED]")
+                return f"{path}?{'&'.join(pairs)}"
+        return url
+    except Exception:
+        return "[REDACTED_URL]"
+
+
+def sanitize_error_message(msg: str) -> str:
+    """Sanitize an error message by stripping userinfo and redacting query parameters in URLs."""
+    if not isinstance(msg, str):
+        return ""
+    cleaned = _URL_IN_TEXT.sub(lambda m: sanitize_ref_url(m.group(0)), msg)
+    cleaned = re.sub(r"://[^/:]+:[^/@]+@", "://", cleaned)
+    return cleaned
+
 
 @dataclass
 class RemoteRefSession:
@@ -95,7 +173,7 @@ class RemoteRefConfig:
     max_docs: int = 4
     max_depth: int = 10
     timeout: float = 3.0
-    allow_loopback_for_testing: bool = False  # ONLY for internal tests
+    allow_loopback_for_testing: bool = False  # Maintained for internal structure
     session: RemoteRefSession = field(default_factory=RemoteRefSession)
 
     @classmethod
@@ -111,6 +189,10 @@ class RemoteRefConfig:
         allow_loopback_for_testing: bool = False,
         session: Optional[RemoteRefSession] = None,
     ) -> RemoteRefConfig:
+        if allow_loopback_for_testing:
+            raise RemoteRefSecurityError(
+                "Loopback address resolution cannot be enabled for remote references"
+            )
         normalized_hosts = frozenset(
             h.strip().lower() for h in (remote_ref_hosts or []) if h and h.strip()
         )
@@ -122,7 +204,7 @@ class RemoteRefConfig:
             max_docs=max_docs,
             max_depth=max_depth,
             timeout=timeout,
-            allow_loopback_for_testing=allow_loopback_for_testing,
+            allow_loopback_for_testing=False,
             session=session if session is not None else RemoteRefSession(),
         )
 
@@ -171,18 +253,54 @@ def validate_ip_address(ip_str: str, allow_loopback: bool = False) -> None:
         raise RemoteRefSecurityError(f"Non-global IP address is blocked: {ip_str}")
 
 
-def resolve_safe_ips(hostname: str, allow_loopback: bool = False) -> List[str]:
-    """Resolve all A/AAAA records for hostname and verify all are safe."""
+def _dns_lookup_worker(
+    hostname: str,
+    result_holder: List[Any],
+    error_holder: List[BaseException],
+) -> None:
     try:
         addrinfo = socket.getaddrinfo(
             hostname, 443, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
         )
-    except socket.gaierror as exc:
-        raise RemoteRefResolutionError(f"DNS resolution failed for '{hostname}': {exc}") from exc
+        result_holder.append(addrinfo)
+    except BaseException as exc:
+        error_holder.append(exc)
 
-    if not addrinfo:
+
+def resolve_safe_ips(
+    hostname: str,
+    allow_loopback: bool = False,
+    timeout: Optional[float] = 3.0,
+) -> List[str]:
+    """Resolve all A/AAAA records for hostname within timeout and verify all are safe."""
+    result_holder: List[Any] = []
+    error_holder: List[BaseException] = []
+
+    thread = threading.Thread(
+        target=_dns_lookup_worker,
+        args=(hostname, result_holder, error_holder),
+        name=f"gt-dns-{hostname}",
+        daemon=True,
+    )
+    thread.start()
+    effective_timeout = timeout if timeout is not None and timeout > 0 else 3.0
+    thread.join(timeout=effective_timeout)
+
+    if thread.is_alive():
+        raise RemoteRefLimitExceededError(
+            f"DNS resolution timed out for '{hostname}' after {effective_timeout:.1f}s"
+        )
+
+    if error_holder:
+        exc = error_holder[0]
+        if isinstance(exc, socket.gaierror):
+            raise RemoteRefResolutionError(f"DNS resolution failed for '{hostname}': {exc}") from exc
+        raise RemoteRefResolutionError(f"DNS resolution error for '{hostname}': {exc}") from exc
+
+    if not result_holder or not result_holder[0]:
         raise RemoteRefResolutionError(f"No DNS records found for '{hostname}'")
 
+    addrinfo = result_holder[0]
     safe_ips: List[str] = []
     for entry in addrinfo:
         sockaddr = entry[4]
@@ -240,9 +358,25 @@ class PinnedIPHTTPSConnection(http.client.HTTPSConnection):
         timeout: float = 3.0,
         context: Optional[ssl.SSLContext] = None,
     ) -> None:
-        self.ssl_ctx = context or ssl.create_default_context()
+        if context is not None:
+            validate_ssl_context(context)
+            self.ssl_ctx = context
+        else:
+            self.ssl_ctx = ssl.create_default_context()
+            self.ssl_ctx.check_hostname = True
+            self.ssl_ctx.verify_mode = ssl.CERT_REQUIRED
+
         super().__init__(host=pinned_ip, port=port, timeout=timeout, context=self.ssl_ctx)
         self.target_hostname = target_hostname
+
+    def update_timeout(self, timeout: float) -> None:
+        self.timeout = timeout
+        sock = getattr(self, "sock", None)
+        if sock is not None:
+            try:
+                sock.settimeout(timeout)
+            except OSError:
+                pass
 
     def connect(self) -> None:
         source_addr = getattr(self, "source_address", None)
@@ -268,6 +402,8 @@ class RemoteRefFetcher:
         config: RemoteRefConfig,
         ssl_context: Optional[ssl.SSLContext] = None,
     ) -> None:
+        if ssl_context is not None:
+            validate_ssl_context(ssl_context)
         self.config = config
         self._custom_ssl_context = ssl_context
         self.session = config.session
@@ -296,59 +432,62 @@ class RemoteRefFetcher:
 
     def validate_ref_url(self, url: str) -> Tuple[str, str, int]:
         """Validate that a URL complies with all security policies."""
+        clean_url = sanitize_ref_url(url)
         if not self.config.allow_remote_refs:
             raise RemoteRefDisabledError(
                 f"Remote $ref resolution is disabled; pass --allow-remote-refs and "
-                f"--remote-ref-host to authorize: {url}"
+                f"--remote-ref-host to authorize: {clean_url}"
             )
 
         if not self.config.remote_ref_hosts:
             raise RemoteRefDisabledError(
-                f"No remote $ref hosts authorized; pass --remote-ref-host <HOST>: {url}"
+                f"No remote $ref hosts authorized; pass --remote-ref-host <HOST>: {clean_url}"
             )
 
         parsed = urlsplit(url)
         scheme = parsed.scheme.lower()
         if scheme != "https":
             raise RemoteRefSecurityError(
-                f"Only HTTPS remote $ref values are permitted (got '{parsed.scheme}'): {url}"
+                f"Only HTTPS remote $ref values are permitted (got '{parsed.scheme}'): {clean_url}"
             )
 
         netloc = parsed.netloc
         if not netloc:
-            raise RemoteRefSecurityError(f"Remote $ref URL missing host: {url}")
+            raise RemoteRefSecurityError(f"Remote $ref URL missing host: {clean_url}")
 
         if "@" in netloc or parsed.username or parsed.password:
             raise RemoteRefSecurityError(
-                f"Userinfo credentials in remote $ref URL are forbidden: {url}"
+                f"Userinfo credentials in remote $ref URL are forbidden: {clean_url}"
             )
 
         hostname = (parsed.hostname or "").strip().lower()
         if not hostname:
-            raise RemoteRefSecurityError(f"Invalid host in remote $ref URL: {url}")
+            raise RemoteRefSecurityError(f"Invalid host in remote $ref URL: {clean_url}")
 
         if any(ord(c) < 32 or ord(c) >= 127 for c in hostname):
-            raise RemoteRefSecurityError(f"Control or non-ASCII characters in host: {url}")
+            raise RemoteRefSecurityError(f"Control or non-ASCII characters in host: {clean_url}")
 
         # Port validation: only standard 443 permitted
         port = parsed.port or 443
         if port != 443:
             raise RemoteRefSecurityError(
-                f"Non-standard port {port} is forbidden for remote $ref: {url}"
+                f"Non-standard port {port} is forbidden for remote $ref: {clean_url}"
             )
 
         # Host allowlist exact matching
         if hostname not in self.config.remote_ref_hosts:
             raise RemoteRefNotAllowedHostError(
                 f"Remote host '{hostname}' is not in the authorized allowlist "
-                f"{sorted(self.config.remote_ref_hosts)}: {url}"
+                f"{sorted(self.config.remote_ref_hosts)}: {clean_url}"
             )
 
         return hostname, parsed.path or "/", port
 
     def fetch_document(self, doc_url: str) -> Dict[str, Any]:
         """Fetch, validate, and parse a remote OpenAPI JSON/YAML schema document."""
+        clean_display_url = sanitize_ref_url(doc_url)
         canonical_url = urlunsplit(urlsplit(doc_url)[:4] + ("",))
+        clean_canonical_url = sanitize_ref_url(canonical_url)
 
         # Host allowlist and URL syntax validation
         hostname, path, port = self.validate_ref_url(canonical_url)
@@ -361,7 +500,7 @@ class RemoteRefFetcher:
             # 2. Check failed URLs
             if canonical_url in self.session.failed_urls:
                 raise RemoteRefResolutionError(
-                    f"Previous fetch attempt for remote schema failed: {canonical_url}"
+                    f"Previous fetch attempt for remote schema failed: {clean_canonical_url}"
                 )
 
             # 3. Check document count limit before DNS and Socket connection
@@ -369,20 +508,32 @@ class RemoteRefFetcher:
                 if len(self.session.attempted_urls) >= self.config.max_docs:
                     raise RemoteRefLimitExceededError(
                         f"Maximum remote document limit ({self.config.max_docs}) reached; "
-                        f"refusing to fetch: {doc_url}"
+                        f"refusing to fetch: {clean_display_url}"
                     )
                 self.session.attempted_urls.add(canonical_url)
+
+        deadline = time.monotonic() + self.config.timeout
+
+        def _remaining_time() -> float:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RemoteRefLimitExceededError(
+                    f"Overall timeout exceeded ({self.config.timeout}s) fetching remote schema: {clean_canonical_url}"
+                )
+            return remaining
 
         conn: Optional[PinnedIPHTTPSConnection] = None
         try:
             # DNS resolution and SSRF defense
+            dns_time = _remaining_time()
             safe_ips = resolve_safe_ips(
-                hostname, allow_loopback=self.config.allow_loopback_for_testing
+                hostname, allow_loopback=self.config.allow_loopback_for_testing, timeout=dns_time
             )
             pinned_ip = safe_ips[0]
 
             # Prepare SSL context
             if self._custom_ssl_context is not None:
+                validate_ssl_context(self._custom_ssl_context)
                 ctx = self._custom_ssl_context
             else:
                 ctx = ssl.create_default_context()
@@ -390,11 +541,12 @@ class RemoteRefFetcher:
                 ctx.verify_mode = ssl.CERT_REQUIRED
 
             # Connection setup with IP pinning
+            conn_time = _remaining_time()
             conn = PinnedIPHTTPSConnection(
                 pinned_ip=pinned_ip,
                 target_hostname=hostname,
                 port=port,
-                timeout=self.config.timeout,
+                timeout=conn_time,
                 context=ctx,
             )
 
@@ -409,19 +561,23 @@ class RemoteRefFetcher:
                 "Accept": "application/json, application/yaml, text/yaml, */*",
                 "Connection": "close",
             }
+
+            conn.update_timeout(_remaining_time())
             conn.request("GET", req_path, headers=headers)
+
+            conn.update_timeout(_remaining_time())
             resp = conn.getresponse()
 
             # Forbid all HTTP redirects
             if resp.status in (301, 302, 303, 307, 308):
-                location = resp.getheader("Location", "")
+                location = sanitize_ref_url(resp.getheader("Location", ""))
                 raise RemoteRefSecurityError(
-                    f"HTTP redirect ({resp.status}) to '{location}' is forbidden for remote $ref: {canonical_url}"
+                    f"HTTP redirect ({resp.status}) to '{location}' is forbidden for remote $ref: {clean_canonical_url}"
                 )
 
             if resp.status != 200:
                 raise RemoteRefResolutionError(
-                    f"HTTP {resp.status} {resp.reason} fetching remote schema: {canonical_url}"
+                    f"HTTP {resp.status} {resp.reason} fetching remote schema: {clean_canonical_url}"
                 )
 
             # Check declared Content-Length
@@ -435,13 +591,14 @@ class RemoteRefFetcher:
                 if declared_len is not None and declared_len > self.config.max_doc_bytes:
                     raise RemoteRefLimitExceededError(
                         f"Remote document Content-Length ({declared_len} bytes) exceeds limit "
-                        f"({self.config.max_doc_bytes} bytes): {canonical_url}"
+                        f"({self.config.max_doc_bytes} bytes): {clean_canonical_url}"
                     )
 
-            # Stream body with chunk-by-chunk enforcement
+            # Stream body with chunk-by-chunk enforcement and slowloris deadline
             chunks: List[bytes] = []
             doc_bytes = 0
             while True:
+                conn.update_timeout(_remaining_time())
                 chunk = resp.read(8192)
                 if not chunk:
                     break
@@ -451,7 +608,7 @@ class RemoteRefFetcher:
                     if doc_bytes > self.config.max_doc_bytes:
                         self.session.failed_urls.add(canonical_url)
                         raise RemoteRefLimitExceededError(
-                            f"Remote document body exceeded limit of {self.config.max_doc_bytes} bytes: {canonical_url}"
+                            f"Remote document body exceeded limit of {self.config.max_doc_bytes} bytes: {clean_canonical_url}"
                         )
                     if self.session.total_bytes_downloaded > self.config.max_total_bytes:
                         self.session.failed_urls.add(canonical_url)
@@ -467,14 +624,14 @@ class RemoteRefFetcher:
                 text = raw_bytes.decode("utf-8-sig")
             except UnicodeDecodeError as exc:
                 raise RemoteRefResolutionError(
-                    f"Remote document is not valid UTF-8: {canonical_url}"
+                    f"Remote document is not valid UTF-8: {clean_canonical_url}"
                 ) from exc
 
-            parsed_data = self._parse_schema_content(text, canonical_url)
+            parsed_data = self._parse_schema_content(text, clean_canonical_url)
 
             if not isinstance(parsed_data, dict):
                 raise RemoteRefResolutionError(
-                    f"Remote schema root must be a JSON/YAML mapping: {canonical_url}"
+                    f"Remote schema root must be a JSON/YAML mapping: {clean_canonical_url}"
                 )
 
             with self.session.lock:
@@ -485,7 +642,7 @@ class RemoteRefFetcher:
             with self.session.lock:
                 self.session.failed_urls.add(canonical_url)
             raise RemoteRefLimitExceededError(
-                f"Timed out fetching remote $ref after {self.config.timeout}s: {canonical_url}"
+                f"Timed out fetching remote $ref after {self.config.timeout}s: {clean_canonical_url}"
             ) from exc
         except (ssl.SSLError, OSError) as exc:
             with self.session.lock:
@@ -493,7 +650,7 @@ class RemoteRefFetcher:
             if isinstance(exc, RemoteRefError):
                 raise
             raise RemoteRefResolutionError(
-                f"Network/TLS error fetching remote $ref '{canonical_url}': {exc}"
+                f"Network/TLS error fetching remote $ref '{clean_canonical_url}': {exc}"
             ) from exc
         except Exception:
             with self.session.lock:

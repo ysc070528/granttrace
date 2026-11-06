@@ -33,7 +33,7 @@ from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
-from core.remote_refs import RemoteRefConfig, RemoteRefError
+from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
 from core.parameters import ParameterSerializationError, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
 
@@ -1102,7 +1102,8 @@ class APISentinelAuditor:
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         key = self._operation_key(ep)
         if ep.get("unresolved_schema_error"):
-            reason = f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent"
+            sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
+            reason = f"Schema could not be resolved safely: {sanitized_err}; no request was sent"
             if key in self.bopla_config:
                 self._record_result(ep, "BOPLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, reason, {"requests_attempted": 0, "requests_sent": 0, "reason_category": "unresolved_reference"})
@@ -1757,11 +1758,12 @@ class APISentinelAuditor:
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
         if ep.get("unresolved_schema_error"):
+            sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
             self._record_result(
                 ep,
                 "MASS_ASSIGNMENT",
                 Verdict.INCONCLUSIVE,
-                f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent",
+                f"Schema could not be resolved safely: {sanitized_err}; no request was sent",
                 evidence={"reason_category": "unresolved_reference", "requests_attempted": 0, "requests_sent": 0},
             )
             return
@@ -2093,9 +2095,10 @@ class APISentinelAuditor:
             readback = self.readback_config.get(key, {})
             entry = {"endpoint": key, "check": "UNSUPPORTED", "writes_enabled": False}
             if ep.get("unresolved_schema_error"):
+                sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
                 entry["check"] = "INCONCLUSIVE"
                 entry["reason_category"] = "unresolved_reference"
-                entry["reason"] = f"Schema could not be resolved safely: {ep['unresolved_schema_error']}; no request was sent"
+                entry["reason"] = f"Schema could not be resolved safely: {sanitized_err}; no request was sent"
                 entry["writes_enabled"] = False
                 entries.append(entry)
                 continue

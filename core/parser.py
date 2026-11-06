@@ -31,6 +31,8 @@ from core.remote_refs import (
     RemoteRefResolutionError,
     RemoteRefSecurityError,
     resolve_remote_reference_uri,
+    sanitize_error_message,
+    sanitize_ref_url,
     split_remote_ref,
 )
 
@@ -147,19 +149,20 @@ class OpenAPIParser:
             raise ValueError("$ref must be a non-empty string")
 
         parsed = urlsplit(ref_uri)
+        clean_ref = sanitize_ref_url(ref_uri)
         if isinstance(base_context, str):
             # Base context is a remote document
             if parsed.scheme.lower() == "file":
                 raise RemoteRefSecurityError(
-                    f"Remote document cannot reference local files: {ref_uri}"
+                    f"Remote document cannot reference local files: {clean_ref}"
                 )
             if self.offline:
                 raise RemoteRefOfflineBlockedError(
-                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                    f"Remote $ref resolution is blocked in offline mode: {clean_ref}"
                 )
             if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
                 raise RemoteRefDisabledError(
-                    f"Remote $ref resolution is disabled: {ref_uri}"
+                    f"Remote $ref resolution is disabled: {clean_ref}"
                 )
             doc_url, fragment = resolve_remote_reference_uri(base_context, ref_uri)
             if self.remote_fetcher is not None:
@@ -170,18 +173,18 @@ class OpenAPIParser:
         # Base context is a local file (Path)
         if parsed.scheme or parsed.netloc:
             if parsed.scheme.lower() == "file":
-                raise ValueError(f"Remote $ref values are not supported: {ref_uri}")
+                raise ValueError(f"Remote $ref values are not supported: {clean_ref}")
             if self.offline:
                 raise RemoteRefOfflineBlockedError(
-                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                    f"Remote $ref resolution is blocked in offline mode: {clean_ref}"
                 )
             if self.remote_ref_config is None or not self.remote_ref_config.allow_remote_refs:
                 raise RemoteRefDisabledError(
-                    f"Remote $ref values are not supported: {ref_uri}"
+                    f"Remote $ref values are not supported: {clean_ref}"
                 )
             if not self.remote_ref_config.remote_ref_hosts:
                 raise RemoteRefDisabledError(
-                    f"Remote $ref values are not supported without authorized hosts: {ref_uri}"
+                    f"Remote $ref values are not supported without authorized hosts: {clean_ref}"
                 )
             if self.remote_fetcher is not None:
                 self.remote_fetcher.validate_ref_url(ref_uri)
@@ -220,12 +223,13 @@ class OpenAPIParser:
             document = self._read_file(str(target_doc))
             doc_display: str = target_doc.name
         else:
+            clean_ref = sanitize_ref_url(ref_uri)
             if self.offline:
                 raise RemoteRefOfflineBlockedError(
-                    f"Remote $ref resolution is blocked in offline mode: {ref_uri}"
+                    f"Remote $ref resolution is blocked in offline mode: {clean_ref}"
                 )
             if self.remote_fetcher is None:
-                raise RemoteRefDisabledError(f"Remote $ref resolution is disabled: {ref_uri}")
+                raise RemoteRefDisabledError(f"Remote $ref resolution is disabled: {clean_ref}")
             document = self.remote_fetcher.fetch_document(target_doc)
             doc_display = target_doc
 
@@ -793,11 +797,11 @@ class OpenAPIParser:
                         path_item = dict(resolved)
                         path_item.update(siblings)
                 except RemoteRefOfflineBlockedError as exc:
-                    path_error = str(exc)
+                    path_error = sanitize_error_message(str(exc))
                 except (RemoteRefDisabledError, RemoteRefNotAllowedHostError, RemoteRefSecurityError):
                     raise
                 except (RemoteRefResolutionError, RemoteRefLimitExceededError) as exc:
-                    path_error = str(exc)
+                    path_error = sanitize_error_message(str(exc))
 
             if path_error:
                 endpoints.append(
@@ -839,11 +843,11 @@ class OpenAPIParser:
                         op_data, parameters, path_context
                     )
                 except RemoteRefOfflineBlockedError as exc:
-                    op_error = str(exc)
+                    op_error = sanitize_error_message(str(exc))
                 except (RemoteRefDisabledError, RemoteRefNotAllowedHostError, RemoteRefSecurityError):
                     raise
                 except (RemoteRefResolutionError, RemoteRefLimitExceededError) as exc:
-                    op_error = str(exc)
+                    op_error = sanitize_error_message(str(exc))
 
                 endpoint_record: Dict[str, Any] = {
                     "path": path_url,

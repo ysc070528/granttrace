@@ -22,7 +22,7 @@ from core.generator import SmartDataGenerator
 from core.models import parse_operation_key
 from core.parameters import ParameterSerializationError, normalize_parameter_value
 from core.parser import OpenAPIParser
-from core.remote_refs import RemoteRefConfig, RemoteRefOfflineBlockedError
+from core.remote_refs import RemoteRefConfig, RemoteRefOfflineBlockedError, sanitize_error_message
 from core.transactions import path_parts, paths_collide
 
 
@@ -441,9 +441,10 @@ class ConfigValidator:
 
         for endpoint in endpoints:
             if endpoint.get("unresolved_schema_error"):
+                sanitized_err = sanitize_error_message(endpoint["unresolved_schema_error"])
                 issues.append(ConfigIssue(
                     path=f"{endpoint['method']} {endpoint['path']}",
-                    message=f"Endpoint schema could not be resolved safely: {endpoint['unresolved_schema_error']} (无法离线验证)",
+                    message=f"Endpoint schema could not be resolved safely: {sanitized_err} (无法离线验证)",
                     expected="resolvable endpoint schema without unresolvable remote dependencies",
                     actual="unresolved_reference",
                     suggestion="Fix the reference or provide a resolvable local specification",
