@@ -234,7 +234,7 @@ class IndependentPrivacyTests(unittest.TestCase):
         SarifReportGenerator.generate(auditor.results, auditor.target_base_url, str(sarif),
                                       secret_values=auditor._secret_values)
         texts.append(sarif.read_text(encoding="utf-8"))
-        templates = build_reproduction_templates(auditor.findings, auditor._identity_headers("visitor"),
+        templates = build_reproduction_templates(auditor.findings, auditor.identity_headers("visitor"),
                                                  auditor._secret_values)
         texts.extend(template.command for template in templates.values())
         for text in texts:

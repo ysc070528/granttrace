@@ -211,11 +211,11 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
         verification["server_stopped"] = not server.thread.is_alive() and server.server.socket.fileno() == -1
         if not verification["server_stopped"]:
             raise RuntimeError("Local demo server is still running")
-        reproduction_secrets = set(auditor._secret_values)
+        reproduction_secrets = set(auditor.secret_values())
         for identity_name in auditor.identities:
-            reproduction_secrets.update(auditor._identity_headers(identity_name).values())
+            reproduction_secrets.update(auditor.identity_headers(identity_name).values())
         reproduction_templates = build_reproduction_templates(
-            auditor.findings, auditor._identity_headers("visitor"), reproduction_secrets,
+            auditor.findings, auditor.identity_headers("visitor"), reproduction_secrets,
         )
         SecurityReportGenerator.generate(
             stats=auditor.stats, findings=auditor.findings, results=auditor.results,

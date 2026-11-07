@@ -147,7 +147,7 @@ class BOPLAEvidence:
 
     @staticmethod
     def _assess(result: HTTPResult) -> Dict[str, Any]:
-        assessment = AuthorizationEvidence._assess(result)
+        assessment = AuthorizationEvidence.assess(result)
         if 200 <= result.status < 300 and result.status != 200:
             assessment["complete"] = False
         # A nominal 200 with a partial representation is not a complete baseline.
@@ -251,7 +251,7 @@ class BOPLAEvidence:
         if identity not in ("visitor", "anonymous") or permission not in ("allow", "deny"):
             return result(Verdict.INCONCLUSIVE, "No explicit field permission exists for this identity", "identity_field_permission")
         own, low = assess(owner), assess(other)
-        own_valid = AuthorizationEvidence._valid(own)
+        own_valid = AuthorizationEvidence.valid(own)
         evidence["owner_baseline_valid"] = own_valid
         if not own_valid:
             return result(Verdict.INCONCLUSIVE, "A complete valid Owner baseline is required", "owner_baseline")
@@ -259,7 +259,7 @@ class BOPLAEvidence:
         if not cls._bound(own["data"], bindings):
             return result(Verdict.INCONCLUSIVE, "Owner baseline does not identify the selected resource", "owner_resource_binding")
         path = field["path"]
-        values = AuthorizationEvidence._private_values(own["data"], (path,))
+        values = AuthorizationEvidence.private_values(own["data"], (path,))
         value = values.get(path)
         identifiable = path in values and cls._identifiable(value)
         if permission == "deny":
@@ -271,25 +271,25 @@ class BOPLAEvidence:
         evidence["owner_private_data_paths"] = [path]
         if visitor_self is not None and identity == "visitor":
             self_assessment = assess(visitor_self)
-            if not AuthorizationEvidence._valid(self_assessment):
+            if not AuthorizationEvidence.valid(self_assessment):
                 return result(Verdict.INCONCLUSIVE, "Visitor self baseline is not valid", "visitor_self_baseline")
-            self_values = AuthorizationEvidence._private_values(self_assessment["data"], (path,))
+            self_values = AuthorizationEvidence.private_values(self_assessment["data"], (path,))
             if path in self_values and json_values_equal(value, self_values[path]):
                 return result(Verdict.INCONCLUSIVE, "Value also occurs in Visitor self data and cannot identify Owner data", "resource_specific_value")
         if not low["complete"]:
             return result(Verdict.INCONCLUSIVE, "The comparison response is incomplete or failed transport", "complete_other_response")
-        clean = AuthorizationEvidence._clean_denial(low, other)
+        clean = AuthorizationEvidence.clean_denial(low, other)
         evidence["denial_body_clean"] = clean
         if clean:
             evidence["comparison_valid"] = True
             if permission == "deny":
                 return result(Verdict.SECURE, "This exact field rule, identity and selected resource received a clean denial")
             return result(Verdict.INCONCLUSIVE, "Field access was denied despite an explicit allow rule", "positive_allowed_field_access")
-        other_values = AuthorizationEvidence._private_values(low["data"], (path,))
+        other_values = AuthorizationEvidence.private_values(low["data"], (path,))
         matched = path in other_values and json_values_equal(value, other_values[path])
         if matched:
             evidence["matched_private_data_paths"] = [path]
-        low_valid = AuthorizationEvidence._valid(low)
+        low_valid = AuthorizationEvidence.valid(low)
         evidence["other_response_valid"] = low_valid
         if matched and not low_valid and permission == "deny":
             return result(Verdict.SUSPICIOUS, "An error or denial body contains matching protected data; valid field access is unproven")

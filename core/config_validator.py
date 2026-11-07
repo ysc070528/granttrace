@@ -574,7 +574,7 @@ class ConfigValidator:
             name = parameter.get("name")
             if not isinstance(name, str) or name not in values:
                 continue
-            schema = parameter.get("schema", SmartDataGenerator._parameter_schema(parameter))
+            schema = parameter.get("schema", SmartDataGenerator.parameter_schema(parameter))
             try:
                 normalized = normalize_parameter_value({**parameter, "schema": schema}, values[name])
                 valid = SmartDataGenerator.validate_schema_value(normalized, schema, request=False)

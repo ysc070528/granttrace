@@ -176,7 +176,7 @@ class SwaggerUniqueItemsTests(unittest.TestCase):
                 "items": {"type": "integer"}, **constraints}
 
     def assert_valid_array(self, parameter, value):
-        schema = SmartDataGenerator._parameter_schema(parameter)
+        schema = SmartDataGenerator.parameter_schema(parameter)
         self.assertTrue(SmartDataGenerator.validate_schema_value(value, schema, request=False))
         self.assertEqual([("ids", ",".join(map(str, value)))],
                          serialize_query_parameter(parameter, value, swagger2=True))
@@ -192,7 +192,7 @@ class SwaggerUniqueItemsTests(unittest.TestCase):
     def test_swagger_unique_items_rejects_duplicate_integer_values(self):
         parameter = self.parameter(uniqueItems=True)
         self.assertFalse(SmartDataGenerator.validate_schema_value(
-            [1, 1], SmartDataGenerator._parameter_schema(parameter), request=False))
+            [1, 1], SmartDataGenerator.parameter_schema(parameter), request=False))
         for location, serializer in (("query", serialize_query_parameter), ("path", serialize_path_parameter)):
             with self.subTest(location=location), self.assertRaises(ParameterSerializationError):
                 serializer({**parameter, "in": location}, [1, 1], swagger2=True)
