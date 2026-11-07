@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Retry rate-limited reads instead of recording them as inconclusive. GET
+  requests answered with HTTP 429 (or 503 with `Retry-After`) are retried up
+  to twice, honoring `Retry-After` in seconds or as an HTTP date (otherwise
+  waiting 1 s, then 2 s), and every worker pauses meanwhile. A requested wait
+  beyond 30 s fails closed with the original response. PATCH/PUT are never
+  retried. The new `rate_limit_retries` statistic counts retries; a scan of
+  the bundled mock target that rate-limits each path's first request now
+  reaches the same verdicts as an unlimited one.
 - Enforce the remote `$ref` fetch timeout as an absolute deadline. Socket
   timeouts applied per receive, so a server dripping header or body bytes held
   a 0.3 s fetch for 3 s or longer; a close-delimited body cut off at the

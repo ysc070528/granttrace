@@ -12,7 +12,7 @@
 | `--write-endpoint "PATCH /path"` | 将主动检查限制到指定 PATCH 端点，可重复使用 |
 | `--insecure` | 关闭 TLS 证书校验，仅用于隔离测试环境 |
 | `--allow-http` | 允许访问非本机的明文 HTTP 目标 |
-| `--delay` | 所有线程共享的最小请求间隔 |
+| `--delay` | 所有线程共享的最小请求间隔。目标返回 HTTP 429（或带 `Retry-After` 的 503）时，GET 读取按 `Retry-After`（无该头时依次等待 1、2 秒）最多重试 2 次，期间所有线程一起暂停；要求等待超过 30 秒时不重试，结果保持不确定。PATCH / PUT 从不重试 |
 | `--max-response-bytes` | 单个响应允许读取的最大字节数 |
 | `--fail-on-vuln` | 确认漏洞时返回退出码 1 |
 | `--fail-on-error` | 存在错误、不确定结果或零确定性检查时返回退出码 2 |

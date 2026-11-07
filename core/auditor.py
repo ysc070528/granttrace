@@ -20,6 +20,8 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
 
@@ -58,6 +60,12 @@ class APISentinelAuditor:
     WRITE_METHODS = {"PATCH", "PUT"}
     AUTH_DENIAL_STATUSES = {401, 403}
     INVALID_TEST_STATUSES = {400, 404, 405, 409, 415, 422}
+    # Rate limiting: only idempotent reads are retried. A write may already have
+    # been applied, so its outcome stays with the transaction's own recovery.
+    RETRYABLE_METHODS = {"GET", "HEAD"}
+    RATE_LIMIT_RETRIES = 2
+    RATE_LIMIT_BACKOFF = 1.0  # Seconds before the first retry without Retry-After; doubles after.
+    MAX_RETRY_WAIT = 30.0  # A longer requested wait fails closed with the original response.
 
     def __init__(
         self,
@@ -173,6 +181,7 @@ class APISentinelAuditor:
             "bfla_confirmed": 0,
             "transport_attempts": 0,
             "http_requests_sent": 0,
+            "rate_limit_retries": 0,
             "public_endpoints": 0,
             "authorized_endpoints": 0,
             "secure_endpoints": 0,
@@ -379,14 +388,49 @@ class APISentinelAuditor:
             self._auth_parser = parser
 
     def _throttle(self) -> None:
-        if self.request_delay <= 0:
-            return
+        # Honor a rate-limit pause even when no per-request delay is configured.
         with self._rate_lock:
-            now = time.monotonic()
-            wait_for = max(0.0, self._next_request_at - now)
-            if wait_for:
+            wait_for = self._next_request_at - time.monotonic()
+            if wait_for > 0:
                 time.sleep(wait_for)
-            self._next_request_at = time.monotonic() + self.request_delay
+            if self.request_delay > 0:
+                self._next_request_at = time.monotonic() + self.request_delay
+
+    def _defer_requests(self, seconds: float) -> None:
+        """Pause every worker: a rate limit applies to this client, not one request."""
+        with self._rate_lock:
+            self._next_request_at = max(self._next_request_at, time.monotonic() + seconds)
+
+    @staticmethod
+    def _retry_after_seconds(headers: Mapping[str, str]) -> Optional[float]:
+        """Parse Retry-After as delay-seconds or an HTTP date (RFC 9110 section 10.2.3)."""
+        value = next((str(item) for name, item in headers.items() if str(name).lower() == "retry-after"), None)
+        if value is None:
+            return None
+        value = value.strip()
+        if re.fullmatch(r"[0-9]+", value):
+            return float(int(value)) if len(value) <= 12 else float("inf")
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+    def _rate_limit_wait(self, method: str, result: HTTPResult, attempt: int) -> Optional[float]:
+        """Return how long to wait before retrying, or None to keep this response."""
+        if (str(method).upper() not in self.RETRYABLE_METHODS or result.error is not None
+                or result.status not in (429, 503)):
+            return None
+        retry_after = self._retry_after_seconds(result.headers)
+        if result.status == 503 and retry_after is None:
+            return None  # Only an explicit Retry-After marks a 503 as temporary.
+        wait = retry_after if retry_after is not None else self.RATE_LIMIT_BACKOFF * (2 ** attempt)
+        wait = max(wait, self.request_delay)
+        return wait if wait <= self.MAX_RETRY_WAIT else None
 
     def _identity_headers(self, identity_name: str) -> Dict[str, str]:
         identity = self.identities[identity_name]
@@ -492,6 +536,21 @@ class APISentinelAuditor:
         risk = self._read_request_risk(method, url)
         if risk:
             return HTTPResult(status=0, body="", error=risk["safety_reason"])
+        attempt = 0
+        while True:
+            result = self._send_http_request(method, url, data, identity_name, content_type, headers)
+            wait = self._rate_limit_wait(method, result, attempt) if attempt < self.RATE_LIMIT_RETRIES else None
+            if wait is None:
+                return result
+            with self._result_lock:
+                self.stats["rate_limit_retries"] += 1
+            self._defer_requests(wait)
+            attempt += 1
+
+    def _send_http_request(
+        self, method: str, url: str, data: Optional[Dict[str, Any]], identity_name: str,
+        content_type: str, headers: Optional[Dict[str, str]],
+    ) -> HTTPResult:
         self._throttle()
         try:
             if headers is not None:
