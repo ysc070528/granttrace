@@ -84,7 +84,7 @@ class ReadSafetyCacheTests(unittest.TestCase):
         requests = [item for item in safety_requests() if item[0] in {"GET", "HEAD"}]
         for workers in (1, 4):
             with self.subTest(workers=workers), \
-                    patch.object(auditor._opener, "open", return_value=successful_response()) as transport:
+                    patch.object(auditor._transport.opener, "open", return_value=successful_response()) as transport:
                 def send(item):
                     method, url, _ = item
                     return auditor._http_request(method, url, identity_name="owner")
@@ -125,7 +125,7 @@ class ReadSafetyCacheTests(unittest.TestCase):
         endpoint = {"method": "PATCH", "path": "/settings/{id}"}
         mapping = {"method": "GET", "path": "/state/{id}", "parameter_values": {"id": "1002"}}
         with patch.object(auditor.parser, "get_endpoints") as normalize, \
-                patch.object(auditor._opener, "open", return_value=successful_response()) as transport:
+                patch.object(auditor._transport.opener, "open", return_value=successful_response()) as transport:
             url, result = auditor._readback_result(endpoint, mapping, "visitor")
         normalize.assert_not_called()
         transport.assert_called_once()
@@ -174,7 +174,7 @@ class ReadSafetyCacheTests(unittest.TestCase):
         self.assertIsNone(auditor._read_request_risk("GET", TARGET + "/records/1001"))
         auditor.parser = OpenAPIParser(str(self.spec_path))
         with patch.object(auditor.parser, "get_endpoints", side_effect=ValueError("invalid replacement")), \
-                patch.object(auditor._opener, "open") as transport:
+                patch.object(auditor._transport.opener, "open") as transport:
             for _ in range(2):
                 with self.assertRaisesRegex(ValueError, "invalid replacement"):
                     auditor._http_request("GET", TARGET + "/records/1001", identity_name="owner")

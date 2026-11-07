@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
-import json
 import re
-import ssl
 import threading
 import time
 import urllib.error
@@ -20,8 +18,6 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from types import MappingProxyType
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
 
@@ -38,13 +34,7 @@ from core.parser import OpenAPIParser
 from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
 from core.parameters import ParameterSerializationError, normalize_parameter_value, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
-
-
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Return 30x to the detector instead of forwarding credentials."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        return None
+from core.transport import HttpTransport
 
 
 @dataclass(frozen=True)
@@ -60,12 +50,6 @@ class APISentinelAuditor:
     WRITE_METHODS = {"PATCH", "PUT"}
     AUTH_DENIAL_STATUSES = {401, 403}
     INVALID_TEST_STATUSES = {400, 404, 405, 409, 415, 422}
-    # Rate limiting: only idempotent reads are retried. A write may already have
-    # been applied, so its outcome stays with the transaction's own recovery.
-    RETRYABLE_METHODS = {"GET", "HEAD"}
-    RATE_LIMIT_RETRIES = 2
-    RATE_LIMIT_BACKOFF = 1.0  # Seconds before the first retry without Retry-After; doubles after.
-    MAX_RETRY_WAIT = 30.0  # A longer requested wait fails closed with the original response.
 
     def __init__(
         self,
@@ -95,9 +79,12 @@ class APISentinelAuditor:
         self.parser.get_security_schemes()  # Validate authentication before identity checks or transport.
         self.target_base_url = target_base_url.rstrip("/")
         self.max_workers = max(1, int(max_workers))
-        self.request_delay = max(0.0, float(request_delay))
-        self.request_timeout = max(0.1, float(request_timeout))
-        self.max_response_bytes = max(1024, int(max_response_bytes))
+        self._transport = HttpTransport(
+            request_delay=max(0.0, float(request_delay)),
+            request_timeout=max(0.1, float(request_timeout)),
+            max_response_bytes=max(1024, int(max_response_bytes)),
+            insecure_ssl=bool(insecure_ssl),
+        )
         self.insecure_ssl = bool(insecure_ssl)
         self.allow_write_tests = bool(allow_write_tests)
         self.include_sensitive_evidence = bool(include_sensitive_evidence)
@@ -135,12 +122,6 @@ class APISentinelAuditor:
             self.write_allowlist.add(canonical)
         self._writes_halted_reason: Optional[str] = None
 
-        context = ssl._create_unverified_context() if insecure_ssl else ssl.create_default_context()
-        self._opener = urllib.request.build_opener(
-            _NoRedirectHandler(), urllib.request.HTTPSHandler(context=context)
-        )
-        self._rate_lock = threading.Lock()
-        self._next_request_at = 0.0
         self._result_lock = threading.Lock()
         self._write_lock = threading.RLock()
         self._request_accounting = threading.local()
@@ -349,6 +330,18 @@ class APISentinelAuditor:
 
         return secrets
 
+    @property
+    def request_delay(self) -> float:
+        return self._transport.request_delay
+
+    @property
+    def request_timeout(self) -> float:
+        return self._transport.request_timeout
+
+    @property
+    def max_response_bytes(self) -> int:
+        return self._transport.max_response_bytes
+
     def secret_values(self) -> FrozenSet[str]:
         """Return the secret values published so far, for redacting output.
 
@@ -396,51 +389,6 @@ class APISentinelAuditor:
                             self._replace_evidence_in_place(record, safe)
             self._auth_parser = parser
 
-    def _throttle(self) -> None:
-        # Honor a rate-limit pause even when no per-request delay is configured.
-        with self._rate_lock:
-            wait_for = self._next_request_at - time.monotonic()
-            if wait_for > 0:
-                time.sleep(wait_for)
-            if self.request_delay > 0:
-                self._next_request_at = time.monotonic() + self.request_delay
-
-    def _defer_requests(self, seconds: float) -> None:
-        """Pause every worker: a rate limit applies to this client, not one request."""
-        with self._rate_lock:
-            self._next_request_at = max(self._next_request_at, time.monotonic() + seconds)
-
-    @staticmethod
-    def _retry_after_seconds(headers: Mapping[str, str]) -> Optional[float]:
-        """Parse Retry-After as delay-seconds or an HTTP date (RFC 9110 section 10.2.3)."""
-        value = next((str(item) for name, item in headers.items() if str(name).lower() == "retry-after"), None)
-        if value is None:
-            return None
-        value = value.strip()
-        if re.fullmatch(r"[0-9]+", value):
-            return float(int(value)) if len(value) <= 12 else float("inf")
-        try:
-            when = parsedate_to_datetime(value)
-        except (TypeError, ValueError, IndexError):
-            return None
-        if when is None:
-            return None
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
-        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
-
-    def _rate_limit_wait(self, method: str, result: HTTPResult, attempt: int) -> Optional[float]:
-        """Return how long to wait before retrying, or None to keep this response."""
-        if (str(method).upper() not in self.RETRYABLE_METHODS or result.error is not None
-                or result.status not in (429, 503)):
-            return None
-        retry_after = self._retry_after_seconds(result.headers)
-        if result.status == 503 and retry_after is None:
-            return None  # Only an explicit Retry-After marks a 503 as temporary.
-        wait = retry_after if retry_after is not None else self.RATE_LIMIT_BACKOFF * (2 ** attempt)
-        wait = max(wait, self.request_delay)
-        return wait if wait <= self.MAX_RETRY_WAIT else None
-
     def identity_headers(self, identity_name: str) -> Dict[str, str]:
         identity = self.identities[identity_name]
         headers = {}
@@ -457,13 +405,6 @@ class APISentinelAuditor:
                 raise ValueError("identity token must not contain line breaks")
             headers["authorization"] = str(token).strip()
         return headers
-
-    def _read_limited(self, response) -> Tuple[str, bool]:  # noqa: ANN001
-        raw = response.read(self.max_response_bytes + 1)
-        truncated = len(raw) > self.max_response_bytes
-        raw = raw[: self.max_response_bytes]
-        charset = response.headers.get_content_charset() or "utf-8"
-        return raw.decode(charset, errors="replace"), truncated
 
     @staticmethod
     def _build_read_safety_cache(parser: OpenAPIParser) -> _ReadSafetyCache:
@@ -555,56 +496,37 @@ class APISentinelAuditor:
         attempt = 0
         while True:
             result = self._send_http_request(method, url, data, identity_name, content_type, headers)
-            wait = self._rate_limit_wait(method, result, attempt) if attempt < self.RATE_LIMIT_RETRIES else None
+            wait = (self._transport.rate_limit_wait(method, result, attempt)
+                    if attempt < self._transport.RATE_LIMIT_RETRIES else None)
             if wait is None:
                 return result
             with self._result_lock:
                 self.stats["rate_limit_retries"] += 1
-            self._defer_requests(wait)
+            self._transport.defer(wait)
             attempt += 1
 
     def _send_http_request(
         self, method: str, url: str, data: Optional[Dict[str, Any]], identity_name: str,
         content_type: str, headers: Optional[Dict[str, str]],
     ) -> HTTPResult:
-        self._throttle()
+        self._transport.throttle()
         try:
-            if headers is not None:
-                request_headers = {
-                    "accept": "application/json",
-                    "user-agent": f"GrantTrace/{__version__}",
-                    **headers,
-                }
-            else:
-                request_headers = {
-                    "accept": "application/json",
-                    "user-agent": f"GrantTrace/{__version__}",
-                    **self.identity_headers(identity_name),
-                }
-            encoded_data = None
-            if data is not None:
-                request_headers["content-type"] = content_type
-                encoded_data = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            request = urllib.request.Request(url, data=encoded_data, method=method, headers=request_headers)
-            self._request_accounting.attempts = (getattr(self._request_accounting, "attempts", None) or 0) + 1
-            with self._result_lock:
-                self.stats["transport_attempts"] += 1
-            try:
-                response = self._opener.open(request, timeout=self.request_timeout)
-            except urllib.error.HTTPError as exc:
-                response = exc
-            with response:
-                with self._result_lock:
-                    self.stats["http_requests_sent"] += 1
-                body, truncated = self._read_limited(response)
-                return HTTPResult(
-                    status=response.status, body=body, truncated=truncated,
-                    headers={str(k): str(v) for k, v in response.headers.items()},
-                )
+            request_headers = headers if headers is not None else self.identity_headers(identity_name)
         except Exception as exc:
-            # Includes malformed encodings and truncated/chunked transport reads.
-            # A PATCH may already have committed; the transaction owns recovery.
             return HTTPResult(status=0, body="", error=f"{type(exc).__name__}: {exc}")
+        return self._transport.send(
+            method, url, request_headers, data, content_type,
+            on_attempt=self._count_transport_attempt, on_response=self._count_request_sent,
+        )
+
+    def _count_transport_attempt(self) -> None:
+        self._request_accounting.attempts = (getattr(self._request_accounting, "attempts", None) or 0) + 1
+        with self._result_lock:
+            self.stats["transport_attempts"] += 1
+
+    def _count_request_sent(self) -> None:
+        with self._result_lock:
+            self.stats["http_requests_sent"] += 1
 
     @staticmethod
     def _operation_key(ep: Dict[str, Any]) -> str:

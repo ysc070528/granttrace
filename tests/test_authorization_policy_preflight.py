@@ -67,7 +67,7 @@ class AuthorizationPolicyPreflightTests(unittest.TestCase):
 
     def test_ordinary_transport_error_counts_attempted_endpoint(self):
         auditor, endpoint = self.make_auditor({})
-        with patch.object(auditor._opener, "open", side_effect=OSError("isolated network failure")) as transport:
+        with patch.object(auditor._transport.opener, "open", side_effect=OSError("isolated network failure")) as transport:
             auditor.audit_endpoint_bola(endpoint)
         self.assertEqual(4, transport.call_count)
         auditor.stats["total_endpoints"] = 1
@@ -92,7 +92,7 @@ class AuthorizationPolicyPreflightTests(unittest.TestCase):
 
         with patch.object(auditor.parser, "get_endpoints", return_value=[endpoint, second]), \
              patch.object(auditor, "audit_endpoint_bola", side_effect=fail_after_attempt), \
-             patch.object(auditor._opener, "open", side_effect=OSError("isolated transport failure")) as transport, \
+             patch.object(auditor._transport.opener, "open", side_effect=OSError("isolated transport failure")) as transport, \
              redirect_stdout(io.StringIO()):
             auditor.run()
         self.assertEqual(1, transport.call_count)

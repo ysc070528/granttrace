@@ -143,7 +143,7 @@ class ScanAccountingTests(unittest.TestCase):
 
     def test_failed_network_attempt_is_counted_without_calling_real_network(self):
         auditor = self.auditor()
-        with patch.object(auditor._opener, "open", side_effect=urllib.error.URLError("synthetic failure")) as opener:
+        with patch.object(auditor._transport.opener, "open", side_effect=urllib.error.URLError("synthetic failure")) as opener:
             failed = auditor._http_request("GET", "http://127.0.0.1:8080/items/1001")
         opener.assert_called_once()
         self.assertEqual(0, failed.status)

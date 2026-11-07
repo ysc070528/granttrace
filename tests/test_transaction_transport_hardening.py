@@ -359,7 +359,7 @@ class IdentityTransportHardeningTests(unittest.TestCase):
 
         Response.headers["Content-Type"] = "application/json; charset=unsupported-encoding"
         auditor = APISentinelAuditor(str(ROOT / "openapi.json"), "http://127.0.0.1", request_delay=0)
-        with patch.object(auditor._opener, "open", return_value=Response()):
+        with patch.object(auditor._transport.opener, "open", return_value=Response()):
             result = auditor._http_request("PATCH", "http://127.0.0.1/users/2", {"role": "admin"}, "visitor")
         self.assertEqual(result.status, 0)
         self.assertIn("LookupError", result.error)
