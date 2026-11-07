@@ -38,6 +38,13 @@
   them; the Windows portable build still writes CRLF for its batch launcher),
   and name 13 test modules after the behavior they cover instead of the PR or
   release that added them. No runtime change (#58).
+- Regenerate the example reports in `examples/` from the built-in demo. They
+  were still the 2.5.3 output, with Chinese BOLA reasons and without the newer
+  statistics, and showed PATCH results that a CLI scan of an external target no
+  longer produces, because such scans stop PATCH checks before any write.
+  `scripts/verify_examples.py --update-examples` now copies a fresh
+  `granttrace demo` run after verifying the CLI scans, and a new test fails when
+  the committed examples no longer match a fresh demo run. No runtime change (#70).
 
 ### Performance
 

@@ -38,7 +38,10 @@ def main():
     from mock_server.server import TargetMockHandler
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--update-examples", action="store_true")
+    parser.add_argument(
+        "--update-examples", action="store_true",
+        help="after verification, replace examples/ with the reports of a fresh built-in demo run",
+    )
     args = parser.parse_args()
     output = ROOT / "dist" / "mock-validation"
     output.mkdir(parents=True, exist_ok=True)
@@ -140,13 +143,6 @@ def main():
                     "tool_version": data["tool_version"],
                     "full_database_restored": restored,
                 })
-                if args.update_examples and name == "active-json":
-                    (ROOT / "examples" / "sample_report.html").write_text(
-                        html.read_text(encoding="utf-8"), encoding="utf-8",
-                    )
-                    (ROOT / "examples" / "sample_result.json").write_text(
-                        report.read_text(encoding="utf-8"), encoding="utf-8",
-                    )
             active_json = json.loads((output / "active-json.json").read_text(encoding="utf-8"))
             active_yaml = json.loads((output / "active-yaml.json").read_text(encoding="utf-8"))
             if active_json["stats"] != active_yaml["stats"]:
@@ -158,7 +154,33 @@ def main():
         TargetMockHandler.reset_database()
     (output / "verification.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(results, indent=2))
+    if args.update_examples:
+        update_examples()
     return 0
+
+
+def update_examples():
+    """Replace the example reports with those of a fresh built-in demo run.
+
+    The demo owns its data, so its PATCH checks run with authoritative state and
+    verified rollback. The external CLI scans above stop PATCH checks before any
+    write, so they cannot show a complete report.
+    """
+    from core.demo import run_demo
+
+    with tempfile.TemporaryDirectory() as directory:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exit_code = run_demo(output_dir=directory)
+        if exit_code != 0:
+            raise RuntimeError(f"Built-in demo exited with {exit_code}; examples were not updated")
+        (run,) = Path(directory).glob("run-*")
+        for source, target in (
+            ("granttrace_report.html", "sample_report.html"),
+            ("granttrace_report.json", "sample_result.json"),
+        ):
+            shutil.copyfile(run / source, ROOT / "examples" / target)
+    print("Updated examples/sample_report.html and examples/sample_result.json from the built-in demo",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":
