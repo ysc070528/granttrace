@@ -23,16 +23,17 @@ from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Patt
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
-from core.bopla import BOPLAEvidence, resource_scope, validate_bopla_policy
+from core.bopla import BOPLAEvidence, validate_bopla_policy
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
-from core.evidence import PROPERTY_EVIDENCE_LOCK, body_sha256, sanitize_body, sanitize_evidence, sanitize_property_record
-from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, path_parts, prepare_patch
+from core.evidence import body_sha256, sanitize_body, sanitize_evidence
+from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
 from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
 from core.request_builder import RequestBuilderMixin
+from core.results import ResultRecorderMixin
 from core.parameters import ParameterSerializationError
 from core.scan_safety import read_only_risk, read_path_risk
 from core.transport import HttpTransport
@@ -45,7 +46,7 @@ class _ReadSafetyCache:
     readbacks: Mapping[Tuple[str, str], Mapping[str, Any]]
 
 
-class APISentinelAuditor(RequestBuilderMixin):
+class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     # Both methods require independent actual-state authority. PUT additionally
     # requires an unambiguous full root-document replacement snapshot.
     WRITE_METHODS = {"PATCH", "PUT"}
@@ -409,212 +410,6 @@ class APISentinelAuditor(RequestBuilderMixin):
             "truncated": result.truncated,
             "error": result.error,
         }, self.include_sensitive_evidence, secrets)
-
-    @staticmethod
-    def _private_evidence_values(owner: HTTPResult, policy: Dict[str, Any]) -> Tuple[str, ...]:
-        # Redact configured private values from every identity's stored body,
-        # including echoes at other paths. Evaluation still uses original HTTP.
-        try:
-            document = strict_json_loads(owner.body)
-        except (TypeError, ValueError, RecursionError):
-            return ()
-        values = []
-        for path in policy.get("private_data_paths", []):
-            exists, value = get_path(document, path)
-            if exists and ((isinstance(value, str) and value) or type(value) in (int, float)):
-                values.append(str(value))
-        return tuple(values)
-
-    def _record_result(
-        self,
-        ep: Dict[str, Any],
-        check: str,
-        verdict: Verdict,
-        reason: str,
-        evidence: Optional[Dict[str, Any]] = None,
-        finding: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        evidence = dict(evidence or {})
-        # Count transport attempts, including failed connections, rather than
-        # treating a local preflight conclusion as an executed check.
-        attempts = getattr(self._request_accounting, "attempts", None)
-        if attempts is None:
-            # Response records also support callers that provide an isolated
-            # transport fixture instead of using the built-in HTTP executor.
-            def response_count(value: Any) -> int:
-                if isinstance(value, dict):
-                    if {"status", "body", "sha256", "truncated"}.issubset(value):
-                        return 1
-                    return sum(response_count(child) for child in value.values())
-                if isinstance(value, list):
-                    return sum(response_count(child) for child in value)
-                return 0
-            attempts = response_count(evidence)
-        if getattr(self._request_accounting, "attempts", None) is not None:
-            evidence["requests_attempted"] = attempts
-        else:
-            evidence.setdefault("requests_attempted", attempts)
-        primary = check != "ROLLBACK"
-        attempted = evidence["requests_attempted"] > 0
-        conclusive = verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}
-        if "reason_category" not in evidence:
-            if verdict == Verdict.SKIPPED:
-                category = "detector_unimplemented" if check == "UNSUPPORTED" else "not_applicable"
-            elif verdict == Verdict.ERROR:
-                category = "error"
-            elif conclusive:
-                category = "conclusive"
-            else:
-                missing = evidence.get("decision_evidence", {}).get("missing_evidence", [])
-                category = "missing_baseline" if not attempted or any(
-                    item in missing for item in ("owner_baseline", "visitor_self_baseline", "distinct_visitor_self_resource")
-                ) else "insufficient_evidence"
-            evidence["reason_category"] = category
-        if primary:
-            self._request_accounting.attempts = None
-        result = {
-            "endpoint": self._operation_key(ep),
-            "operation_id": ep.get("operation_id", ""),
-            "check": check,
-            "verdict": verdict.value,
-            "reason": reason,
-            "evidence": evidence,
-        }
-        force_safe = self._operation_key(ep) in self.bopla_config
-        with self._result_lock, PROPERTY_EVIDENCE_LOCK:
-            duplicate = False
-            resource_group = None
-            if force_safe:
-                policy = self.bopla_config[self._operation_key(ep)]
-                proof = evidence.get("decision_evidence", {})
-                field_path = proof.get("field_path") if check == "BOPLA" else None
-                if isinstance(policy, dict) and not validate_bopla_policy(policy) and (field_path or finding):
-                    if check != "BOPLA":
-                        # A legacy collection/object finding can prove exposure
-                        # of the very field a property rule selects. Associate
-                        # that one finding with one actually matched resource;
-                        # other array resources retain independent leak groups.
-                        shared_paths = proof.get("matched_private_data_paths") or proof.get("owner_specific_shared_value_paths", ())
-                        matched_paths = set()
-                        for path in shared_paths:
-                            try:
-                                matched_paths.add(path_parts(path))
-                            except (TypeError, ValueError):
-                                continue  # Arbitrary JSON keys need not be valid policy paths.
-                        field_path = next((rule["path"] for rule in policy["fields"]
-                                           if path_parts(rule["path"]) in matched_paths), None)
-                    selected = (self._operation_key(ep), str(evidence.get("target_url", "")),
-                                str(policy["context_id"]), resource_scope(policy, field_path))
-                    resource_group = self._bopla_resource_groups.setdefault(selected, len(self._bopla_resource_groups) + 1)
-                    evidence["resource_group"] = resource_group
-            if force_safe and finding and verdict == Verdict.CONFIRMED:
-                identity = (evidence.get("decision_evidence", {}).get("subject_identity")
-                            if check == "BOPLA" else "anonymous" if check == "BROKEN_AUTH" else "visitor")
-                context = self.bopla_config[self._operation_key(ep)].get("context_id", "")
-                group_key = (self._operation_key(ep), str(evidence.get("target_url", "")),
-                             str(context), str(identity), resource_group)
-                group = self._bopla_leak_groups.get(group_key)
-                if group:
-                    duplicate = True
-                    result["evidence"]["duplicate_of"] = group
-                    finding = None
-                else:
-                    group = "read-leak-" + str(len(self._bopla_leak_groups) + 1)
-                    self._bopla_leak_groups[group_key] = group
-                result["evidence"]["leak_group"] = group
-            # The mandatory boundary covers all operations in a BOPLA scan.
-            # It preserves trusted control metadata while sanitizing business
-            # observations and prevents a concurrent append escaping late cleanup.
-            if self.bopla_config:
-                result["evidence"]["property_privacy_pending"] = True
-                result = self._property_safe_record(result)
-                if finding:
-                    finding.setdefault("evidence", {})["property_privacy_pending"] = True
-                    finding = self._property_safe_record(finding)
-            else:
-                result = sanitize_evidence(result, self.include_sensitive_evidence, self._secret_values)
-                if finding:
-                    finding = sanitize_evidence(finding, self.include_sensitive_evidence, self._secret_values)
-            self.results.append(result)
-            self.stats["total_checks"] += 1
-            if primary and attempted:
-                self.stats["audited_count"] += 1
-            if primary and attempted and conclusive:
-                self.stats["conclusive_count"] += 1
-            if verdict == Verdict.CONFIRMED and not duplicate:
-                self.stats["confirmed"] += 1
-            elif verdict == Verdict.SECURE:
-                self.stats["secure_endpoints"] += 1
-            elif verdict == Verdict.PUBLIC:
-                self.stats["public_endpoints"] += 1
-            elif verdict == Verdict.AUTHORIZED:
-                self.stats["authorized_endpoints"] += 1
-            elif verdict == Verdict.SUSPICIOUS:
-                self.stats["suspicious_count"] += 1
-            elif verdict == Verdict.INCONCLUSIVE:
-                self.stats["inconclusive_count"] += 1
-            elif verdict == Verdict.SKIPPED:
-                self.stats["skipped_count"] += 1
-            elif verdict == Verdict.ERROR:
-                self.stats["error_count"] += 1
-            if finding:
-                self.findings.append(finding)
-            # Per-detector counts measure confirmed decisions, even when their
-            # shared observation contributes only one independent finding.
-            if check == "BROKEN_AUTH" and verdict == Verdict.CONFIRMED:
-                self.stats["broken_auth_confirmed"] += 1
-            elif check == "BFLA" and verdict == Verdict.CONFIRMED:
-                self.stats["bfla_confirmed"] += 1
-        return result
-
-    @staticmethod
-    def _map_bola_verdict(raw: str) -> Verdict:
-        mapping = {
-            "BOLA_CONFIRMED": Verdict.CONFIRMED,
-            "CONFIRMED": Verdict.CONFIRMED,
-            "PUBLIC_ENDPOINT": Verdict.PUBLIC,
-            "PUBLIC": Verdict.PUBLIC,
-            "SECURE_ENFORCED": Verdict.SECURE,
-            "SECURE": Verdict.SECURE,
-            "LOW_SUSPICION": Verdict.SUSPICIOUS,
-            "SUSPICIOUS": Verdict.SUSPICIOUS,
-            "ERROR": Verdict.ERROR,
-        }
-        return mapping.get(str(raw).upper(), Verdict.INCONCLUSIVE)
-
-    def _property_safe_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        return sanitize_property_record(record, self._secret_values,
-                                        omit_responses=bool(self._bopla_secret_values))
-
-    @staticmethod
-    def _replace_evidence_in_place(current: Any, safe: Any) -> None:
-        # Callers can retain a record, a list, or a nested evidence dictionary.
-        # Replacing only the auditor's outer collection leaves those aliases live.
-        if isinstance(current, dict) and isinstance(safe, dict):
-            for key in list(current):
-                if key not in safe:
-                    del current[key]
-            for key, value in safe.items():
-                if key in current and isinstance(current[key], (dict, list)) and isinstance(value, type(current[key])):
-                    APISentinelAuditor._replace_evidence_in_place(current[key], value)
-                else:
-                    current[key] = value
-        elif isinstance(current, list) and isinstance(safe, list):
-            for index, value in enumerate(safe):
-                if index < len(current) and isinstance(current[index], (dict, list)) and isinstance(value, type(current[index])):
-                    APISentinelAuditor._replace_evidence_in_place(current[index], value)
-                elif index < len(current):
-                    current[index] = value
-                else:
-                    current.append(value)
-            del current[len(safe):]
-
-    def _redact_property_history(self) -> None:
-        # The result lock is held by callers, including registration and finalization.
-        with PROPERTY_EVIDENCE_LOCK:
-            for collection in (self.results, self.findings):
-                for record in collection:
-                    self._replace_evidence_in_place(record, self._property_safe_record(record))
 
     def _read_observation(
         self, method: str, url: str, identity_name: str, headers: Optional[Dict[str, str]] = None
@@ -1239,6 +1034,23 @@ class APISentinelAuditor(RequestBuilderMixin):
     def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        plan = self._mass_assignment_preflight(ep, all_endpoints)
+        if plan is None:
+            return
+        with self._resource_lock(plan["mutation_url"]):
+            for case in plan["cases"]:
+                if self._mass_assignment_case(ep, plan, case):
+                    return
+        self._record_mass_assignment_summary(ep, plan)
+
+    def _mass_assignment_preflight(
+        self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Run every check that precedes a write.
+
+        Returns None after recording why no write may be sent; otherwise the
+        prepared cases, the shared result lists and the values the cases need.
+        """
         if ep.get("unresolved_schema_error"):
             sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
             self._record_result(
@@ -1248,33 +1060,33 @@ class APISentinelAuditor(RequestBuilderMixin):
                 f"Schema could not be resolved safely: {sanitized_err}; no request was sent",
                 evidence={"reason_category": "unresolved_reference", "requests_attempted": 0, "requests_sent": 0},
             )
-            return
+            return None
         if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only explicitly allowlisted reversible PATCH/PUT checks are supported; no method substitution or request was made",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "safety_signal": "method"})
-            return
+            return None
         operation_key = self._operation_key(ep)
         if self._writes_halted_reason:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED, self._writes_halted_reason,
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         if not self.allow_write_tests:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "State-changing checks are disabled; pass --allow-write-tests to opt in",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         if operation_key not in self.write_allowlist:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Endpoint is not in the explicit, case-sensitive write-test allowlist",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         schema = ep.get("request_schema")
         if not isinstance(schema, dict) or not schema:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "No request schema is available; no write was sent")
-            return
+            return None
         content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].strip().lower()
         allowed_types = {"application/json"} if ep["method"].upper() == "PUT" else {
             "application/json", "application/merge-patch+json"}
@@ -1283,31 +1095,31 @@ class APISentinelAuditor(RequestBuilderMixin):
                                 "Only object application/json and application/merge-patch+json are supported; "
                                 "JSON Patch operation arrays and arbitrary vendor formats are not implemented",
                                 evidence={"reason_category": "detector_unimplemented", "requests_attempted": 0})
-            return
+            return None
         readback = self._readback_for(ep, all_endpoints)
         if (not readback or not readback.get("path")
                 or str(readback.get("method", "GET")).upper() != "GET"):
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "An independent GET readback mapping is required; no write was sent")
-            return
+            return None
         risk = read_only_risk(self._readback_endpoint(ep, readback))
         if risk:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Unsafe readback: " + risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
-            return
+            return None
         field_map = readback.get("field_map")
         if not isinstance(field_map, dict) or not field_map:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "An explicit non-empty field_map is required; no write was sent")
-            return
+            return None
         try:
             generated = self._normalise_mutation_cases(schema)
         except ValueError as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 f"A valid baseline could not be generated: {exc}; no write was sent")
-            return
+            return None
         cases = [case for case in generated if case["field_path"] in field_map]
         generated_paths = {case["field_path"] for case in cases}
         unverified = [f"{name}: no mutation case was generated" for name in field_map if name not in generated_paths]
@@ -1335,7 +1147,7 @@ class APISentinelAuditor(RequestBuilderMixin):
                     f"Cookie parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
                     evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
                 )
-                return
+                return None
             if loc == "header" and (is_array or is_object):
                 kind = "array" if is_array else "object"
                 self._record_result(
@@ -1343,7 +1155,7 @@ class APISentinelAuditor(RequestBuilderMixin):
                     f"Header {kind} parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
                     evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
                 )
-                return
+                return None
         try:
             mutation_url = self._build_url(ep, "visitor")
             read_ep = self._readback_endpoint(ep, readback)
@@ -1352,14 +1164,14 @@ class APISentinelAuditor(RequestBuilderMixin):
         except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
-            return
+            return None
         risk = self._read_request_risk("GET", readback_url)
         if risk:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Unsafe readback: " + risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
-            return
+            return None
 
         if not self._has_patch_state_authority():
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
@@ -1368,127 +1180,153 @@ class APISentinelAuditor(RequestBuilderMixin):
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "rollback_verified": False,
                                           "recovery_sent": False, "safety_signal": "unverified_state_authority"})
-            return
+            return None
+        return {
+            "operation_key": operation_key, "content_type": content_type, "readback": readback,
+            "field_map": field_map, "cases": cases, "mutation_url": mutation_url,
+            "unverified": unverified, "verified_safe": verified_safe, "tested": tested,
+            "case_summaries": case_summaries,
+        }
 
-        with self._resource_lock(mutation_url):
-            for case in cases:
-                field_path = case["field_path"]
-                try:
-                    read_url, before_http = self._readback_result(ep, readback, "visitor")
-                except (ParameterSerializationError, RemoteRefError) as exc:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
-                    return
-                if before_http.error:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        f"Read-before-write failed: {before_http.error}",
-                                        evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
-                    return
-                before = self._verified_patch_document(before_http, ep, mutation_url, readback)
-                if before is None:
-                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
-                    continue
-                try:
-                    snapshot = (prepare_patch(before, case, readback, method="PUT")
-                                if ep["method"].upper() == "PUT" else prepare_patch(before, case, readback))
-                    if not snapshot.matches(before):
-                        raise ValueError("original readback snapshot cannot be verified")
-                    # Merge Patch null members remove fields; they cannot restore an
-                    # explicitly present null from an object snapshot.
-                    def has_null_member(value):
-                        if isinstance(value, dict):
-                            return any(item is None or has_null_member(item) for item in value.values())
-                        return False  # Arrays replace as complete values.
-                    if content_type == "application/merge-patch+json" and has_null_member(snapshot.restore):
-                        raise ValueError("Merge Patch cannot restore present null object members")
-                    if content_type == "application/merge-patch+json":
-                        ensure_reversible_merge_patch(snapshot)
-                except (ValueError, KeyError, TypeError) as exc:
-                    unverified.append(f"{field_path}: {exc}; no write was sent")
-                    continue
+    def _mass_assignment_case(self, ep: Dict[str, Any], plan: Dict[str, Any], case: Dict[str, Any]) -> bool:
+        """Test one field under the resource lock; True when a final result was recorded."""
+        operation_key = plan["operation_key"]
+        content_type = plan["content_type"]
+        readback = plan["readback"]
+        field_map = plan["field_map"]
+        mutation_url = plan["mutation_url"]
+        unverified = plan["unverified"]
+        verified_safe = plan["verified_safe"]
+        tested = plan["tested"]
+        case_summaries = plan["case_summaries"]
+        field_path = case["field_path"]
+        try:
+            read_url, before_http = self._readback_result(ep, readback, "visitor")
+        except (ParameterSerializationError, RemoteRefError) as exc:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
+            return True
+        if before_http.error:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                f"Read-before-write failed: {before_http.error}",
+                                evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
+            return True
+        before = self._verified_patch_document(before_http, ep, mutation_url, readback)
+        if before is None:
+            unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
+            return False
+        try:
+            snapshot = (prepare_patch(before, case, readback, method="PUT")
+                        if ep["method"].upper() == "PUT" else prepare_patch(before, case, readback))
+            if not snapshot.matches(before):
+                raise ValueError("original readback snapshot cannot be verified")
+            # Merge Patch null members remove fields; they cannot restore an
+            # explicitly present null from an object snapshot.
+            def has_null_member(value):
+                if isinstance(value, dict):
+                    return any(item is None or has_null_member(item) for item in value.values())
+                return False  # Arrays replace as complete values.
+            if content_type == "application/merge-patch+json" and has_null_member(snapshot.restore):
+                raise ValueError("Merge Patch cannot restore present null object members")
+            if content_type == "application/merge-patch+json":
+                ensure_reversible_merge_patch(snapshot)
+        except (ValueError, KeyError, TypeError) as exc:
+            unverified.append(f"{field_path}: {exc}; no write was sent")
+            return False
 
-                # Recheck the authority immediately before transport; it may
-                # become unavailable while preparing the reversible snapshot.
-                if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
-                    unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
-                    continue
-                tested.append(field_path)
-                transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
-                mutation = transaction["mutation"]
-                after = transaction["after"]
-                exists, value = get_path(after or {}, snapshot.read_path)
-                persisted = exists and json_values_equal(value, snapshot.target)
-                evidence = {
-                    "field": field_path, "readback_field": field_map[field_path],
-                    "target_url": mutation_url,
-                    "readback_url": read_url,
-                    "request_content_type": (
-                        "application/json"
-                        if str(ep.get("request_content_type") or "application/json").lower() == "application/json"
-                        else str(ep.get("request_content_type") or "application/json")
-                    ),
-                    "snapshot_fields": list(snapshot.restore),
-                    "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
-                    "ignored_readback_paths": readback.get("ignore_readback_paths", []),
-                    "mutation": self._safe_body(mutation),
-                    "after": self._safe_body(transaction["after_http"]),
-                    "rollback": self._safe_body(transaction["rollback"]),
-                    "restored": self._safe_body(transaction["restored"]),
-                    "rollback_verified": transaction["rollback_verified"],
-                    "recovery_sent": transaction["recovery_sent"],
-                    "tested_fields": list(tested),
-                    "untested_fields": [name for name in field_map if name not in tested],
-                    "readback_consistency": readback.get("consistency", "unspecified"),
-                }
-                case_summaries.append({
-                    "field": field_path, "readback_field": field_map[field_path],
-                    "persisted": persisted,
-                    "rollback_verified": transaction["rollback_verified"],
-                    "recovery_sent": transaction["recovery_sent"],
-                })
-                if persisted:
-                    finding: Dict[str, Any] = {
-                        "type": "Mass Assignment (independent readback confirmed)",
-                        "cwe": "CWE-915", "severity": "Critical", "endpoint": operation_key,
-                        "target_url": mutation_url,
-                        "details": f"Privilege field '{field_path}' persisted after mutation",
-                        "injected_payload": {field_path: snapshot.target},
-                        "evidence": evidence,
-                    }
-                    with self._result_lock:
-                        self.stats["mass_assignment_confirmed"] += 1
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.CONFIRMED,
-                                        finding["details"], evidence, finding)
-                    if self._writes_halted_reason:
-                        self._record_result(ep, "ROLLBACK", Verdict.ERROR,
-                                            self._writes_halted_reason, evidence)
-                    return
-                if self._writes_halted_reason:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        self._writes_halted_reason, evidence)
-                    return
-                if transaction["failure"] or mutation.error or mutation.status == 0 or mutation.status >= 500:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        "Mutation outcome was ambiguous; recovery was verified. "
-                                        + str(transaction["failure"] or mutation.error or mutation.status), evidence)
-                    return
-                if after is None:
-                    unverified.append(f"{field_path}: invalid read-after-write; original snapshot restored")
-                    continue
-                if not snapshot.matches(after):
-                    unverified.append(f"{field_path}: unexpected state change; original snapshot restored")
-                    continue
-                if readback.get("consistency") != "strong":
-                    unverified.append(f"{field_path}: unchanged state is not conclusive without strongly consistent readback")
-                    continue
-                if mutation.status in self.AUTH_DENIAL_STATUSES:
-                    verified_safe.append(field_path)
-                    continue
-                assessment = (ResponseDiffEngine.classify_response(mutation.status, mutation.body)
-                              if mutation.status != 204 else {"kind": ResponseDiffEngine.RESPONSE_VALID})
-                if mutation.ok and assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID:
-                    verified_safe.append(field_path)
-                else:
-                    unverified.append(f"{field_path}: mutation was rejected or returned a business error")
+        # Recheck the authority immediately before transport; it may
+        # become unavailable while preparing the reversible snapshot.
+        if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
+            unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
+            return False
+        tested.append(field_path)
+        transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
+        mutation = transaction["mutation"]
+        after = transaction["after"]
+        exists, value = get_path(after or {}, snapshot.read_path)
+        persisted = exists and json_values_equal(value, snapshot.target)
+        evidence = {
+            "field": field_path, "readback_field": field_map[field_path],
+            "target_url": mutation_url,
+            "readback_url": read_url,
+            "request_content_type": (
+                "application/json"
+                if str(ep.get("request_content_type") or "application/json").lower() == "application/json"
+                else str(ep.get("request_content_type") or "application/json")
+            ),
+            "snapshot_fields": list(snapshot.restore),
+            "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
+            "ignored_readback_paths": readback.get("ignore_readback_paths", []),
+            "mutation": self._safe_body(mutation),
+            "after": self._safe_body(transaction["after_http"]),
+            "rollback": self._safe_body(transaction["rollback"]),
+            "restored": self._safe_body(transaction["restored"]),
+            "rollback_verified": transaction["rollback_verified"],
+            "recovery_sent": transaction["recovery_sent"],
+            "tested_fields": list(tested),
+            "untested_fields": [name for name in field_map if name not in tested],
+            "readback_consistency": readback.get("consistency", "unspecified"),
+        }
+        case_summaries.append({
+            "field": field_path, "readback_field": field_map[field_path],
+            "persisted": persisted,
+            "rollback_verified": transaction["rollback_verified"],
+            "recovery_sent": transaction["recovery_sent"],
+        })
+        if persisted:
+            finding: Dict[str, Any] = {
+                "type": "Mass Assignment (independent readback confirmed)",
+                "cwe": "CWE-915", "severity": "Critical", "endpoint": operation_key,
+                "target_url": mutation_url,
+                "details": f"Privilege field '{field_path}' persisted after mutation",
+                "injected_payload": {field_path: snapshot.target},
+                "evidence": evidence,
+            }
+            with self._result_lock:
+                self.stats["mass_assignment_confirmed"] += 1
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.CONFIRMED,
+                                finding["details"], evidence, finding)
+            if self._writes_halted_reason:
+                self._record_result(ep, "ROLLBACK", Verdict.ERROR,
+                                    self._writes_halted_reason, evidence)
+            return True
+        if self._writes_halted_reason:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                self._writes_halted_reason, evidence)
+            return True
+        if transaction["failure"] or mutation.error or mutation.status == 0 or mutation.status >= 500:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                "Mutation outcome was ambiguous; recovery was verified. "
+                                + str(transaction["failure"] or mutation.error or mutation.status), evidence)
+            return True
+        if after is None:
+            unverified.append(f"{field_path}: invalid read-after-write; original snapshot restored")
+            return False
+        if not snapshot.matches(after):
+            unverified.append(f"{field_path}: unexpected state change; original snapshot restored")
+            return False
+        if readback.get("consistency") != "strong":
+            unverified.append(f"{field_path}: unchanged state is not conclusive without strongly consistent readback")
+            return False
+        if mutation.status in self.AUTH_DENIAL_STATUSES:
+            verified_safe.append(field_path)
+            return False
+        assessment = (ResponseDiffEngine.classify_response(mutation.status, mutation.body)
+                      if mutation.status != 204 else {"kind": ResponseDiffEngine.RESPONSE_VALID})
+        if mutation.ok and assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID:
+            verified_safe.append(field_path)
+        else:
+            unverified.append(f"{field_path}: mutation was rejected or returned a business error")
+        return False
+
+    def _record_mass_assignment_summary(self, ep: Dict[str, Any], plan: Dict[str, Any]) -> None:
+        """Record SECURE only when every configured field was verified safe."""
+        readback = plan["readback"]
+        field_map = plan["field_map"]
+        mutation_url = plan["mutation_url"]
+        unverified = plan["unverified"]
+        verified_safe = plan["verified_safe"]
+        tested = plan["tested"]
+        case_summaries = plan["case_summaries"]
         evidence = {"tested_fields": tested, "safe_fields": verified_safe, "unverified": unverified,
                     "configured_fields": list(field_map), "target_url": mutation_url,
                     "cases": case_summaries,
@@ -1512,62 +1350,6 @@ class APISentinelAuditor(RequestBuilderMixin):
             self.audit_endpoint_bola(ep)
         except Exception as exc:
             self._record_task_error(ep, "BOLA", exc)
-
-    def _record_task_error(self, ep: Dict[str, Any], check: str, exc: BaseException) -> None:
-        message = ("Property audit failed; response details omitted" if self.bopla_config
-                   else f"Unhandled {type(exc).__name__}: {exc}")
-        self._record_result(ep, check, Verdict.ERROR, message)
-
-    def _finalise_coverage(self) -> None:
-        with self._result_lock, PROPERTY_EVIDENCE_LOCK:
-            self._finalise_coverage_locked()
-
-    def _finalise_coverage_locked(self) -> None:
-        if self._bopla_secret_values:
-            # Include observations recorded before another worker learned a
-            # protected value. Sensitive opt-in cannot remove this boundary.
-            self._redact_property_history()
-        total = max(1, int(self.stats["total_endpoints"]))
-        endpoint_results = [item for item in self.results if item["check"] != "ROLLBACK"]
-        attempted_keys = {item["endpoint"] for item in endpoint_results
-                          if item.get("evidence", {}).get("requests_attempted", 0) > 0}
-        # Multiple detection items on one endpoint share a coverage denominator.
-        # Every selected item must have a conclusive attempted observation. Legacy
-        # repeated results for the same item retain their existing any-result rule.
-        item_states: Dict[str, Dict[str, bool]] = {}
-        for item in endpoint_results:
-            states = item_states.setdefault(item["endpoint"], {})
-            conclusive_item = item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
-                Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
-            if item["check"] == "BOPLA":
-                states["BOPLA"] = states.get("BOPLA", True) and conclusive_item
-            else:
-                states[item["check"]] = states.get(item["check"], False) or conclusive_item
-        conclusive_keys = {endpoint for endpoint, states in item_states.items() if all(states.values())}
-        attempted = len(attempted_keys)
-        conclusive = len(conclusive_keys)
-        self.stats["attempted_endpoints"] = attempted
-        self.stats["conclusive_endpoints"] = conclusive
-        self.stats["coverage_pct"] = round(attempted * 100.0 / total, 1)
-        self.stats["conclusive_coverage_pct"] = round(conclusive * 100.0 / total, 1)
-        self.stats["confirmed_endpoints"] = len({item["endpoint"] for item in endpoint_results
-                                                 if item["verdict"] == Verdict.CONFIRMED.value})
-        self.stats["detection_items"] = sum(len(states) for states in item_states.values())
-        if self.bopla_config:
-            fields = [item for item in endpoint_results if item["check"] == "BOPLA"]
-            def field_key(item: Dict[str, Any]) -> Tuple[Any, ...]:
-                proof = item["evidence"].get("decision_evidence", {})
-                return (item["endpoint"], item["evidence"].get("target_url"), proof.get("context_id"),
-                        item["evidence"].get("resource_group"), proof.get("field_path"))
-            self.stats["bopla_field_checks"] = sum(bool(item["evidence"].get("decision_evidence", {}).get("field_path")) for item in fields)
-            self.stats["bopla_fields_checked"] = len({field_key(item) for item in fields
-                if item["evidence"].get("decision_evidence", {}).get("comparison_valid")})
-            self.stats["bopla_fields_confirmed"] = len({field_key(item) for item in fields
-                if item["verdict"] == "CONFIRMED"})
-            self.stats["bopla_inconclusive_count"] = sum(item["verdict"] == "INCONCLUSIVE" for item in fields)
-            self.stats["bopla_skipped_count"] = sum(item["verdict"] == "SKIPPED" for item in fields)
-            self.stats["unique_confirmed_vulnerabilities"] = len(self.findings)
-            self.stats["confirmed_detection_items"] = sum(item["verdict"] == "CONFIRMED" for item in endpoint_results)
 
     def build_plan(self) -> Dict[str, Any]:
         """Inspect local specification/configuration only; this never makes requests."""
