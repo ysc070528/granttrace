@@ -840,6 +840,59 @@ class ResponseDiffEngine:
         visitor_values = cls._meaningful_leaf_pairs(visitor["data"])
         anon_values = cls._meaningful_leaf_pairs(anonymous["data"])
 
+        evidence, private_increment = cls._bola_decision_evidence(
+            owner, visitor, anonymous, self_assessment, trusted_paths,
+            owner_values, visitor_values, anon_values, body_visitor, body_anon,
+            expected_public=expected_public, requires_auth=requires_auth,
+        )
+
+        if owner["kind"] != cls.RESPONSE_VALID:
+            return cls._result(
+                "INCONCLUSIVE",
+                0.0,
+                f"Owner baseline is not valid: {owner['reason']}",
+                evidence,
+            )
+
+        if requires_auth and anonymous["kind"] == cls.RESPONSE_VALID:
+            return cls._result(
+                "LOW_SUSPICION", 0.9,
+                "The endpoint requires authentication, but the Anonymous request returned successful JSON; "
+                "this access cannot be treated as intentionally public",
+                evidence,
+            )
+
+        if visitor["kind"] == cls.RESPONSE_AUTH_DENIED:
+            return cls._decide_visitor_denied(
+                visitor, anonymous, self_assessment, evidence, visitor_values, anon_values, status_visitor,
+            )
+        if visitor["kind"] != cls.RESPONSE_VALID:
+            return cls._decide_visitor_error(visitor, anonymous, evidence)
+        if anonymous["kind"] == cls.RESPONSE_VALID:
+            return cls._decide_anonymous_access(
+                owner, visitor, anonymous, evidence, visitor_values, private_increment,
+                expected_public=expected_public, requires_auth=requires_auth,
+            )
+        return cls._decide_object_access(anonymous, self_assessment, evidence)
+
+    @classmethod
+    def _bola_decision_evidence(
+        cls,
+        owner: Dict[str, Any],
+        visitor: Dict[str, Any],
+        anonymous: Dict[str, Any],
+        self_assessment: Optional[Dict[str, Any]],
+        trusted_paths: Set[str],
+        owner_values: Set[Tuple[str, str]],
+        visitor_values: Set[Tuple[str, str]],
+        anon_values: Set[Tuple[str, str]],
+        body_visitor: str,
+        body_anon: str,
+        *,
+        expected_public: bool,
+        requires_auth: bool,
+    ) -> Tuple[Dict[str, Any], Set[Tuple[str, str]]]:
+        """Evidence for every BOLA decision, and the Owner values shared only with the Visitor."""
         evidence = cls._build_evidence(
             owner,
             visitor,
@@ -880,136 +933,158 @@ class ResponseDiffEngine:
         private_increment = owner_values.intersection(visitor_values).difference(anon_values)
         evidence["owner_shared_nonpublic_value_paths"] = sorted({path for path, _ in private_increment})
 
-        if owner["kind"] != cls.RESPONSE_VALID:
+        return evidence, private_increment
+
+    @classmethod
+    def _decide_visitor_denied(
+        cls,
+        visitor: Dict[str, Any],
+        anonymous: Dict[str, Any],
+        self_assessment: Optional[Dict[str, Any]],
+        evidence: Dict[str, Any],
+        visitor_values: Set[Tuple[str, str]],
+        anon_values: Set[Tuple[str, str]],
+        status_visitor: Any,
+    ) -> Dict[str, Any]:
+        """The Visitor's cross-resource request was denied."""
+        if not evidence["visitor_denial_body_clean"]:
+            evidence["denial_body_conflict"] = True
+            return cls._result(
+                "LOW_SUSPICION" if visitor_values else "INCONCLUSIVE",
+                0.85 if visitor_values else 0.0,
+                "The Visitor response declares an authentication denial, but its body contains business data "
+                "or unknown content; access control is not proven",
+                evidence,
+            )
+        # A visitor rejection proves only that identity's access was denied.
+        # Anonymous success, redirects and non-authentication errors cannot
+        # establish that the endpoint also withheld the owner's data.
+        if anonymous["kind"] != cls.RESPONSE_AUTH_DENIED:
+            if anonymous["kind"] == cls.RESPONSE_VALID:
+                return cls._result(
+                    "LOW_SUSPICION", 0.25,
+                    "The Visitor cross-resource request was denied, but the Anonymous request returned successful "
+                    "JSON; without consistent denial evidence the endpoint cannot be judged secure",
+                    evidence,
+                )
+            return cls._result(
+                "LOW_SUSPICION" if anon_values else "INCONCLUSIVE",
+                0.8 if anon_values else 0.0,
+                "The Visitor cross-resource request was denied, but the Anonymous baseline is not an "
+                "explicit authentication denial"
+                + (" and its body contains business data" if anon_values else "")
+                + f": {anonymous['reason']}",
+                evidence,
+            )
+        if anonymous["kind"] == cls.RESPONSE_AUTH_DENIED and not evidence["anonymous_denial_body_clean"]:
+            evidence["denial_body_conflict"] = True
+            return cls._result(
+                "LOW_SUSPICION", 0.8,
+                "The Anonymous response declares an authentication denial, but its body contains business data "
+                "or unknown content; the access control result remains contradictory",
+                evidence,
+            )
+        if self_assessment is None:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"Owner baseline is not valid: {owner['reason']}",
+                "The Visitor cross-resource request was denied, but without a Visitor own-resource baseline "
+                "the Visitor credentials cannot be shown to be valid",
                 evidence,
             )
-
-        if requires_auth and anonymous["kind"] == cls.RESPONSE_VALID:
-            return cls._result(
-                "LOW_SUSPICION", 0.9,
-                "The endpoint requires authentication, but the Anonymous request returned successful JSON; "
-                "this access cannot be treated as intentionally public",
-                evidence,
-            )
-
-        if visitor["kind"] == cls.RESPONSE_AUTH_DENIED:
-            if not evidence["visitor_denial_body_clean"]:
-                evidence["denial_body_conflict"] = True
-                return cls._result(
-                    "LOW_SUSPICION" if visitor_values else "INCONCLUSIVE",
-                    0.85 if visitor_values else 0.0,
-                    "The Visitor response declares an authentication denial, but its body contains business data "
-                    "or unknown content; access control is not proven",
-                    evidence,
-                )
-            # A visitor rejection proves only that identity's access was denied.
-            # Anonymous success, redirects and non-authentication errors cannot
-            # establish that the endpoint also withheld the owner's data.
-            if anonymous["kind"] != cls.RESPONSE_AUTH_DENIED:
-                if anonymous["kind"] == cls.RESPONSE_VALID:
-                    return cls._result(
-                        "LOW_SUSPICION", 0.25,
-                        "The Visitor cross-resource request was denied, but the Anonymous request returned successful "
-                        "JSON; without consistent denial evidence the endpoint cannot be judged secure",
-                        evidence,
-                    )
-                return cls._result(
-                    "LOW_SUSPICION" if anon_values else "INCONCLUSIVE",
-                    0.8 if anon_values else 0.0,
-                    "The Visitor cross-resource request was denied, but the Anonymous baseline is not an "
-                    "explicit authentication denial"
-                    + (" and its body contains business data" if anon_values else "")
-                    + f": {anonymous['reason']}",
-                    evidence,
-                )
-            if anonymous["kind"] == cls.RESPONSE_AUTH_DENIED and not evidence["anonymous_denial_body_clean"]:
-                evidence["denial_body_conflict"] = True
-                return cls._result(
-                    "LOW_SUSPICION", 0.8,
-                    "The Anonymous response declares an authentication denial, but its body contains business data "
-                    "or unknown content; the access control result remains contradictory",
-                    evidence,
-                )
-            if self_assessment is None:
-                return cls._result(
-                    "INCONCLUSIVE",
-                    0.0,
-                    "The Visitor cross-resource request was denied, but without a Visitor own-resource baseline "
-                    "the Visitor credentials cannot be shown to be valid",
-                    evidence,
-                )
-            if self_assessment["kind"] != cls.RESPONSE_VALID:
-                return cls._result(
-                    "INCONCLUSIVE",
-                    0.0,
-                    "The Visitor cross-resource request was denied, but the Visitor own-resource baseline is not "
-                    f"valid: {self_assessment['reason']}",
-                    evidence,
-                )
-            return cls._result(
-                "SECURE_ENFORCED",
-                1.0 if int(status_visitor) in (401, 403) else 0.95,
-                "Both the Visitor cross-resource request and the Anonymous request were explicitly denied "
-                f"without business data in the body: {visitor['reason']}",
-                evidence,
-            )
-
-        if visitor["kind"] != cls.RESPONSE_VALID:
-            # A 4xx/5xx body can disclose the selected Owner object even though
-            # it cannot establish a successful-access baseline. Retain strong
-            # matches as leads only; never promote error responses to CONFIRMED.
-            if (
-                visitor["kind"] in {cls.RESPONSE_HTTP_CLIENT_ERROR, cls.RESPONSE_SERVER_ERROR}
-                and evidence["visitor_self_baseline_valid"] and evidence["owner_self_distinct"]
-                and anonymous["kind"] == cls.RESPONSE_AUTH_DENIED
-                and evidence["anonymous_denial_body_clean"]
-                and cls._object_access_signals(evidence)
-            ):
-                return cls._result(
-                    "LOW_SUSPICION", 0.8,
-                    "The Visitor error response body matches Owner-specific business values or a trusted resource "
-                    "identifier; it may disclose resource data and needs manual review",
-                    evidence,
-                )
+        if self_assessment["kind"] != cls.RESPONSE_VALID:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"The Visitor cross-resource request did not receive a decidable response: {visitor['reason']}",
+                "The Visitor cross-resource request was denied, but the Visitor own-resource baseline is not "
+                f"valid: {self_assessment['reason']}",
                 evidence,
             )
+        return cls._result(
+            "SECURE_ENFORCED",
+            1.0 if int(status_visitor) in (401, 403) else 0.95,
+            "Both the Visitor cross-resource request and the Anonymous request were explicitly denied "
+            f"without business data in the body: {visitor['reason']}",
+            evidence,
+        )
 
-        if anonymous["kind"] == cls.RESPONSE_VALID:
-            if (
-                expected_public and not requires_auth and visitor_values
-                and json_values_equal(anonymous["data"], visitor["data"])
-                and json_values_equal(visitor["data"], owner["data"])
-            ):
-                return cls._result(
-                    "PUBLIC_ENDPOINT",
-                    1.0,
-                    "The endpoint is explicitly configured as public, and the complete Owner, Visitor and Anonymous "
-                    "JSON responses are identical",
-                    evidence,
-                )
-            if private_increment:
-                return cls._result(
-                    "LOW_SUSPICION", 0.8,
-                    "The Visitor received Owner fields or values that the Anonymous response lacks; a public "
-                    "summary cannot rule out private data exposure",
-                    evidence,
-                )
+
+    @classmethod
+    def _decide_visitor_error(
+        cls, visitor: Dict[str, Any], anonymous: Dict[str, Any], evidence: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """The Visitor's cross-resource request did not return a valid response."""
+        # A 4xx/5xx body can disclose the selected Owner object even though
+        # it cannot establish a successful-access baseline. Retain strong
+        # matches as leads only; never promote error responses to CONFIRMED.
+        if (
+            visitor["kind"] in {cls.RESPONSE_HTTP_CLIENT_ERROR, cls.RESPONSE_SERVER_ERROR}
+            and evidence["visitor_self_baseline_valid"] and evidence["owner_self_distinct"]
+            and anonymous["kind"] == cls.RESPONSE_AUTH_DENIED
+            and evidence["anonymous_denial_body_clean"]
+            and cls._object_access_signals(evidence)
+        ):
             return cls._result(
-                "LOW_SUSPICION",
-                0.25,
-                "Anonymous access was observed, but without an explicit public policy or complete data "
-                "equivalence the endpoint cannot be judged public",
+                "LOW_SUSPICION", 0.8,
+                "The Visitor error response body matches Owner-specific business values or a trusted resource "
+                "identifier; it may disclose resource data and needs manual review",
                 evidence,
             )
+        return cls._result(
+            "INCONCLUSIVE",
+            0.0,
+            f"The Visitor cross-resource request did not receive a decidable response: {visitor['reason']}",
+            evidence,
+        )
 
+
+    @classmethod
+    def _decide_anonymous_access(
+        cls,
+        owner: Dict[str, Any],
+        visitor: Dict[str, Any],
+        anonymous: Dict[str, Any],
+        evidence: Dict[str, Any],
+        visitor_values: Set[Tuple[str, str]],
+        private_increment: Set[Tuple[str, str]],
+        *,
+        expected_public: bool,
+        requires_auth: bool,
+    ) -> Dict[str, Any]:
+        """The Visitor and Anonymous both received a valid response."""
+        if (
+            expected_public and not requires_auth and visitor_values
+            and json_values_equal(anonymous["data"], visitor["data"])
+            and json_values_equal(visitor["data"], owner["data"])
+        ):
+            return cls._result(
+                "PUBLIC_ENDPOINT",
+                1.0,
+                "The endpoint is explicitly configured as public, and the complete Owner, Visitor and Anonymous "
+                "JSON responses are identical",
+                evidence,
+            )
+        if private_increment:
+            return cls._result(
+                "LOW_SUSPICION", 0.8,
+                "The Visitor received Owner fields or values that the Anonymous response lacks; a public "
+                "summary cannot rule out private data exposure",
+                evidence,
+            )
+        return cls._result(
+            "LOW_SUSPICION",
+            0.25,
+            "Anonymous access was observed, but without an explicit public policy or complete data "
+            "equivalence the endpoint cannot be judged public",
+            evidence,
+        )
+
+
+    @classmethod
+    def _decide_object_access(
+        cls, anonymous: Dict[str, Any], self_assessment: Optional[Dict[str, Any]], evidence: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """The Visitor received a valid response and Anonymous did not."""
         if anonymous["kind"] != cls.RESPONSE_AUTH_DENIED:
             return cls._result(
                 "INCONCLUSIVE",
