@@ -74,11 +74,18 @@ def _parameter_notes(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
             item["items_type"] = schema["items"].get("type", "unspecified")
         if "content" in parameter:
             item["content_parameter"] = True
-        if location not in {"path", "query", "body"}:
+        if location in {"header", "cookie"} and endpoint.get("method") == "GET":
             item["needs_review"] = (
-                "Operation header/cookie/form parameters are unsupported by the scanner. "
-                "Identity authentication headers must be configured under identities.*.headers; "
-                "do not assume an unsupported required parameter will be sent."
+                "GET header and cookie parameters are sent from parameter_values (common or per identity) "
+                "or identities.*.parameters. They are not drafted: add required values manually. "
+                "Authentication headers belong under identities.*.headers, authentication cookies must be "
+                "identity-specific, and cookie arrays or objects are not supported."
+            )
+        elif location not in {"path", "query", "body"}:
+            item["needs_review"] = (
+                "Header and cookie parameters are sent only for GET operations, and form parameters are "
+                "not supported by the scanner. Identity authentication headers must be configured under "
+                "identities.*.headers; do not assume an unsupported required parameter will be sent."
             )
         notes.append(item)
     # An undeclared template variable must not fall through to generated data.

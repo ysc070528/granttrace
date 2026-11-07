@@ -2,8 +2,44 @@
 
 ## Unreleased - 2.5.x maintenance
 
+### Added
+
+- Read-only Broken Authentication (CWE-306, SARIF `GT-AUTH-001`) and Broken
+  Function Level Authorization (CWE-285, `GT-BFLA-001`) checks, and private-data
+  checks for collection endpoints (CWE-639). Confirmation requires explicitly
+  configured `private_data_paths` and role policy; names and keywords alone stay
+  leads (#43).
+- PUT mass-assignment checks that use complete replacement snapshots and verified
+  rollback. Like PATCH, they run only with independent authoritative resource
+  state, which only internal test fixtures provide (the bundled demo tests
+  PATCH); external CLI targets stay blocked before any write (#43).
+- Evidence-bound read-only property authorization (BOPLA, CWE-200) driven by
+  explicit per-operation `bopla` field rules and resource bindings (#44).
+- GET header and cookie parameters, including header arrays and objects, sent
+  from `parameter_values`; authentication headers and cookies stay
+  identity-scoped and cookie arrays/objects are rejected under RFC 6265
+  (#45, #46). Swagger 2 header values are validated before transport (#47).
+- Opt-in remote `$ref` resolution over HTTPS (`--allow-remote-refs` with
+  `--remote-ref-host`): exact host allowlist, SSRF and DNS-rebinding defences,
+  no redirects, size/count/depth/time limits, and no fetching in offline modes.
+  See [docs/remote-references.md](docs/remote-references.md) (#48).
+
+### Performance
+
+- Parse each response once and reuse comparison data in BOLA evaluation, cache
+  key normalization, precompile evidence scrubbing patterns and skip redundant
+  path resolution while resolving schemas. Outputs are unchanged; on 150 KB
+  responses and 300-operation specifications these paths run about twice as
+  fast (#50).
+
 ### Fixed
 
+- Publish secret values discovered while building request headers by atomic
+  replacement. The in-place update raced with evidence sanitization in other
+  workers and could drop a value from later redaction (#50).
+- Report the specific "without precision loss" diagnostic for number parameter
+  strings instead of the generic message that replaced it (#50).
+- Require TLS 1.2 or later for remote schema fetches (#50).
 - Retry rate-limited reads instead of recording them as inconclusive. GET
   requests answered with HTTP 429 (or 503 with `Retry-After`) are retried up
   to twice, honoring `Retry-After` in seconds or as an HTTP date (otherwise
@@ -11,26 +47,26 @@
   beyond 30 s fails closed with the original response. PATCH/PUT are never
   retried. The new `rate_limit_retries` statistic counts retries; a scan of
   the bundled mock target that rate-limits each path's first request now
-  reaches the same verdicts as an unlimited one.
+  reaches the same verdicts as an unlimited one (#53).
 - Enforce the remote `$ref` fetch timeout as an absolute deadline. Socket
   timeouts applied per receive, so a server dripping header or body bytes held
   a 0.3 s fetch for 3 s or longer; a close-delimited body cut off at the
-  deadline is no longer accepted as complete.
+  deadline is no longer accepted as complete (#52).
 - Reject remote documents that end before their declared Content-Length, and
   turn malformed HTTP responses and over-nested JSON into per-reference
-  resolution failures instead of errors that aborted the whole scan.
+  resolution failures instead of errors that aborted the whole scan (#52).
 - Check the IPv4 destination embedded in 6to4, Teredo and NAT64 addresses and
   block IPv4-compatible, local-use NAT64 and site-local IPv6 ranges. CPython
   releases before its 2024 `ipaddress` update (e.g. 3.9.19, 3.12.3) treated
-  6to4 addresses embedding 169.254.169.254 or 127.0.0.1 as global.
+  6to4 addresses embedding 169.254.169.254 or 127.0.0.1 as global (#52).
 - Report a path item whose remote `$ref` fails as `INCONCLUSIVE`
   (`unresolved_reference`), as documented, instead of a skipped "UNKNOWN"
-  method that `--fail-on-error` did not count.
+  method that `--fail-on-error` did not count (#52).
 - Bound YAML anchor/alias expansion in local specifications, referenced YAML
   files and remote `$ref` documents. A ~1 KB alias "bomb" previously stalled
   parsing for 13 s or more (merge keys inside `yaml.safe_load` itself); aliases
   may now add at most max(250,000, 10 x the document's own nodes) nodes, and
-  recursive aliases are rejected before any object is built or request is sent.
+  recursive aliases are rejected before any object is built or request is sent (#51).
 - Fail closed before external CLI PATCH tests when authoritative resource state
   cannot be independently observed; write flags, mappings and a declared strong
   readback cannot supply that proof. Existing CLI/config syntax remains accepted.

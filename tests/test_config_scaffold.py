@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api_sentinel import main
-from core.config_scaffold import DRAFT_KEY, INPUT_PREFIX, build_config_scaffold, config_needs_input
+from core.config_scaffold import DRAFT_KEY, INPUT_PREFIX, _parameter_notes, build_config_scaffold, config_needs_input
 from core.config_validator import ConfigValidator
 
 
@@ -108,8 +108,16 @@ class ConfigScaffoldTests(unittest.TestCase):
         draft, checklist = build_config_scaffold(str(self.spec))
         header_operation = next(item for item in checklist["operations"] if item["operation"] == "GET /shared")
         header = header_operation["parameters"][0]
-        self.assertIn("unsupported", header["needs_review"])
+        # GET header/cookie parameters are sent (PR #45/#46) but not drafted.
+        self.assertIn("parameter_values", header["needs_review"])
+        self.assertIn("add required values manually", header["needs_review"])
+        self.assertNotIn("unsupported", header["needs_review"])
         self.assertFalse(header["included_in_config"])
+        self.assertNotIn("X-Account", json.dumps(draft["parameter_values"]))
+        # Other methods still cannot send them.
+        write_header = _parameter_notes({"method": "PATCH", "path": "/x", "parameters": [
+            {"name": "X-Account", "in": "header", "required": True, "schema": {"type": "string"}}]})[0]
+        self.assertIn("only for GET", write_header["needs_review"])
         delete_operation = next(item for item in checklist["operations"] if item["operation"].startswith("DELETE"))
         self.assertFalse(delete_operation["scan_supported"])
         self.assertNotIn("DELETE /items/{id}", draft["parameter_values"])

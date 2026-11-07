@@ -38,6 +38,7 @@ granttrace --spec openapi.yaml --config config.json \
 > - Passing `--allow-remote-refs` without at least one `--remote-ref-host` is an error (exit code 2).
 > - Passing `--remote-ref-host` without `--allow-remote-refs` is an error (exit code 2).
 > - Hostnames are matched exactly (case-insensitive ASCII); wildcard domains or subdomains are **not** permitted.
+> - Pass a bare hostname such as `schemas.example.com`. A value with a scheme or port (`https://schemas.example.com`, `schemas.example.com:443`) never matches, so nothing is fetched from it.
 > - Flags `--allow-http` or `--insecure` apply strictly to target API testing, **never** to remote schema retrieval.
 
 ---
@@ -62,6 +63,9 @@ All target hosts undergo strict IP address validation prior to connection:
   - Carrier-grade NAT (`100.64.0.0/10`)
   - Cloud provider metadata endpoints (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`)
   - IPv4-mapped IPv6 addresses (e.g. `::ffff:127.0.0.1`, `::ffff:169.254.169.254`)
+  - IPv6 transition addresses whose embedded IPv4 destination is blocked: 6to4 (`2002::/16`, e.g. `2002:a9fe:a9fe::1`), Teredo (`2001::/32`) and NAT64 (`64:ff9b::/96`)
+  - IPv4-compatible (`::/96`), local-use NAT64 (`64:ff9b:1::/48`) and deprecated site-local (`fec0::/10`) IPv6 ranges
+- These rules are applied directly rather than relying only on Python's `ipaddress` classification, which differs between Python patch releases (releases before its 2024 update treat some 6to4 addresses as global).
 - **Multi-IP Fail-Closed**: If a hostname resolves to multiple IP addresses and any address is unsafe or unroutable, the entire connection is rejected immediately.
 
 ### C. DNS Rebinding Defense (IP Pinning)
@@ -80,7 +84,9 @@ To defend against decompression bombs, slowloris downloads, and circular referen
 - **Maximum cumulative download size**: 2 MiB (2,097,152 bytes) across all documents.
 - **Maximum distinct remote documents**: 4 documents.
 - **Maximum `$ref` resolution depth**: 10 levels.
-- **Socket timeout**: 3.0 seconds per remote document.
+- **Overall deadline**: 3.0 seconds per remote document, covering DNS, connection, TLS, headers and body. It is an absolute deadline, not a per-read socket timeout: a server that drips bytes slowly is cut off when the deadline passes, and a body cut off at the deadline is never treated as complete.
+- **Complete documents only**: a body shorter than its declared `Content-Length` is rejected rather than parsed as a truncated document.
+- **YAML alias expansion**: anchors and aliases may add at most max(250,000, 10 × the document's own nodes) nodes; recursive aliases are rejected. This also applies to local YAML specifications.
 - Unrequested automatic decompression streams are not decoded.
 
 ### F. Strict Isolation from Local Filesystem
@@ -97,9 +103,10 @@ To defend against decompression bombs, slowloris downloads, and circular referen
 
 ## 4. Fail-Closed Error Handling
 
-If a remote `$ref` fails for any reason (network timeout, TLS validation failure, SSRF policy trigger, HTTP 4xx/5xx, redirect attempt, size limit exceeded, or JSON/YAML syntax error):
+If a remote `$ref` fails for any reason (network timeout, TLS validation failure, SSRF policy trigger, HTTP 4xx/5xx, malformed or truncated HTTP response, redirect attempt, size limit exceeded, or JSON/YAML syntax error):
 - The failure is strictly fail-closed.
-- Scanning halts during specification loading, or affected operations/checks are marked as `INCONCLUSIVE`.
+- Policy violations (remote refs disabled, a host outside the allowlist, an SSRF or transport-security violation) halt the scan during specification loading.
+- Fetch and resolution failures mark the affected operations/checks as `INCONCLUSIVE` with `reason_category: unresolved_reference`, including a whole path item whose `$ref` fails, so `--fail-on-error` reports them.
 - **Zero HTTP probe requests** are sent to the target API for affected checks.
 - Under no circumstances will a remote reference failure produce a false `CONFIRMED` (vulnerable) or `SECURE` conclusion.
 
@@ -107,6 +114,9 @@ If a remote `$ref` fails for any reason (network timeout, TLS validation failure
 
 ## 5. Offline Modes and Zero Network Guarantee
 
-In offline modes (`--dry-run`, `--validate-config`, `--init-config`):
-- When `--allow-remote-refs` is not passed, encounters with remote `$ref` fail immediately offline with zero network requests.
-- Even when `--allow-remote-refs` is passed, no proactive network probing, pinging, or pre-flight requests are made to remote hosts. Requests are initiated strictly on-demand if and when a remote schema reference must be resolved.
+Offline modes never fetch remote documents or resolve their hosts, **even when `--allow-remote-refs` is passed**:
+- `--dry-run`: operations that depend on a remote `$ref` appear in the plan as `INCONCLUSIVE` (`unresolved_reference`) with a warning; the plan itself succeeds.
+- `--validate-config`: an unresolved remote `$ref` is reported as a validation error ("cannot be validated offline") and the command exits with code 2. A specification that depends on remote references therefore cannot pass offline validation.
+- `--init-config` cannot be combined with `--allow-remote-refs` or `--remote-ref-host`.
+
+Only a real scan resolves remote references, on demand and within the limits above; there is no proactive probing or pre-flight request to remote hosts.
