@@ -324,6 +324,22 @@ class SecurityReportGenerator:
         target_url = sanitize_url("[BOPLA TARGET OMITTED]" if pending else target_url, secret_values=secrets)
         generated_at = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
 
+        cards_html = cls._summary_cards_html(stats, findings)
+        accounting_html = cls._accounting_html(stats, results)
+        warning_html = cls._scope_warnings_html(stats)
+        results_html = cls._results_html(results)
+        findings_html = cls._findings_html(findings, reproduction_templates)
+        document = cls._render_document(
+            target_url=target_url, generated_at=generated_at, results=results, findings=findings,
+            cards_html=cards_html, accounting_html=accounting_html, warning_html=warning_html,
+            results_html=results_html, findings_html=findings_html,
+        )
+        with open(output_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(document)
+
+    @classmethod
+    def _summary_cards_html(cls, stats: Dict[str, Any], findings: List[Dict[str, Any]]) -> str:
+        """Headline counts and coverage percentages."""
         cards = [
             ("规范端点", stats.get("total_endpoints", 0), "#0f172a"),
             ("确认漏洞", stats.get("confirmed", len(findings)), "#dc2626"),
@@ -341,7 +357,11 @@ class SecurityReportGenerator:
             """
             for label, value, color in cards
         )
+        return cards_html
 
+    @classmethod
+    def _accounting_html(cls, stats: Dict[str, Any], results: List[Dict[str, Any]]) -> str:
+        """How endpoints, checks and coverage are counted, with the recorded totals."""
         accounting = (
             "端点按 HTTP 方法与规范路径的组合计数；结果记录数可以多于端点数。"
             "尝试覆盖率按至少尝试一次 HTTP 请求的端点计算，包含网络失败；"
@@ -399,7 +419,11 @@ class SecurityReportGenerator:
                 "字段缺失或不同值不表示整个对象安全。"
             )
             accounting_html += "<p class='meta' id='bopla-field-counts'>" + cls._escape(field_counts) + "</p>"
+        return accounting_html
 
+    @classmethod
+    def _scope_warnings_html(cls, stats: Dict[str, Any]) -> str:
+        """Notices that keep errors, gaps and suspicious results from reading as a pass."""
         warnings: List[str] = []
         if stats.get("error_count", 0):
             warnings.append("扫描中存在错误；不能把未完成的检查解释为安全。")
@@ -416,7 +440,11 @@ class SecurityReportGenerator:
             warning_html = "<div class='notice'><strong>范围提示</strong><ul>" + "".join(
                 f"<li>{cls._escape(item)}</li>" for item in warnings
             ) + "</ul></div>"
+        return warning_html
 
+    @classmethod
+    def _results_html(cls, results: List[Dict[str, Any]]) -> str:
+        """One table row per check result."""
         result_rows = []
         for item in results:
             verdict = str(item.get("verdict", "INCONCLUSIVE")).upper()
@@ -440,7 +468,13 @@ class SecurityReportGenerator:
         results_html = "".join(result_rows) or (
             "<tr><td colspan='4'>没有端点级结果；本报告不能用于安全结论。</td></tr>"
         )
+        return results_html
 
+    @classmethod
+    def _findings_html(
+        cls, findings: List[Dict[str, Any]], reproduction_templates: Optional[Mapping[int, CurlTemplate]],
+    ) -> str:
+        """One article per confirmed finding, with its cURL template when one applies."""
         finding_html_parts: List[str] = []
         for index, finding in enumerate(findings, 1):
             severity = str(finding.get("severity", "High"))
@@ -481,6 +515,23 @@ class SecurityReportGenerator:
             findings_html = (
                 "<div class='empty'>本次没有确认漏洞。请结合覆盖率、错误和不确定项判断结果。</div>"
             )
+        return findings_html
+
+    @classmethod
+    def _render_document(
+        cls,
+        *,
+        target_url: str,
+        generated_at: str,
+        results: List[Dict[str, Any]],
+        findings: List[Dict[str, Any]],
+        cards_html: str,
+        accounting_html: str,
+        warning_html: str,
+        results_html: str,
+        findings_html: str,
+    ) -> str:
+        """The complete HTML page around the rendered sections."""
         status_options = "".join(
             f"<option value='{verdict}'>{cls._escape(label)} · {verdict}</option>"
             for verdict, label in cls.VERDICT_LABELS.items()
@@ -641,7 +692,5 @@ class SecurityReportGenerator:
     applyFilters();
   }})();
 </script></body></html>"""
-
-        with open(output_path, "w", encoding="utf-8", newline="") as handle:
-            handle.write(document)
+        return document
 
