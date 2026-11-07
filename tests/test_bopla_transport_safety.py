@@ -164,7 +164,7 @@ class IndependentPropertyTransportTests(unittest.TestCase):
         for method in ("PATCH", "PUT", "POST", "DELETE", "HEAD"):
             with self.subTest(method=method):
                 auditor = self.auditor(method=method)
-                with patch.object(auditor._opener, "open") as opener:
+                with patch.object(auditor._transport.opener, "open") as opener:
                     self.scan(auditor)
                 opener.assert_not_called()
                 self.assertEqual("SKIPPED", auditor.results[0]["verdict"])
@@ -176,7 +176,7 @@ class IndependentPropertyTransportTests(unittest.TestCase):
                                ("/documents", {"summary": "Deletes every document"})):
             with self.subTest(path=path, metadata=metadata):
                 auditor = self.auditor(path=path, operation={"responses": {}, **metadata})
-                with patch.object(auditor._opener, "open") as opener:
+                with patch.object(auditor._transport.opener, "open") as opener:
                     self.scan(auditor)
                 opener.assert_not_called()
                 self.assertEqual("SKIPPED", auditor.results[0]["verdict"])
@@ -187,7 +187,7 @@ class IndependentPropertyTransportTests(unittest.TestCase):
                 with self.subTest(identity=identity, value=value):
                     auditor = self.auditor(path="/documents/{id}")
                     auditor.identities[identity]["parameters"]["id"] = value
-                    with patch.object(auditor._opener, "open") as opener:
+                    with patch.object(auditor._transport.opener, "open") as opener:
                         self.scan(auditor)
                     opener.assert_not_called()
                     self.assertFalse(any(item["verdict"] == "CONFIRMED" for item in auditor.results))

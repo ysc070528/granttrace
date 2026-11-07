@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from core.auditor import APISentinelAuditor
+from core.transport import HttpTransport
 from mock_server.server import TargetMockHandler
 
 IDENTITIES = {
@@ -76,7 +77,7 @@ class RateLimitRetryTests(unittest.TestCase):
         spec.write_text(json.dumps({"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {}}))
         self.base = f"http://127.0.0.1:{self.server.server_port}"
         self.auditor = APISentinelAuditor(str(spec), self.base, request_delay=0, identities_config=IDENTITIES)
-        self.auditor.RATE_LIMIT_BACKOFF = 0.05  # Keep backoff-only tests fast.
+        self.auditor._transport.RATE_LIMIT_BACKOFF = 0.05  # Keep backoff-only tests fast.
 
     def script(self, path: str, *responses: Response) -> None:
         ScriptedHandler.scripts[path] = list(responses)
@@ -112,7 +113,7 @@ class RateLimitRetryTests(unittest.TestCase):
         self.script("/c", *[(429, {"Retry-After": "0"})] * 5)
         result = self.get("/c")
         self.assertEqual(result.status, 429)  # Classified as an inconclusive HTTP client error.
-        self.assertEqual(len(self.requests_to("/c")), 1 + APISentinelAuditor.RATE_LIMIT_RETRIES)
+        self.assertEqual(len(self.requests_to("/c")), 1 + HttpTransport.RATE_LIMIT_RETRIES)
 
     def test_wait_beyond_cap_is_not_slept(self) -> None:
         self.script("/d", (429, {"Retry-After": "3600"}))
@@ -146,7 +147,7 @@ class RateLimitRetryTests(unittest.TestCase):
         self.assertGreaterEqual(self.requests_to("/other")[0] - self.requests_to("/limited")[0], 0.8)
 
     def test_retry_after_parsing(self) -> None:
-        parse = APISentinelAuditor._retry_after_seconds
+        parse = HttpTransport.retry_after_seconds
         self.assertEqual(parse({"Retry-After": "7"}), 7.0)
         self.assertEqual(parse({"retry-after": " 0 "}), 0.0)
         self.assertIsNone(parse({}))

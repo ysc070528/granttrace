@@ -186,7 +186,7 @@ class ReadOnlyExecutionTests(unittest.TestCase):
         })
         self.write_spec()
         auditor = self.auditor()
-        with patch.object(auditor._opener, "open", side_effect=AssertionError("network forbidden")) as opener:
+        with patch.object(auditor._transport.opener, "open", side_effect=AssertionError("network forbidden")) as opener:
             result = auditor._http_request("GET", self.target + "/opaque/%63reate_report", identity_name="owner")
         opener.assert_not_called()
         self.assertEqual(result.status, 0)
@@ -310,7 +310,7 @@ class ReadOnlyExecutionTests(unittest.TestCase):
 
     def test_local_plan_includes_safety_reasons_without_network(self):
         auditor = self.auditor()
-        with patch.object(auditor._opener, "open", side_effect=AssertionError("network forbidden")):
+        with patch.object(auditor._transport.opener, "open", side_effect=AssertionError("network forbidden")):
             plan = auditor.build_plan()
         self.assertEqual(plan["requests_sent"], 0)
         self.assertEqual(sum(item.get("safety_blocked", False) for item in plan["operations"]), 2)

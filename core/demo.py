@@ -20,12 +20,13 @@ from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 from core import __version__
-from core.auditor import APISentinelAuditor, _NoRedirectHandler
+from core.auditor import APISentinelAuditor
 from core.config_validator import ConfigValidator
 from core.evidence import sanitize_log_text, sanitize_text
 from core.models import HTTPResult, json_values_equal, strict_json_loads
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
+from core.transport import NoRedirectHandler
 from mock_server.server import TargetMockHandler
 
 
@@ -81,7 +82,7 @@ class DemoServer:
         try:
             self.thread.start()
             # A real loopback response confirms readiness; bypass environment proxies.
-            opener = build_opener(ProxyHandler({}), _NoRedirectHandler())
+            opener = build_opener(ProxyHandler({}), NoRedirectHandler())
             with opener.open(self.target + "/api/public/articles/101", timeout=3) as response:
                 if response.status != 200:
                     raise RuntimeError("Local demo server is not ready")
@@ -115,7 +116,7 @@ class _LocalDemoAuditor(APISentinelAuditor):
         self._demo_origin = urlsplit(self.target_base_url)
         if self._demo_origin.scheme != "http" or self._demo_origin.hostname != "127.0.0.1":
             raise ValueError("Demo must use the bundled loopback server")
-        self._opener = build_opener(ProxyHandler({}), _NoRedirectHandler())
+        self._transport.opener = build_opener(ProxyHandler({}), NoRedirectHandler())
 
     def _authoritative_patch_state(
         self, ep: Dict[str, Any], mutation_url: str, readback: Dict[str, Any],

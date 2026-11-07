@@ -468,7 +468,7 @@ class DemoTests(unittest.TestCase):
         _, _, database = demo.load_assets()
         with demo.DemoServer(database) as server:
             auditor = self.make_auditor(server.target)
-            with patch.object(auditor._opener, "open") as network:
+            with patch.object(auditor._transport.opener, "open") as network:
                 for method, url in (
                     ("GET", "https://external.example.test/api"),
                     ("PATCH", "http://127.0.0.1:1/api"),
@@ -496,7 +496,7 @@ class DemoTests(unittest.TestCase):
         with demo.DemoServer(database) as server:
             auditor = self.make_auditor(server.target)
             self.assertFalse(any(isinstance(handler, ProxyHandler) and handler.proxies
-                                 for handler in auditor._opener.handlers))
+                                 for handler in auditor._transport.opener.handlers))
 
     def test_local_auditor_does_not_follow_redirect_to_another_server(self):
         _, _, database = demo.load_assets()

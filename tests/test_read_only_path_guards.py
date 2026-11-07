@@ -166,7 +166,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
         for method in ("GET", "HEAD"):
             for path in AMBIGUOUS_PATHS:
                 with self.subTest(method=method, path=repr(path)), \
-                        patch.object(auditor._opener, "open", return_value=successful_response()) as opener:
+                        patch.object(auditor._transport.opener, "open", return_value=successful_response()) as opener:
                     risk = auditor._read_request_risk(method, self.target + path)
                     self.assertIsNotNone(risk)
                     self.assertEqual(risk["safety_signal"], "path_ambiguity")
@@ -183,7 +183,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
             for path in witness_paths:
                 with self.subTest(method=method, path=path), \
                         patch("socket.create_connection", wraps=socket.create_connection) as connection, \
-                        patch.object(auditor._opener, "open", wraps=auditor._opener.open) as opener:
+                        patch.object(auditor._transport.opener, "open", wraps=auditor._transport.opener.open) as opener:
                     result = auditor._http_request(method, self.target + path, identity_name="owner")
                     self.assertEqual(result.status, 0)
                     connection.assert_not_called()
@@ -199,7 +199,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
                  "/opaque;v=1/create_report", "/opaque/;v=1/create_report")
         for method in ("GET", "HEAD"):
             for path in paths:
-                with self.subTest(method=method, path=path), patch.object(auditor._opener, "open") as opener:
+                with self.subTest(method=method, path=path), patch.object(auditor._transport.opener, "open") as opener:
                     risk = auditor._read_request_risk(method, self.target + path)
                     self.assertIsNotNone(risk)
                     result = auditor._http_request(method, self.target + path, identity_name="owner")
@@ -211,7 +211,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
         auditor = self.auditor()
         for method in ("GET", "HEAD"):
             for path in ("/records/create_report/", "/records;view=current/create_report"):
-                with self.subTest(method=method, path=path), patch.object(auditor._opener, "open") as opener:
+                with self.subTest(method=method, path=path), patch.object(auditor._transport.opener, "open") as opener:
                     self.assertIsNotNone(auditor._read_request_risk(method, self.target + path))
                     result = auditor._http_request(method, self.target + path, identity_name="owner")
                     self.assertEqual(result.status, 0)
@@ -225,7 +225,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
             for method in ("GET", "HEAD"):
                 for url in (target, target + "/"):
                     with self.subTest(target=target, method=method, url=url), \
-                            patch.object(auditor._opener, "open") as opener:
+                            patch.object(auditor._transport.opener, "open") as opener:
                         self.assertIsNotNone(auditor._read_request_risk(method, url))
                         self.assertEqual(auditor._http_request(method, url).status, 0)
                         opener.assert_not_called()
@@ -284,7 +284,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
                 endpoints = auditor.parser.get_endpoints()
                 endpoint = next(item for item in endpoints if item["method"] == "PATCH")
                 with patch.object(auditor, "_http_request") as transport, \
-                        patch.object(auditor._opener, "open") as opener:
+                        patch.object(auditor._transport.opener, "open") as opener:
                     with self.assertRaises(ParameterSerializationError):
                         auditor._readback_result(endpoint, mapping, "visitor")
                     auditor.audit_endpoint_mass_assignment(endpoint, endpoints)
@@ -314,7 +314,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
 
         for workers in (1, 4):
             with self.subTest(workers=workers), patch.object(auditor.parser, "get_endpoints") as normalize, \
-                    patch.object(auditor._opener, "open", return_value=successful_response()) as opener:
+                    patch.object(auditor._transport.opener, "open", return_value=successful_response()) as opener:
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     results = list(executor.map(check, paths))
                 self.assertTrue(all(risk and risk["safety_signal"] == "path_ambiguity"
@@ -327,7 +327,7 @@ class ReadOnlyPathGuardTests(unittest.TestCase):
             with self.subTest(base_path=base_path):
                 target = self.origin + base_path
                 auditor = APISentinelAuditor(str(self.spec_path), target, request_delay=0)
-                with patch.object(auditor._opener, "open", return_value=successful_response()) as opener:
+                with patch.object(auditor._transport.opener, "open", return_value=successful_response()) as opener:
                     risk = auditor._read_request_risk("GET", target + "/records/1001")
                     self.assertIsNotNone(risk)
                     self.assertEqual(risk["safety_signal"], "path_ambiguity")
