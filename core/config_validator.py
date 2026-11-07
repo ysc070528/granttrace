@@ -1113,6 +1113,21 @@ class ConfigValidator:
         readback: Dict[str, Any],
         issues: List[ConfigIssue],
     ) -> None:
+        # Sections run in this order so issues are reported in configuration order.
+        cls._validate_readback_request(op_key, readback, issues)
+        cls._validate_readback_parameters(op_key, readback, issues)
+        parsed_written_paths, parsed_readback_paths = cls._validate_readback_field_map(op_key, readback, issues)
+        cls._validate_readback_polling(op_key, readback, issues)
+        cls._validate_readback_snapshot(op_key, readback, issues, parsed_written_paths, parsed_readback_paths)
+
+    @classmethod
+    def _validate_readback_request(
+        cls,
+        op_key: str,
+        readback: Dict[str, Any],
+        issues: List[ConfigIssue],
+    ) -> None:
+        """Unknown keys, the GET method and the readback path."""
         # Check unknown keys
         for key in readback.keys():
             if key not in cls.KNOWN_READBACK_KEYS:
@@ -1180,6 +1195,14 @@ class ConfigValidator:
                 )
             )
 
+    @classmethod
+    def _validate_readback_parameters(
+        cls,
+        op_key: str,
+        readback: Dict[str, Any],
+        issues: List[ConfigIssue],
+    ) -> None:
+        """Readback parameter objects and their parameter_values."""
         # The readback URL builder consumes a list of Parameter Objects directly;
         # mappings, reference objects, and unsupported locations are not expanded.
         if "parameters" in readback:
@@ -1263,6 +1286,14 @@ class ConfigValidator:
                             actual=safe_diagnostic_value(name),
                         ))
 
+    @classmethod
+    def _validate_readback_field_map(
+        cls,
+        op_key: str,
+        readback: Dict[str, Any],
+        issues: List[ConfigIssue],
+    ) -> Tuple[List[Tuple[Any, ...]], List[Tuple[Any, ...]]]:
+        """The written-to-readback field map; returns the parsed written and readback paths."""
         # field_map (Required, non-empty dict of valid_path -> valid_path)
         field_map = readback.get("field_map")
         parsed_written_paths: List[Tuple[Any, ...]] = []
@@ -1324,6 +1355,16 @@ class ConfigValidator:
                         )
                     )
 
+        return parsed_written_paths, parsed_readback_paths
+
+    @classmethod
+    def _validate_readback_polling(
+        cls,
+        op_key: str,
+        readback: Dict[str, Any],
+        issues: List[ConfigIssue],
+    ) -> None:
+        """Consistency, readback attempts and delay."""
         # consistency (Optional enum: strong, weak, eventual)
         consistency = readback.get("consistency")
         if consistency is not None:
@@ -1375,6 +1416,16 @@ class ConfigValidator:
                     )
                 )
 
+    @classmethod
+    def _validate_readback_snapshot(
+        cls,
+        op_key: str,
+        readback: Dict[str, Any],
+        issues: List[ConfigIssue],
+        parsed_written_paths: List[Tuple[Any, ...]],
+        parsed_readback_paths: List[Tuple[Any, ...]],
+    ) -> None:
+        """Snapshot paths, baseline payload and ignored readback paths."""
         # snapshot_path
         snapshot_path = readback.get("snapshot_path")
         if snapshot_path is not None:
