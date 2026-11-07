@@ -44,7 +44,7 @@
   longer produces, because such scans stop PATCH checks before any write.
   `scripts/verify_examples.py --update-examples` now copies a fresh
   `granttrace demo` run after verifying the CLI scans, and a new test fails when
-  the committed examples no longer match a fresh demo run. No runtime change.
+  the committed examples no longer match a fresh demo run. No runtime change (#70).
 
 ### Performance
 
