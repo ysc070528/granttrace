@@ -37,7 +37,7 @@ class ResponseClassificationTests(unittest.TestCase):
             with self.subTest(status=status):
                 is_error, reason = ResponseDiffEngine.is_soft_error(status, '{"data":true}')
                 self.assertTrue(is_error)
-                self.assertIn("服务端错误", reason)
+                self.assertIn("server error", reason)
 
     def test_empty_and_invalid_success_responses_are_not_valid_baselines(self):
         empty = ResponseDiffEngine.classify_response(200, "  ")
