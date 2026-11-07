@@ -677,16 +677,16 @@ class OpenAPIParser:
 
     @staticmethod
     def _preferred_content_type(content: Dict[str, Any]) -> Optional[str]:
-        if not content:
-            return None
-        for media_type in content:
+        # Media types are strings; YAML or malformed input can supply other keys.
+        media_types = [media_type for media_type in content if isinstance(media_type, str)]
+        for media_type in media_types:
             if media_type.split(";", 1)[0].strip().lower() == "application/json":
                 return media_type
-        for media_type in content:
+        for media_type in media_types:
             normalized = media_type.split(";", 1)[0].strip().lower()
             if normalized.endswith("+json"):
                 return media_type
-        return next(iter(content), None)
+        return media_types[0] if media_types else None
 
     def _extract_request_body_details(
         self,
@@ -729,6 +729,7 @@ class OpenAPIParser:
         else:
             content = {}
         content = content if isinstance(content, dict) else {}
+        content = {media_type: media for media_type, media in content.items() if isinstance(media_type, str)}
         content_types = list(content)
         selected_type = self._preferred_content_type(content)
         if selected_type:
@@ -764,6 +765,7 @@ class OpenAPIParser:
             if parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
                 consumes = op_data.get("consumes", self.raw_spec.get("consumes", ["application/json"]))
                 consumes = consumes if isinstance(consumes, list) else [consumes]
+                consumes = [media_type for media_type in consumes if isinstance(media_type, str)]
                 chosen = self._preferred_content_type({media: {} for media in consumes}) or "application/json"
                 return parameter["schema"], chosen, list(consumes)
 

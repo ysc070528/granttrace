@@ -36,7 +36,7 @@ from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
 from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
-from core.parameters import ParameterSerializationError, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
+from core.parameters import ParameterSerializationError, normalize_parameter_value, serialize_cookie_parameter, serialize_header_parameter, serialize_path_parameter, serialize_query_parameter
 from core.scan_safety import read_only_risk, read_path_risk
 
 
@@ -882,7 +882,8 @@ class APISentinelAuditor:
                 ),
                 {"name": param_name, "in": "path", "schema": {}},
             )
-            value = values.get(param_name) if param_name in values else SmartDataGenerator.generate_raw_value_for_param(metadata, candidate_id=candidate_id)
+            value = (values.get(param_name) if param_name in values
+                     else self._unconfigured_parameter_value(metadata, candidate_id, resource_identity, swagger2))
             test_path = test_path.replace("{" + param_name + "}", serialize_path_parameter(metadata, value, swagger2=swagger2))
 
         if "{" in test_path or "}" in test_path:
@@ -897,7 +898,8 @@ class APISentinelAuditor:
             if metadata.get("in") != "query":
                 continue
             name = metadata.get("name")
-            value = values.get(name) if name in values else SmartDataGenerator.generate_raw_value_for_param(metadata, candidate_id=candidate_id)
+            value = (values.get(name) if name in values
+                     else self._unconfigured_parameter_value(metadata, candidate_id, resource_identity, swagger2))
             pairs = serialize_query_parameter(metadata, value, swagger2=swagger2)
             for encoded_name, _ in pairs:
                 if encoded_name in emitted_names and emitted_names[encoded_name] != index:
@@ -909,6 +911,39 @@ class APISentinelAuditor:
         if query_pairs:
             url += "?" + "&".join(name + "=" + value for name, value in query_pairs)
         return url
+
+    @staticmethod
+    def _unconfigured_parameter_value(
+        metadata: Dict[str, Any], candidate_id: Any, identity_name: str, swagger2: bool,
+    ) -> Any:
+        """Value for a parameter without a configured value.
+
+        A resource identifier takes the identity's id exactly, under the same
+        canonical rules as configured parameter values. It is never normalized
+        by lenient int() parsing ("007" -> 7, "1_001" -> 1001) or replaced by a
+        specification example, which would test a resource the identity does
+        not own. Other parameters keep their generated schema value.
+        """
+        if candidate_id is None or not SmartDataGenerator._is_resource_identifier(metadata):
+            return SmartDataGenerator.generate_raw_value_for_param(metadata)
+        name = metadata.get("name")
+        schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
+        value = candidate_id
+        if (isinstance(schema, dict) and schema.get("type") == "string"
+                and isinstance(value, int) and not isinstance(value, bool)):
+            value = str(value)  # An unquoted numeric id keeps its exact digits.
+        try:
+            value = normalize_parameter_value(metadata, value, swagger2=swagger2)
+        except ParameterSerializationError as exc:
+            raise ParameterSerializationError(
+                f"The {identity_name} identity id cannot be used for resource parameter '{name}': {exc}"
+            ) from None
+        if isinstance(value, bool) or not SmartDataGenerator.validate_schema_value(value, schema, request=False):
+            raise ParameterSerializationError(
+                f"The {identity_name} identity id does not satisfy the schema of resource parameter "
+                f"'{name}'; configure parameter_values for this operation; no request was sent"
+            )
+        return value
 
     def _safe_body(self, result: HTTPResult, private_values: Iterable[str] = ()) -> Dict[str, Any]:
         if getattr(self._bopla_local, "policy", None) is not None:
@@ -1226,12 +1261,15 @@ class APISentinelAuditor:
                 if (url, identity) not in observations:
                     self._read_observation("GET", url, identity, headers=observation_headers[identity])
             owner = observations[(url, "owner")]
+            # Every field rule compares the same observations; parse each once.
+            assessments: Dict[int, Tuple[HTTPResult, Dict[str, Any]]] = {}
             for rule in policy["fields"]:
                 for identity in ("visitor", "anonymous"):
                     decision = BOPLAEvidence.evaluate(
                         owner, observations[(url, identity)], policy=policy,
                         field=rule, identity=identity,
                         visitor_self=observations.get((self_url, "visitor")) if self_url != url else None,
+                        assessments=assessments,
                     )
                     evidence = {"observation_group": key + ":read", "shared_observations": True,
                                 "target_url": url, "requests_attempted": len(observations),

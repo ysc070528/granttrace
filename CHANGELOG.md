@@ -31,9 +31,23 @@
   path resolution while resolving schemas. Outputs are unchanged; on 150 KB
   responses and 300-operation specifications these paths run about twice as
   fast (#50).
+- Reuse response assessments across BOPLA field rules: ten rules on a 496 KB
+  response took 271 ms and now take 14 ms, with identical decisions.
 
 ### Fixed
 
+- Use an identity's `id` for its resource parameter exactly or not at all.
+  Lenient integer parsing turned `"007"`, `"1_001"` or `" 1002 "` into 7, 1001
+  or 1002, and an id outside the schema (such as `"abc"`, or `"0"` below a
+  minimum) was silently replaced by the specification's example value, so the
+  check tested a resource the Owner does not own. Such ids now follow the
+  canonical rules of `parameter_values`, and a check that cannot use them is
+  `INCONCLUSIVE` (`invalid_input`) before any request.
+- Ignore non-string media types instead of crashing with `AttributeError`, for
+  example a Swagger 2 `consumes: [123, "application/json"]`.
+- Reject header parameter values with leading or trailing whitespace, which
+  servers strip inconsistently, so the tested value always matches the
+  configured one; whitespace inside a value is still allowed.
 - Publish secret values discovered while building request headers by atomic
   replacement. The in-place update raced with evidence sanitization in other
   workers and could drop a value from later redaction (#50).
