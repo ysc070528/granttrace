@@ -33,7 +33,11 @@
   messages returned by a target API are still recognized. Consumers that
   matched the Chinese text should match the verdict or `reason_category`.
   Offline validation messages no longer append a Chinese note. The HTML
-  report's interface text stays Chinese.
+  report's interface text stays Chinese (#57).
+- Store every text file with LF line endings (`.gitattributes` now normalizes
+  them; the Windows portable build still writes CRLF for its batch launcher),
+  and name 13 test modules after the behavior they cover instead of the PR or
+  release that added them. No runtime change (#58).
 
 ### Performance
 

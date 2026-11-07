@@ -15,7 +15,7 @@ from pathlib import Path
 from core.auditor import APISentinelAuditor
 from core.models import Verdict
 from tests import test_header_cookie_parameters as wire_fixture
-from tests import test_release_transactions as transaction_fixture
+from tests import test_patch_readback_strictness as transaction_fixture
 
 ParameterRecordingHandler = wire_fixture.ParameterRecordingHandler
 
