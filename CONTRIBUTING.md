@@ -8,10 +8,15 @@ git switch -c your-change
 python -m pip install -e ".[dev]" "setuptools>=77" wheel
 ```
 
-Run the regression suite, local verification scripts and Ruff before opening a PR:
+Run the regression suite, the verification scripts CI runs and Ruff before
+opening a PR:
 
 ```bash
 python -m unittest discover -s tests
+python scripts/verify_pr42_adversarial.py
+python scripts/verify_pr43_integration.py
+python scripts/verify_authorization_coverage.py
+python scripts/verify_authorization_coverage.py --generic-http
 python scripts/verify_business_scenarios.py
 python scripts/verify_examples.py
 python scripts/verify_install.py
@@ -45,6 +50,37 @@ or sensitive identity information. Redact examples and reports before sharing.
 Report vulnerabilities through GitHub's
 [Private Vulnerability Reporting](https://github.com/ysc070528/granttrace/security/advisories/new),
 following [SECURITY.md](SECURITY.md), rather than a public issue.
+
+## Output checks
+
+Some checks compare GrantTrace's output or source with committed files, so a
+change to what a scan reports fails them on purpose:
+
+- `tests/test_output_snapshot.py` scans the bundled mock through the CLI and
+  compares the JSON report, the HTML report and the console output with
+  `tests/snapshots/`, after replacing run-specific values such as times and the
+  loopback port. A refactor must leave the snapshots unchanged. When a change
+  deliberately alters the output, regenerate them and review their diff as part
+  of the change:
+
+  ```bash
+  GRANTTRACE_UPDATE_SNAPSHOTS=1 python -m pytest tests/test_output_snapshot.py
+  ```
+
+- `tests/test_committed_examples.py` compares `examples/sample_report.html` and
+  `examples/sample_result.json` with a fresh `granttrace demo` run: version,
+  verdicts, reasons, findings and statistics. Regenerate them after an output
+  or version change, then update the generation details and numbers in
+  `examples/README.md`:
+
+  ```bash
+  python scripts/verify_examples.py --update-examples
+  ```
+
+- `scripts/verify_pr43_integration.py` pins the source of seven write-safety
+  methods in `core/auditor.py`, listed in its `PR42_METHOD_SHA256`; changing
+  any of them fails CI. `tests/test_module_boundaries.py` fails when production
+  code uses another module's private member: make the helper public instead.
 
 ## Branch naming
 
