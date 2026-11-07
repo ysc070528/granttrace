@@ -24,6 +24,17 @@
   no redirects, size/count/depth/time limits, and no fetching in offline modes.
   See [docs/remote-references.md](docs/remote-references.md) (#48).
 
+### Changed
+
+- Report BOLA reasons in English, like every other check. The JSON `reason`,
+  finding `details` and per-response `reason` evidence of BOLA checks were the
+  only Chinese reasons; the HTML report shows the same text. Verdicts,
+  `reason_category` and evidence fields are unchanged, and Chinese denial
+  messages returned by a target API are still recognized. Consumers that
+  matched the Chinese text should match the verdict or `reason_category`.
+  Offline validation messages no longer append a Chinese note. The HTML
+  report's interface text stays Chinese.
+
 ### Performance
 
 - Parse each response once and reuse comparison data in BOLA evaluation, cache

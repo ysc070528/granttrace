@@ -273,7 +273,7 @@ class ConfigValidator:
         except RemoteRefOfflineBlockedError as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
-                message=f"Specification contains remote security scheme $ref which cannot be fetched in offline validation mode (无法离线验证): {exc}",
+                message=f"Specification contains remote security scheme $ref which cannot be fetched in offline validation mode: {exc}",
                 expected="locally resolvable security schemes without remote network requests",
                 actual="unresolved_reference",
                 suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
@@ -421,7 +421,7 @@ class ConfigValidator:
         except RemoteRefOfflineBlockedError as exc:
             issues.append(ConfigIssue(
                 path="<spec>",
-                message=f"Specification contains remote $ref which cannot be fetched in offline validation mode (无法离线验证): {exc}",
+                message=f"Specification contains remote $ref which cannot be fetched in offline validation mode: {exc}",
                 expected="locally resolvable operations and parameter schemas without remote network requests",
                 actual="unresolved_reference",
                 suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
@@ -444,7 +444,7 @@ class ConfigValidator:
                 sanitized_err = sanitize_error_message(endpoint["unresolved_schema_error"])
                 issues.append(ConfigIssue(
                     path=f"{endpoint['method']} {endpoint['path']}",
-                    message=f"Endpoint schema could not be resolved safely: {sanitized_err} (无法离线验证)",
+                    message=f"Endpoint schema could not be resolved safely: {sanitized_err}",
                     expected="resolvable endpoint schema without unresolvable remote dependencies",
                     actual="unresolved_reference",
                     suggestion="Fix the reference or provide a resolvable local specification",

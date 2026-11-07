@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-语义响应差分与分类判定引擎。
+Semantic response diffing and classification engine.
 
-状态码和业务拒绝信号必须与响应正文一起检查。错误响应仍可能泄露数据，
-匿名可读也不能证明资源预期公开；确认证据只来自业务值或显式可信标识路径。
+Status codes and application-level denial signals are always checked together
+with the response body. Error responses can still disclose data, and anonymous
+readability does not prove that a resource is meant to be public; confirmation
+evidence comes only from business values or explicitly trusted identifier paths.
+
+Reasons are English, like those of every other check. Chinese denial messages
+returned by a target API are still recognized (see AUTH_ERROR_WORDS).
 """
 
 import json
@@ -176,7 +181,7 @@ class ResponseDiffEngine:
     def _detect_nested_soft_error(cls, data: Any) -> Optional[Tuple[str, str]]:
         """Inspect response envelopes, never arbitrary records or historical logs."""
         if cls._is_auth_denial_message(data):
-            return cls.RESPONSE_AUTH_DENIED, "业务鉴权拒绝文本"
+            return cls.RESPONSE_AUTH_DENIED, "Application authentication denial message"
 
         def envelope_fields(value: Any, prefix: str = ""):
             if isinstance(value, dict):
@@ -197,11 +202,11 @@ class ResponseDiffEngine:
         # generic field is encountered first in the JSON object.
         for path, key, value in fields:
             if key in cls.CODE_KEYS and isinstance(value, (int, str)) and value in cls.AUTH_ERROR_CODES:
-                return cls.RESPONSE_AUTH_DENIED, f"业务鉴权错误码: {path}={value}"
+                return cls.RESPONSE_AUTH_DENIED, f"Application authentication error code: {path}={value}"
 
             if key in cls.MESSAGE_KEYS or key in cls.CODE_KEYS:
                 if cls._is_auth_denial_message(value):
-                    return cls.RESPONSE_AUTH_DENIED, f"业务鉴权拒绝包装: {path}"
+                    return cls.RESPONSE_AUTH_DENIED, f"Application authentication denial envelope: {path}"
 
         for path, key, value in fields:
             if key in cls.CODE_KEYS:
@@ -211,25 +216,25 @@ class ResponseDiffEngine:
                 except (TypeError, ValueError):
                     pass
                 if numeric_value is not None and (numeric_value < 0 or numeric_value >= 400):
-                    return cls.RESPONSE_APPLICATION_ERROR, f"业务错误码: {path}={value}"
+                    return cls.RESPONSE_APPLICATION_ERROR, f"Application error code: {path}={value}"
 
             if key == "success" and value in (False, 0, "0"):
-                return cls.RESPONSE_APPLICATION_ERROR, f"业务失败标志: {path}={value}"
+                return cls.RESPONSE_APPLICATION_ERROR, f"Application failure flag: {path}={value}"
             if key == "success" and isinstance(value, str) and value.strip().lower() == "false":
-                return cls.RESPONSE_APPLICATION_ERROR, f"业务失败标志: {path}={value}"
+                return cls.RESPONSE_APPLICATION_ERROR, f"Application failure flag: {path}={value}"
 
             if key == "status" and isinstance(value, str):
                 if value.strip().lower() in cls.ERROR_STATUS_WORDS:
-                    return cls.RESPONSE_APPLICATION_ERROR, f"业务失败状态: {path}={value}"
+                    return cls.RESPONSE_APPLICATION_ERROR, f"Application failure status: {path}={value}"
 
             if key in cls.ERROR_VALUE_KEYS:
                 if isinstance(value, str):
                     if value.strip() and value.strip().lower() not in {"none", "null", "false", "0"}:
                         # A server error can echo credentials or private values.
                         # Keep the field location as evidence, not its content.
-                        return cls.RESPONSE_APPLICATION_ERROR, f"业务错误字段: {path} 非空"
+                        return cls.RESPONSE_APPLICATION_ERROR, f"Application error field is not empty: {path}"
                 elif value:
-                    return cls.RESPONSE_APPLICATION_ERROR, f"业务错误字段: {path} 非空"
+                    return cls.RESPONSE_APPLICATION_ERROR, f"Application error field is not empty: {path}"
 
         return None
 
@@ -244,7 +249,7 @@ class ResponseDiffEngine:
                 "status_code": status_code,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": f"无效的传输状态码: {status_code!r}",
+                "reason": f"Invalid transport status code: {status_code!r}",
                 "data": None,
             }
 
@@ -254,7 +259,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": "请求未获得 HTTP 响应（网络、TLS、超时或连接错误）",
+                "reason": "No HTTP response was received (network, TLS, timeout or connection error)",
                 "data": None,
             }
 
@@ -274,7 +279,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": True,
-                "reason": f"HTTP 鉴权拒绝状态码 {status}",
+                "reason": f"HTTP authentication denial status {status}",
                 "data": error_data,
             }
 
@@ -284,7 +289,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": f"HTTP 客户端错误状态码 {status}，不能据此证明访问控制生效",
+                "reason": f"HTTP client error status {status}; it does not prove that access control was enforced",
                 "data": error_data,
             }
 
@@ -294,7 +299,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": f"HTTP 服务端错误状态码 {status}",
+                "reason": f"HTTP server error status {status}",
                 "data": error_data,
             }
 
@@ -304,7 +309,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": f"非成功 HTTP 状态码 {status}",
+                "reason": f"Non-success HTTP status {status}",
                 "data": error_data,
             }
 
@@ -314,7 +319,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": "成功状态码对应的响应体为空，无法建立数据基线",
+                "reason": "Successful response has an empty body; no data baseline can be established",
                 "data": None,
             }
 
@@ -325,7 +330,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": "成功状态码对应的响应体不是有效 JSON",
+                "reason": "Successful response body is not valid JSON",
                 "data": None,
             }
 
@@ -335,7 +340,7 @@ class ResponseDiffEngine:
                 "status_code": status,
                 "is_error": True,
                 "is_auth_denial": False,
-                "reason": "JSON 响应没有可用于比对的数据",
+                "reason": "JSON response has no data to compare",
                 "data": data,
             }
 
@@ -356,7 +361,7 @@ class ResponseDiffEngine:
             "status_code": status,
             "is_error": False,
             "is_auth_denial": False,
-            "reason": "有效 JSON 业务响应",
+            "reason": "Valid JSON application response",
             "data": data,
         }
 
@@ -828,7 +833,7 @@ class ResponseDiffEngine:
         trusted_paths = set()
         for path in resource_id_paths or ():
             if not isinstance(path, str) or not path.strip():
-                raise ValueError("resource_id_paths 必须包含非空的响应字段路径")
+                raise ValueError("resource_id_paths must contain non-empty response field paths")
             trusted_paths.add(cls._normalise_resource_path(path.strip()))
 
         owner_values = cls._meaningful_leaf_pairs(owner["data"])
@@ -879,14 +884,15 @@ class ResponseDiffEngine:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"合法资源所有者基线无效：{owner['reason']}",
+                f"Owner baseline is not valid: {owner['reason']}",
                 evidence,
             )
 
         if requires_auth and anonymous["kind"] == cls.RESPONSE_VALID:
             return cls._result(
                 "LOW_SUSPICION", 0.9,
-                "端点要求鉴权，但匿名请求返回成功 JSON；不能将该访问解释为预期公开。",
+                "The endpoint requires authentication, but the Anonymous request returned successful JSON; "
+                "this access cannot be treated as intentionally public",
                 evidence,
             )
 
@@ -896,7 +902,8 @@ class ResponseDiffEngine:
                 return cls._result(
                     "LOW_SUSPICION" if visitor_values else "INCONCLUSIVE",
                     0.85 if visitor_values else 0.0,
-                    "访客响应声明鉴权拒绝，但正文含业务数据或未知内容，不能证明访问控制有效。",
+                    "The Visitor response declares an authentication denial, but its body contains business data "
+                    "or unknown content; access control is not proven",
                     evidence,
                 )
             # A visitor rejection proves only that identity's access was denied.
@@ -906,42 +913,48 @@ class ResponseDiffEngine:
                 if anonymous["kind"] == cls.RESPONSE_VALID:
                     return cls._result(
                         "LOW_SUSPICION", 0.25,
-                        "访客跨资源请求被拒绝，但匿名请求返回成功 JSON；缺少一致的拒绝证据，不能判为安全。",
+                        "The Visitor cross-resource request was denied, but the Anonymous request returned successful "
+                        "JSON; without consistent denial evidence the endpoint cannot be judged secure",
                         evidence,
                     )
                 return cls._result(
                     "LOW_SUSPICION" if anon_values else "INCONCLUSIVE",
                     0.8 if anon_values else 0.0,
-                    "访客跨资源请求被拒绝，但匿名基线不是明确的鉴权拒绝"
-                    + ("且正文含业务数据" if anon_values else "")
-                    + f"：{anonymous['reason']}",
+                    "The Visitor cross-resource request was denied, but the Anonymous baseline is not an "
+                    "explicit authentication denial"
+                    + (" and its body contains business data" if anon_values else "")
+                    + f": {anonymous['reason']}",
                     evidence,
                 )
             if anonymous["kind"] == cls.RESPONSE_AUTH_DENIED and not evidence["anonymous_denial_body_clean"]:
                 evidence["denial_body_conflict"] = True
                 return cls._result(
                     "LOW_SUSPICION", 0.8,
-                    "匿名响应声明鉴权拒绝，但正文含业务数据或未知内容，访问控制结果仍有冲突。",
+                    "The Anonymous response declares an authentication denial, but its body contains business data "
+                    "or unknown content; the access control result remains contradictory",
                     evidence,
                 )
             if self_assessment is None:
                 return cls._result(
                     "INCONCLUSIVE",
                     0.0,
-                    "访客跨资源请求被拒绝，但缺少访客自有资源基线，无法确认访客凭证有效。",
+                    "The Visitor cross-resource request was denied, but without a Visitor own-resource baseline "
+                    "the Visitor credentials cannot be shown to be valid",
                     evidence,
                 )
             if self_assessment["kind"] != cls.RESPONSE_VALID:
                 return cls._result(
                     "INCONCLUSIVE",
                     0.0,
-                    f"访客跨资源请求被拒绝，但访客自有资源基线无效：{self_assessment['reason']}",
+                    "The Visitor cross-resource request was denied, but the Visitor own-resource baseline is not "
+                    f"valid: {self_assessment['reason']}",
                     evidence,
                 )
             return cls._result(
                 "SECURE_ENFORCED",
                 1.0 if int(status_visitor) in (401, 403) else 0.95,
-                f"访客跨资源请求与匿名请求均被明确拒绝且正文无业务数据：{visitor['reason']}",
+                "Both the Visitor cross-resource request and the Anonymous request were explicitly denied "
+                f"without business data in the body: {visitor['reason']}",
                 evidence,
             )
 
@@ -958,13 +971,14 @@ class ResponseDiffEngine:
             ):
                 return cls._result(
                     "LOW_SUSPICION", 0.8,
-                    "访客错误响应正文匹配所有者特有业务值或可信资源标识；可能泄露资源数据，需人工复核。",
+                    "The Visitor error response body matches Owner-specific business values or a trusted resource "
+                    "identifier; it may disclose resource data and needs manual review",
                     evidence,
                 )
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"访客跨资源请求未得到可判定响应：{visitor['reason']}",
+                f"The Visitor cross-resource request did not receive a decidable response: {visitor['reason']}",
                 evidence,
             )
 
@@ -977,19 +991,22 @@ class ResponseDiffEngine:
                 return cls._result(
                     "PUBLIC_ENDPOINT",
                     1.0,
-                    "端点显式配置为公开，所有者、访客与匿名响应的完整 JSON 数据完全一致。",
+                    "The endpoint is explicitly configured as public, and the complete Owner, Visitor and Anonymous "
+                    "JSON responses are identical",
                     evidence,
                 )
             if private_increment:
                 return cls._result(
                     "LOW_SUSPICION", 0.8,
-                    "访客获得匿名响应没有的所有者字段或值；公开摘要不能排除私有数据泄露。",
+                    "The Visitor received Owner fields or values that the Anonymous response lacks; a public "
+                    "summary cannot rule out private data exposure",
                     evidence,
                 )
             return cls._result(
                 "LOW_SUSPICION",
                 0.25,
-                "观察到匿名访问，但缺少明确公开策略或完整数据等价证据，不能判为公开端点。",
+                "Anonymous access was observed, but without an explicit public policy or complete data "
+                "equivalence the endpoint cannot be judged public",
                 evidence,
             )
 
@@ -997,7 +1014,7 @@ class ResponseDiffEngine:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"匿名基线不是明确的鉴权拒绝：{anonymous['reason']}",
+                f"The Anonymous baseline is not an explicit authentication denial: {anonymous['reason']}",
                 evidence,
             )
 
@@ -1005,7 +1022,8 @@ class ResponseDiffEngine:
             evidence["denial_body_conflict"] = True
             return cls._result(
                 "LOW_SUSPICION", 0.8,
-                "匿名响应声明拒绝，但正文含业务数据或未知内容，无法作为未泄露的拒绝基线。",
+                "The Anonymous response declares a denial, but its body contains business data or unknown "
+                "content, so it cannot serve as a non-disclosing denial baseline",
                 evidence,
             )
 
@@ -1013,14 +1031,15 @@ class ResponseDiffEngine:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                "缺少与所有者资源不同的访客自有资源基线，无法排除接口始终返回当前用户数据。",
+                "A Visitor own-resource baseline distinct from the Owner resource is missing; the API may "
+                "return the caller's own data regardless of the requested id",
                 evidence,
             )
         if self_assessment["kind"] != cls.RESPONSE_VALID:
             return cls._result(
                 "INCONCLUSIVE",
                 0.0,
-                f"访客自有资源基线无效：{self_assessment['reason']}",
+                f"The Visitor own-resource baseline is not valid: {self_assessment['reason']}",
                 evidence,
             )
 
@@ -1040,7 +1059,8 @@ class ResponseDiffEngine:
             return cls._result(
                 "LOW_SUSPICION",
                 0.2,
-                "跨资源响应与访客自有资源基线一致或更接近，无法证明返回的是所有者资源。",
+                "The cross-resource response matches or is closer to the Visitor own-resource baseline; it "
+                "does not prove that the Owner resource was returned",
                 evidence,
             )
 
@@ -1049,13 +1069,15 @@ class ResponseDiffEngine:
             return cls._result(
                 "BOLA_CONFIRMED",
                 confidence,
-                "匿名请求被明确拒绝，而未授权访客获得了与所有者资源一致的具体值或资源标识。",
+                "The Anonymous request was explicitly denied, while the unauthorized Visitor received concrete "
+                "values or resource identifiers matching the Owner resource",
                 evidence,
             )
 
         return cls._result(
             "LOW_SUSPICION",
             0.3,
-            "访客请求成功，但只有结构相似或具体值证据不足，不能确认 BOLA。",
+            "The Visitor request succeeded, but only structural similarity or insufficient concrete-value "
+            "evidence was found; BOLA is not confirmed",
             evidence,
         )

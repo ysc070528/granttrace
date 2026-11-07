@@ -136,7 +136,7 @@ class TestOfflineZeroNetworkRemoteRefs(unittest.TestCase):
         self.assertEqual(ret, 2)
         err_output = err_stream.getvalue()
         self.assertIn("Configuration validation failed", err_output)
-        self.assertIn("无法离线验证", err_output)
+        self.assertIn("Remote $ref resolution is blocked in offline mode", err_output)
 
     def test_dry_run_cli_is_strictly_zero_network_and_marks_inconclusive(self) -> None:
         """--dry-run must make zero network requests and plan unresolved remote operations as INCONCLUSIVE."""
@@ -1054,7 +1054,7 @@ class TestRemoteSecuritySchemesOnlineAndOffline(unittest.TestCase):
             mock_create_conn.assert_not_called()
 
             self.assertFalse(result.is_valid)
-            issues = [i for i in result.errors if "无法离线验证" in i.message]
+            issues = [i for i in result.errors if "cannot be fetched in offline validation mode" in i.message]
             self.assertTrue(len(issues) >= 1)
             self.assertEqual(issues[0].actual, "unresolved_reference")
 
