@@ -135,6 +135,48 @@
 - Add fixed-truth loopback acceptance scenarios, regression tests and a source-linked
   capability audit with before/after measurements. No new vulnerability class is implemented.
 
+### Maintenance
+
+- Restructure the largest modules and functions without changing behavior
+  (#59 to #69). Snapshot tests of the JSON, HTML and console output of mock-target
+  scans came first and passed unchanged through the series; a deliberate output
+  change regenerates them with `GRANTTRACE_UPDATE_SNAPSHOTS=1` (#59).
+  `core/auditor.py` shrank from 2283 to 1499 lines: HTTP transport moved to
+  `core/transport.py`, request construction to `core/request_builder.py`, and
+  result recording and coverage to `core/results.py` (#61, #62, #63).
+  `core/config_validator.py` shrank from 1735 to 250 lines: its checks moved to
+  the `core/config_validation/` package, one module per configuration section,
+  and `ConfigValidator` and its result types are still imported from
+  `core.config_validator` (#65). The mass-assignment check, request header
+  construction, readback validation, schema value validation, the CLI `main`,
+  BOLA evaluation and the HTML report were split into smaller steps (#62, #63,
+  #64, #66, #67, #68, #69). Moved code is unchanged apart from names. Most
+  splits were compared with the previous code over large random inputs, and the
+  CLI over 34 command lines, with identical results; new tests cover the
+  per-field branches of the mass-assignment check. The seven hash-pinned write
+  methods are untouched, and a new test fails if production code uses another
+  module's private member (#60).
+- Code that imports `core` directly needs these changes; the CLI and
+  `granttrace demo` are unaffected:
+  - Helpers used across modules lost their leading underscore, and the old
+    names were removed: `ResponseDiffEngine.assess_response`,
+    `assessment_evidence`, `normalise_key`, `is_request_metadata_key` and
+    `denial_body_is_clean`; `AuthorizationEvidence.assess`, `valid`,
+    `private_values` and `clean_denial`; `SmartDataGenerator.parameter_schema`
+    and `is_resource_identifier`; `APISentinelAuditor.identity_headers`. The new
+    `APISentinelAuditor.secret_values()` returns an immutable snapshot of the
+    published secrets (#60).
+  - `RETRYABLE_METHODS`, `RATE_LIMIT_RETRIES`, `RATE_LIMIT_BACKOFF` and
+    `MAX_RETRY_WAIT` moved from `APISentinelAuditor` to
+    `core.transport.HttpTransport`. The redirect handler is
+    `core.transport.NoRedirectHandler` (was `core.auditor._NoRedirectHandler`),
+    and the auditor's opener is `_transport.opener` (was `_opener`) (#61).
+  - `request_delay`, `request_timeout` and `max_response_bytes` are read-only
+    properties of `APISentinelAuditor`. Pass them to the constructor: assigning
+    them afterwards raises `AttributeError` (#61).
+  - `_http_request` and `_authoritative_patch_state` are documented extension
+    points and keep their names and signatures (#60).
+
 ## 2.5.3 - 2026-10-15
 
 ### Fixed
