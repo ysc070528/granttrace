@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Set
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCTION = sorted((ROOT / "core").glob("*.py")) + [ROOT / "api_sentinel.py"]
+PRODUCTION = sorted((ROOT / "core").rglob("*.py")) + [ROOT / "api_sentinel.py"]
 # Local names that hold another module's object rather than an imported name.
 FOREIGN_INSTANCES = {"auditor"}
 
