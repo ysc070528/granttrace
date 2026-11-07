@@ -254,138 +254,24 @@ class RequestBuilderMixin:
             if not isinstance(name, str) or not name:
                 continue
 
-            normalized_name = name.lower()
-
             if location == "header":
-                if normalized_name in {"authorization", "accept", "content-type"}:
-                    # Media types and authentication have dedicated spec fields;
-                    # ordinary parameter declarations must not replace them.
+                header = self._header_parameter(
+                    metadata, name, identity_name, requester_values, req_headers, emitted_headers, swagger2,
+                )
+                if header is None:
                     continue
-                is_auth_hdr = self._is_auth_header(name)
-                if is_auth_hdr:
-                    if identity_name == "anonymous":
-                        # Missing credentials are intentional in an anonymous
-                        # probe, including when the spec marks them required.
-                        continue
-                    if all(self.identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
-                        continue
-                    raise ParameterSerializationError(
-                        f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
-                    )
-
-                if normalized_name in emitted_headers:
-                    raise ParameterSerializationError(
-                        "Different header parameters serialize to the same name; no request was sent"
-                    )
-                emitted_headers.add(normalized_name)
-
-                if normalized_name in req_headers:
-                    raise ParameterSerializationError(
-                        f"Business header parameter '{name}' conflicts with identity header; no request was sent"
-                    )
-
-                is_required = metadata.get("required") is True
-                if name in requester_values:
-                    val = requester_values[name]
-                elif is_required:
-                    raise ParameterSerializationError(f"Missing required header parameter '{name}'; no request was sent")
-                elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
-                    val = metadata.get("default", metadata.get("schema", {}).get("default"))
-                else:
-                    continue
-
-                if normalized_name in {
-                    "host", "content-length", "transfer-encoding", "connection",
-                    "user-agent", "accept-encoding", "te", "trailer", "upgrade",
-                    "proxy-connection", "keep-alive", "expect",
-                }:
-                    raise ParameterSerializationError(
-                        f"Business header parameter '{name}' conflicts with transport-managed header; no request was sent"
-                    )
-                hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
+                hdr_name, hdr_val, val, is_auth_hdr = header
                 business_headers[hdr_name] = hdr_val
-                if is_auth_hdr or _is_sensitive_key(name):
-                    discovered_secrets.add(hdr_val)
-                    if isinstance(val, (str, int, float)) and str(val):
-                        discovered_secrets.add(str(val))
-                    elif isinstance(val, list):
-                        for item in val:
-                            if isinstance(item, (str, int, float)) and str(item):
-                                discovered_secrets.add(str(item))
-                    elif isinstance(val, dict):
-                        for k, v in val.items():
-                            if isinstance(v, (str, int, float)) and str(v):
-                                discovered_secrets.add(str(v))
-                elif isinstance(val, dict):
-                    for k, v in val.items():
-                        if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
-                            if isinstance(v, (str, int, float)) and str(v):
-                                discovered_secrets.add(str(v))
+                discovered_secrets.update(self._header_secret_values(name, val, hdr_val, is_auth_hdr))
 
             elif location == "cookie":
-                if swagger2:
-                    raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
-
-                is_auth_cookie = self._is_auth_cookie(name)
-                is_required = metadata.get("required") is True
-
-                if is_auth_cookie:
-                    if identity_name == "anonymous":
-                        continue  # An anonymous probe intentionally omits credentials.
-                    scoped_values = configured.get(identity_name, {}) if isinstance(configured, dict) else {}
-                    scoped_val = scoped_values.get(name) if isinstance(scoped_values, dict) else None
-                    scoped_val = self.identities[identity_name].get("parameters", {}).get(name, scoped_val)
-                    identity_cookies = dict(
-                        (key.strip(), value.strip())
-                        for part in req_headers.get("cookie", "").split(";") if "=" in part
-                        for key, value in [part.split("=", 1)]
-                    )
-                    if name in identity_cookies and name in requester_values:
-                        raise ParameterSerializationError(
-                            f"Business cookie parameter '{name}' conflicts with identity authentication cookie; no request was sent"
-                        )
-                    identity_cookie = identity_cookies.get(name)
-                    if not identity_cookie and scoped_val is None:
-                        if (name in requester_values or "default" in metadata
-                                or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"])):
-                            raise ParameterSerializationError(
-                                f"Authentication cookie '{name}' cannot be shared across identities in common parameter values or defaults; no request was sent"
-                            )
-                        if is_required:
-                            raise ParameterSerializationError(
-                                f"Missing required {identity_name} authentication cookie '{name}'; no request was sent"
-                            )
-                        continue
-                    val = identity_cookie if identity_cookie else scoped_val
-                    if identity_name == "visitor" and resource_identity != identity_name:
-                        owner_scoped = configured.get(resource_identity, {}) if isinstance(configured, dict) else {}
-                        owner_val = owner_scoped.get(name) if isinstance(owner_scoped, dict) else None
-                        owner_val = self.identities[resource_identity].get("parameters", {}).get(name, owner_val)
-                        owner_cookie = dict(
-                            (key.strip(), value.strip())
-                            for part in self.identity_headers(resource_identity).get("cookie", "").split(";") if "=" in part
-                            for key, value in [part.split("=", 1)]
-                        ).get(name)
-                        owner_wire = owner_cookie.strip('"') if owner_cookie is not None else (
-                            serialize_cookie_parameter(metadata, owner_val)[1] if owner_val is not None else None)
-                        visitor_wire = identity_cookie.strip('"') if identity_cookie else serialize_cookie_parameter(metadata, val)[1]
-                        if owner_wire == visitor_wire:
-                            raise ParameterSerializationError(
-                                f"Visitor authentication cookie '{name}' cannot share value with Owner; no request was sent"
-                            )
-                    if identity_cookie:
-                        continue  # Already supplied by this requester's identity.
-                else:
-                    if name in requester_values:
-                        val = requester_values[name]
-                    elif is_required:
-                        raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
-                    elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
-                        val = metadata.get("default", metadata.get("schema", {}).get("default"))
-                    else:
-                        continue
-
-                c_name, c_val = serialize_cookie_parameter(metadata, val, swagger2=swagger2)
+                cookie = self._cookie_parameter(
+                    metadata, name, resource_identity, identity_name, requester_values, configured,
+                    req_headers, swagger2,
+                )
+                if cookie is None:
+                    continue
+                c_name, c_val, val, is_auth_cookie = cookie
                 if c_name in emitted_cookies:
                     raise ParameterSerializationError(
                         "Different cookie parameters serialize to the same name; no request was sent"
@@ -397,40 +283,214 @@ class RequestBuilderMixin:
                     if isinstance(val, (str, int, float)) and str(val):
                         discovered_secrets.add(str(val))
 
+        # Published only once every parameter was accepted: a request that is
+        # refused part-way publishes nothing.
         self._publish_secret_values(discovered_secrets)
 
         if cookie_pairs:
-            identity_cookie_names: Set[str] = set()
-            existing_cookie_str = ""
-            for k, v in list(req_headers.items()):
-                if k.lower() == "cookie":
-                    existing_cookie_str = v
-                    break
-
-            if existing_cookie_str:
-                for part in existing_cookie_str.split(";"):
-                    part = part.strip()
-                    if part:
-                        c_key = part.split("=", 1)[0].strip()
-                        identity_cookie_names.add(c_key)
-
-            for c_name, _ in cookie_pairs:
-                if c_name in identity_cookie_names:
-                    raise ParameterSerializationError(
-                        f"Business cookie parameter '{c_name}' conflicts with identity authentication cookie; no request was sent"
-                    )
-
-            business_cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_pairs)
-            if existing_cookie_str:
-                merged_cookie = f"{existing_cookie_str.rstrip('; ')}; {business_cookie_str}"
-            else:
-                merged_cookie = business_cookie_str
-
-            cookie_key = next((k for k in req_headers if k.lower() == "cookie"), "cookie")
-            req_headers[cookie_key] = merged_cookie
+            self._merge_business_cookies(req_headers, cookie_pairs)
 
         req_headers.update(business_headers)
         return req_headers
+
+    def _header_parameter(
+        self,
+        metadata: Dict[str, Any],
+        name: str,
+        identity_name: str,
+        requester_values: Dict[str, Any],
+        req_headers: Dict[str, str],
+        emitted_headers: Set[str],
+        swagger2: bool,
+    ) -> Optional[Tuple[str, str, Any, bool]]:
+        """Serialize one header parameter, or return None when it is not sent.
+
+        Returns the wire name and value, the configured value and whether the
+        header carries authentication. Records the header in ``emitted_headers``.
+        """
+        normalized_name = name.lower()
+        if normalized_name in {"authorization", "accept", "content-type"}:
+            # Media types and authentication have dedicated spec fields;
+            # ordinary parameter declarations must not replace them.
+            return None
+        is_auth_hdr = self._is_auth_header(name)
+        if is_auth_hdr:
+            if identity_name == "anonymous":
+                # Missing credentials are intentional in an anonymous
+                # probe, including when the spec marks them required.
+                return None
+            if all(self.identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
+                return None
+            raise ParameterSerializationError(
+                f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
+            )
+
+        if normalized_name in emitted_headers:
+            raise ParameterSerializationError(
+                "Different header parameters serialize to the same name; no request was sent"
+            )
+        emitted_headers.add(normalized_name)
+
+        if normalized_name in req_headers:
+            raise ParameterSerializationError(
+                f"Business header parameter '{name}' conflicts with identity header; no request was sent"
+            )
+
+        is_required = metadata.get("required") is True
+        if name in requester_values:
+            val = requester_values[name]
+        elif is_required:
+            raise ParameterSerializationError(f"Missing required header parameter '{name}'; no request was sent")
+        elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+            val = metadata.get("default", metadata.get("schema", {}).get("default"))
+        else:
+            return None
+
+        if normalized_name in {
+            "host", "content-length", "transfer-encoding", "connection",
+            "user-agent", "accept-encoding", "te", "trailer", "upgrade",
+            "proxy-connection", "keep-alive", "expect",
+        }:
+            raise ParameterSerializationError(
+                f"Business header parameter '{name}' conflicts with transport-managed header; no request was sent"
+            )
+        hdr_name, hdr_val = serialize_header_parameter(metadata, val, swagger2=swagger2)
+        return hdr_name, hdr_val, val, is_auth_hdr
+
+    def _header_secret_values(self, name: str, val: Any, hdr_val: str, is_auth_hdr: bool) -> Set[str]:
+        """Values of a header parameter that must be redacted from evidence."""
+        secrets: Set[str] = set()
+        if is_auth_hdr or _is_sensitive_key(name):
+            secrets.add(hdr_val)
+            if isinstance(val, (str, int, float)) and str(val):
+                secrets.add(str(val))
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, (str, int, float)) and str(item):
+                        secrets.add(str(item))
+            elif isinstance(val, dict):
+                for k, v in val.items():
+                    if isinstance(v, (str, int, float)) and str(v):
+                        secrets.add(str(v))
+        elif isinstance(val, dict):
+            for k, v in val.items():
+                if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
+                    if isinstance(v, (str, int, float)) and str(v):
+                        secrets.add(str(v))
+        return secrets
+
+    def _cookie_parameter(
+        self,
+        metadata: Dict[str, Any],
+        name: str,
+        resource_identity: str,
+        identity_name: str,
+        requester_values: Dict[str, Any],
+        configured: Any,
+        req_headers: Dict[str, str],
+        swagger2: bool,
+    ) -> Optional[Tuple[str, str, Any, bool]]:
+        """Serialize one cookie parameter, or return None when it is not sent.
+
+        Returns the cookie name and value, the configured value and whether the
+        cookie carries authentication.
+        """
+        if swagger2:
+            raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
+
+        is_auth_cookie = self._is_auth_cookie(name)
+        is_required = metadata.get("required") is True
+
+        if is_auth_cookie:
+            if identity_name == "anonymous":
+                return None  # An anonymous probe intentionally omits credentials.
+            scoped_values = configured.get(identity_name, {}) if isinstance(configured, dict) else {}
+            scoped_val = scoped_values.get(name) if isinstance(scoped_values, dict) else None
+            scoped_val = self.identities[identity_name].get("parameters", {}).get(name, scoped_val)
+            identity_cookies = dict(
+                (key.strip(), value.strip())
+                for part in req_headers.get("cookie", "").split(";") if "=" in part
+                for key, value in [part.split("=", 1)]
+            )
+            if name in identity_cookies and name in requester_values:
+                raise ParameterSerializationError(
+                    f"Business cookie parameter '{name}' conflicts with identity authentication cookie; no request was sent"
+                )
+            identity_cookie = identity_cookies.get(name)
+            if not identity_cookie and scoped_val is None:
+                if (name in requester_values or "default" in metadata
+                        or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"])):
+                    raise ParameterSerializationError(
+                        f"Authentication cookie '{name}' cannot be shared across identities in common parameter values or defaults; no request was sent"
+                    )
+                if is_required:
+                    raise ParameterSerializationError(
+                        f"Missing required {identity_name} authentication cookie '{name}'; no request was sent"
+                    )
+                return None
+            val = identity_cookie if identity_cookie else scoped_val
+            if identity_name == "visitor" and resource_identity != identity_name:
+                owner_scoped = configured.get(resource_identity, {}) if isinstance(configured, dict) else {}
+                owner_val = owner_scoped.get(name) if isinstance(owner_scoped, dict) else None
+                owner_val = self.identities[resource_identity].get("parameters", {}).get(name, owner_val)
+                owner_cookie = dict(
+                    (key.strip(), value.strip())
+                    for part in self.identity_headers(resource_identity).get("cookie", "").split(";") if "=" in part
+                    for key, value in [part.split("=", 1)]
+                ).get(name)
+                owner_wire = owner_cookie.strip('"') if owner_cookie is not None else (
+                    serialize_cookie_parameter(metadata, owner_val)[1] if owner_val is not None else None)
+                visitor_wire = identity_cookie.strip('"') if identity_cookie else serialize_cookie_parameter(metadata, val)[1]
+                if owner_wire == visitor_wire:
+                    raise ParameterSerializationError(
+                        f"Visitor authentication cookie '{name}' cannot share value with Owner; no request was sent"
+                    )
+            if identity_cookie:
+                return None  # Already supplied by this requester's identity.
+        else:
+            if name in requester_values:
+                val = requester_values[name]
+            elif is_required:
+                raise ParameterSerializationError(f"Missing required cookie parameter '{name}'; no request was sent")
+            elif "default" in metadata or (isinstance(metadata.get("schema"), dict) and "default" in metadata["schema"]):
+                val = metadata.get("default", metadata.get("schema", {}).get("default"))
+            else:
+                return None
+
+        c_name, c_val = serialize_cookie_parameter(metadata, val, swagger2=swagger2)
+        return c_name, c_val, val, is_auth_cookie
+
+    @staticmethod
+    def _merge_business_cookies(req_headers: Dict[str, str], cookie_pairs: List[Tuple[str, str]]) -> None:
+        """Append business cookies to the identity's Cookie header, refusing name clashes."""
+        identity_cookie_names: Set[str] = set()
+        existing_cookie_str = ""
+        for k, v in list(req_headers.items()):
+            if k.lower() == "cookie":
+                existing_cookie_str = v
+                break
+
+        if existing_cookie_str:
+            for part in existing_cookie_str.split(";"):
+                part = part.strip()
+                if part:
+                    c_key = part.split("=", 1)[0].strip()
+                    identity_cookie_names.add(c_key)
+
+        for c_name, _ in cookie_pairs:
+            if c_name in identity_cookie_names:
+                raise ParameterSerializationError(
+                    f"Business cookie parameter '{c_name}' conflicts with identity authentication cookie; no request was sent"
+                )
+
+        business_cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_pairs)
+        if existing_cookie_str:
+            merged_cookie = f"{existing_cookie_str.rstrip('; ')}; {business_cookie_str}"
+        else:
+            merged_cookie = business_cookie_str
+
+        cookie_key = next((k for k in req_headers if k.lower() == "cookie"), "cookie")
+        req_headers[cookie_key] = merged_cookie
 
     def _build_url(
         self,
