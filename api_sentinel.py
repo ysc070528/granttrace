@@ -9,7 +9,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Optional, Sequence
+from typing import Any, Dict, FrozenSet, Optional, Sequence, Tuple
 
 from core import __version__
 from core.auditor import APISentinelAuditor
@@ -433,19 +433,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from core.demo import demo_main
         return demo_main(selected[1:])
     args = build_argument_parser().parse_args(selected)
-    if args.allow_remote_refs and not args.remote_ref_host:
-        print("[ERROR] --allow-remote-refs requires at least one --remote-ref-host <HOST>", file=sys.stderr)
-        return 2
-    if args.remote_ref_host and not args.allow_remote_refs:
-        print("[ERROR] --remote-ref-host requires --allow-remote-refs to be set", file=sys.stderr)
-        return 2
-    for host in args.remote_ref_host:
-        try:
-            normalize_remote_ref_host(host)
-        except InvalidRemoteRefHostError as exc:
-            # repr() escapes control and invisible characters in the echoed value.
-            print(f"[ERROR] Invalid --remote-ref-host {host!r}: {exc}", file=sys.stderr)
-            return 2
+    exit_code = _check_cli_arguments(args)
+    if exit_code is not None:
+        return exit_code
 
     remote_ref_config = (
         RemoteRefConfig.create(
@@ -455,108 +445,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.allow_remote_refs
         else None
     )
-    if args.export_sarif is not None:
-        if not args.export_sarif.strip() or any(ord(char) < 32 or ord(char) == 127
-                                              for char in args.export_sarif):
-            print("[ERROR] --export-sarif requires a non-empty output path without control characters",
-                  file=sys.stderr)
-            return 2
-        if args.dry_run or args.init_config is not None or args.validate_config:
-            print("[ERROR] --export-sarif requires audit results and cannot be combined with "
-                  "--dry-run, --init-config, or --validate-config", file=sys.stderr)
-            return 2
-    try:
-        _validate_report_paths(args)
-    except ValueError as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
-        return 2
-    except (OSError, RuntimeError):
-        print("[ERROR] Invalid report output path", file=sys.stderr)
-        return 2
     print(BANNER)
     if args.init_config is not None:
-        if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint or args.allow_remote_refs or args.remote_ref_host:
-            print("[ERROR] --init-config cannot be combined with --config, --validate-config, "
-                  "--dry-run, --allow-write-tests, --write-endpoint, --allow-remote-refs, or --remote-ref-host", file=sys.stderr)
-            return 2
-        try:
-            output, checklist = write_config_scaffold(
-                args.spec if args.spec is not None else "openapi.json", args.init_config
-            )
-        except Exception as exc:
-            print("[ERROR] Cannot create configuration draft: " +
-                  display_path(str(exc)), file=sys.stderr)
-            return 2
-        print("[OK] Offline configuration draft: " + display_path(str(output)))
-        print("[OK] Review checklist: " + display_path(str(checklist)))
-        print("[REVIEW] Needs user input; validation and scans remain blocked until review is complete. "
-              "Write tests are disabled.")
-        _print_onboarding(init_guidance(
-            _next_path(args.spec if args.spec is not None else "openapi.json") or "<OPENAPI_FILE>",
-            _next_path(str(output)) or "<CONFIG_FILE>", _next_path(str(checklist)) or "<CHECKLIST_FILE>",
-        ))
-        return 0
+        return _run_init_config(args)
     if args.validate_config:
         config_path = args.config or "config.json"
         return run_config_validation(config_path, args.spec, remote_ref_config=remote_ref_config)
 
     spec_path = args.spec if args.spec is not None else "openapi.json"
-    if (args.workers < 1 or args.delay < 0 or args.timeout <= 0 or args.max_response_bytes < 1024
-            or not all(math.isfinite(v) for v in (args.delay, args.timeout, args.min_coverage))
-            or not 0 <= args.min_coverage <= 100):
-        print("[ERROR] Invalid worker, delay, timeout, or response-size option", file=sys.stderr)
-        return 2
-
-    config: Dict[str, Any] = {}
-    try:
-        config = _load_config(args.config)
-        raw_spec = _load_spec(spec_path)
-    except ValueError as exc:
-        safe_err = display_path(sanitize_text(str(exc), secret_values=_onboarding_private_values(config)))
-        print(f"[ERROR] {safe_err}", file=sys.stderr)
-        return 2
-
-    # Validate write_endpoint options if provided on CLI
-    if args.write_endpoint:
-        for item in args.write_endpoint:
-            is_valid, method, path, canonical, err_msg = parse_operation_key(item)
-            if not is_valid or method != "PATCH":
-                print(
-                    f"[ERROR] Invalid --write-endpoint '{sanitize_log_text(str(item))}': {err_msg or 'must be uppercase PATCH'}",
-                    file=sys.stderr,
-                )
-                return 2
-
-    # If configuration is loaded, run full ConfigValidator semantic validation
-    if args.config or args.write_endpoint:
-        val_config = dict(config)
-        # Explicit CLI selection replaces the configuration; scopes are not merged.
-        if args.write_endpoint:
-            val_config["write_allowlist"] = list(args.write_endpoint)
-
-        val_result = ConfigValidator.validate(
-            val_config,
-            raw_spec=raw_spec,
-            spec_path=spec_path,
-            remote_ref_config=remote_ref_config,
-            offline=bool(args.dry_run or args.validate_config),
-            allow_offline_unresolved=bool(args.dry_run),
-        )
-        if not val_result.is_valid:
-            private_values = _onboarding_private_values(config)
-            safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
-            error_word = "error" if val_result.summary.errors_count == 1 else "errors"
-            print(
-                f"[ERROR] Configuration validation failed for '{safe_cfg_path}' "
-                f"({val_result.summary.errors_count} {error_word} found):",
-                file=sys.stderr,
-            )
-            _print_issues(val_result.errors, private_values)
-            _print_issues(val_result.warnings, private_values)
-            _print_validation_failure(spec_path, args.config, val_result.summary.errors_count,
-                                      val_result.summary.warnings_count, private_values)
-            return 2
-        _print_issues(val_result.warnings, _onboarding_private_values(config))
+    exit_code, config = _load_scan_configuration(args, spec_path, remote_ref_config)
+    if exit_code is not None:
+        return exit_code
 
     try:
         # Explicit CLI selection replaces the configuration; scopes are not merged.
@@ -594,81 +493,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         auditor.parser.get_endpoints()
         _validate_report_paths(args, auditor.parser.source_files)
         if args.dry_run:
-            plan = auditor.build_plan()
-            print(json.dumps(plan, indent=2, ensure_ascii=False))
-            if args.export_json:
-                _ensure_parent(args.export_json)
-                with open(args.export_json, "w", encoding="utf-8") as handle:
-                    json.dump(plan, handle, indent=2, ensure_ascii=False)
-            private_values = _onboarding_private_values(config)
-            _print_onboarding(plan_guidance(
-                _next_path(spec_path, private_values) or "<OPENAPI_FILE>",
-                _next_path(args.config, private_values), plan,
-            ))
-            return 0
+            return _print_dry_run(args, auditor, spec_path, config)
         started = time.time()
         auditor.run()
         elapsed = time.time() - started
-
-        with PROPERTY_EVIDENCE_LOCK:
-            report_stats = dict(auditor.stats)
-            report_results = (list(auditor.results) if not auditor.bopla_config else [
-                sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
-                for item in auditor.results])
-            report_findings = (list(auditor.findings) if not auditor.bopla_config else [
-                sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
-                for item in auditor.findings])
-        _ensure_parent(args.output)
-        reproduction_secrets = set(auditor.secret_values())
-        for identity_name in auditor.identities:
-            reproduction_secrets.update(auditor.identity_headers(identity_name).values())
-        reproduction_templates = build_reproduction_templates(
-            report_findings, auditor.identity_headers("visitor"), reproduction_secrets,
-        )
-        report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
-                         sanitize_url(args.target, secret_values=auditor.secret_values()))
-        SecurityReportGenerator.generate(
-            stats=report_stats,
-            findings=report_findings,
-            results=report_results,
-            target_url=report_target,
-            output_path=args.output,
-            reproduction_templates=reproduction_templates,
-            secret_values=auditor.secret_values(),
-        )
-        print(f"[OK] HTML report: {args.output}")
-
-        if args.export_json:
-            _ensure_parent(args.export_json)
-            with open(args.export_json, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {
-                        "tool_version": __version__,
-                        "report_schema_version": 2,
-                        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "elapsed_seconds": round(elapsed, 3),
-                        "target": report_target,
-                        "stats": report_stats,
-                        "results": report_results,
-                        "findings": report_findings,
-                    },
-                    handle,
-                    indent=2,
-                    ensure_ascii=False,
-                )
-            print(f"[OK] JSON report: {args.export_json}")
-        if args.export_sarif is not None:
-            _ensure_parent(args.export_sarif)
-            SarifReportGenerator.generate(
-                results=report_results,
-                target_url=report_target,
-                output_path=args.export_sarif,
-                secret_values=auditor.secret_values(),
-                spec_path=spec_path,
-            )
-            print("[OK] SARIF report: " + sanitize_log_text(
-                sanitize_text(args.export_sarif, secret_values=auditor.secret_values())
-            ))
+        _export_reports(args, auditor, spec_path, elapsed)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc), secret_values=_published_secrets(locals().get("auditor")))), file=sys.stderr)
         return 2
@@ -676,6 +505,218 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("[ERROR] Audit aborted: " + sanitize_log_text(sanitize_text(f"{type(exc).__name__}: {exc}", secret_values=_published_secrets(locals().get("auditor")))), file=sys.stderr)
         return 2
 
+    return _scan_exit_code(args, auditor)
+
+
+def _check_cli_arguments(args: argparse.Namespace) -> Optional[int]:
+    """Reject inconsistent remote-reference and output options before any work."""
+    if args.allow_remote_refs and not args.remote_ref_host:
+        print("[ERROR] --allow-remote-refs requires at least one --remote-ref-host <HOST>", file=sys.stderr)
+        return 2
+    if args.remote_ref_host and not args.allow_remote_refs:
+        print("[ERROR] --remote-ref-host requires --allow-remote-refs to be set", file=sys.stderr)
+        return 2
+    for host in args.remote_ref_host:
+        try:
+            normalize_remote_ref_host(host)
+        except InvalidRemoteRefHostError as exc:
+            # repr() escapes control and invisible characters in the echoed value.
+            print(f"[ERROR] Invalid --remote-ref-host {host!r}: {exc}", file=sys.stderr)
+            return 2
+
+    if args.export_sarif is not None:
+        if not args.export_sarif.strip() or any(ord(char) < 32 or ord(char) == 127
+                                              for char in args.export_sarif):
+            print("[ERROR] --export-sarif requires a non-empty output path without control characters",
+                  file=sys.stderr)
+            return 2
+        if args.dry_run or args.init_config is not None or args.validate_config:
+            print("[ERROR] --export-sarif requires audit results and cannot be combined with "
+                  "--dry-run, --init-config, or --validate-config", file=sys.stderr)
+            return 2
+    try:
+        _validate_report_paths(args)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError):
+        print("[ERROR] Invalid report output path", file=sys.stderr)
+        return 2
+    return None
+
+
+def _run_init_config(args: argparse.Namespace) -> int:
+    """Write an offline configuration draft and its review checklist."""
+    if args.config or args.validate_config or args.dry_run or args.allow_write_tests or args.write_endpoint or args.allow_remote_refs or args.remote_ref_host:
+        print("[ERROR] --init-config cannot be combined with --config, --validate-config, "
+              "--dry-run, --allow-write-tests, --write-endpoint, --allow-remote-refs, or --remote-ref-host", file=sys.stderr)
+        return 2
+    try:
+        output, checklist = write_config_scaffold(
+            args.spec if args.spec is not None else "openapi.json", args.init_config
+        )
+    except Exception as exc:
+        print("[ERROR] Cannot create configuration draft: " +
+              display_path(str(exc)), file=sys.stderr)
+        return 2
+    print("[OK] Offline configuration draft: " + display_path(str(output)))
+    print("[OK] Review checklist: " + display_path(str(checklist)))
+    print("[REVIEW] Needs user input; validation and scans remain blocked until review is complete. "
+          "Write tests are disabled.")
+    _print_onboarding(init_guidance(
+        _next_path(args.spec if args.spec is not None else "openapi.json") or "<OPENAPI_FILE>",
+        _next_path(str(output)) or "<CONFIG_FILE>", _next_path(str(checklist)) or "<CHECKLIST_FILE>",
+    ))
+    return 0
+
+
+def _load_scan_configuration(
+    args: argparse.Namespace, spec_path: str, remote_ref_config: Optional[RemoteRefConfig],
+) -> Tuple[Optional[int], Dict[str, Any]]:
+    """Check scan options, load and validate the configuration; an exit code stops the scan."""
+    if (args.workers < 1 or args.delay < 0 or args.timeout <= 0 or args.max_response_bytes < 1024
+            or not all(math.isfinite(v) for v in (args.delay, args.timeout, args.min_coverage))
+            or not 0 <= args.min_coverage <= 100):
+        print("[ERROR] Invalid worker, delay, timeout, or response-size option", file=sys.stderr)
+        return 2, {}
+
+    config: Dict[str, Any] = {}
+    try:
+        config = _load_config(args.config)
+        raw_spec = _load_spec(spec_path)
+    except ValueError as exc:
+        safe_err = display_path(sanitize_text(str(exc), secret_values=_onboarding_private_values(config)))
+        print(f"[ERROR] {safe_err}", file=sys.stderr)
+        return 2, {}
+
+    # Validate write_endpoint options if provided on CLI
+    if args.write_endpoint:
+        for item in args.write_endpoint:
+            is_valid, method, path, canonical, err_msg = parse_operation_key(item)
+            if not is_valid or method != "PATCH":
+                print(
+                    f"[ERROR] Invalid --write-endpoint '{sanitize_log_text(str(item))}': {err_msg or 'must be uppercase PATCH'}",
+                    file=sys.stderr,
+                )
+                return 2, {}
+
+    # If configuration is loaded, run full ConfigValidator semantic validation
+    if args.config or args.write_endpoint:
+        val_config = dict(config)
+        # Explicit CLI selection replaces the configuration; scopes are not merged.
+        if args.write_endpoint:
+            val_config["write_allowlist"] = list(args.write_endpoint)
+
+        val_result = ConfigValidator.validate(
+            val_config,
+            raw_spec=raw_spec,
+            spec_path=spec_path,
+            remote_ref_config=remote_ref_config,
+            offline=bool(args.dry_run or args.validate_config),
+            allow_offline_unresolved=bool(args.dry_run),
+        )
+        if not val_result.is_valid:
+            private_values = _onboarding_private_values(config)
+            safe_cfg_path = display_path(sanitize_text(args.config or "CLI configuration", secret_values=private_values))
+            error_word = "error" if val_result.summary.errors_count == 1 else "errors"
+            print(
+                f"[ERROR] Configuration validation failed for '{safe_cfg_path}' "
+                f"({val_result.summary.errors_count} {error_word} found):",
+                file=sys.stderr,
+            )
+            _print_issues(val_result.errors, private_values)
+            _print_issues(val_result.warnings, private_values)
+            _print_validation_failure(spec_path, args.config, val_result.summary.errors_count,
+                                      val_result.summary.warnings_count, private_values)
+            return 2, {}
+        _print_issues(val_result.warnings, _onboarding_private_values(config))
+
+    return None, config
+
+
+def _print_dry_run(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
+                   config: Dict[str, Any]) -> int:
+    """Print and optionally export the offline plan; no target request is sent."""
+    plan = auditor.build_plan()
+    print(json.dumps(plan, indent=2, ensure_ascii=False))
+    if args.export_json:
+        _ensure_parent(args.export_json)
+        with open(args.export_json, "w", encoding="utf-8") as handle:
+            json.dump(plan, handle, indent=2, ensure_ascii=False)
+    private_values = _onboarding_private_values(config)
+    _print_onboarding(plan_guidance(
+        _next_path(spec_path, private_values) or "<OPENAPI_FILE>",
+        _next_path(args.config, private_values), plan,
+    ))
+    return 0
+
+
+def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
+                    elapsed: float) -> None:
+    """Write the HTML report and the optional JSON and SARIF exports."""
+    with PROPERTY_EVIDENCE_LOCK:
+        report_stats = dict(auditor.stats)
+        report_results = (list(auditor.results) if not auditor.bopla_config else [
+            sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
+            for item in auditor.results])
+        report_findings = (list(auditor.findings) if not auditor.bopla_config else [
+            sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
+            for item in auditor.findings])
+    _ensure_parent(args.output)
+    reproduction_secrets = set(auditor.secret_values())
+    for identity_name in auditor.identities:
+        reproduction_secrets.update(auditor.identity_headers(identity_name).values())
+    reproduction_templates = build_reproduction_templates(
+        report_findings, auditor.identity_headers("visitor"), reproduction_secrets,
+    )
+    report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
+                     sanitize_url(args.target, secret_values=auditor.secret_values()))
+    SecurityReportGenerator.generate(
+        stats=report_stats,
+        findings=report_findings,
+        results=report_results,
+        target_url=report_target,
+        output_path=args.output,
+        reproduction_templates=reproduction_templates,
+        secret_values=auditor.secret_values(),
+    )
+    print(f"[OK] HTML report: {args.output}")
+
+    if args.export_json:
+        _ensure_parent(args.export_json)
+        with open(args.export_json, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "tool_version": __version__,
+                    "report_schema_version": 2,
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "elapsed_seconds": round(elapsed, 3),
+                    "target": report_target,
+                    "stats": report_stats,
+                    "results": report_results,
+                    "findings": report_findings,
+                },
+                handle,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"[OK] JSON report: {args.export_json}")
+    if args.export_sarif is not None:
+        _ensure_parent(args.export_sarif)
+        SarifReportGenerator.generate(
+            results=report_results,
+            target_url=report_target,
+            output_path=args.export_sarif,
+            secret_values=auditor.secret_values(),
+            spec_path=spec_path,
+        )
+        print("[OK] SARIF report: " + sanitize_log_text(
+            sanitize_text(args.export_sarif, secret_values=auditor.secret_values())
+        ))
+
+
+def _scan_exit_code(args: argparse.Namespace, auditor: APISentinelAuditor) -> int:
+    """Apply the --fail-on-* and --min-coverage gates to the finished scan."""
     if args.fail_on_error and (
         auditor.stats.get("error_count", 0) > 0
         or auditor.stats.get("inconclusive_count", 0) > 0
