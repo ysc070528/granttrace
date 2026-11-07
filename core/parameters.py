@@ -125,6 +125,10 @@ def _kind(value: Any) -> str:
 def _validate_header_token(text: str, role: str = "Header parameter value") -> None:
     if any(c in "\r\n\0" for c in text) or any(ord(c) < 32 and c != "\t" or ord(c) >= 127 for c in text):
         _fail(f"{role} contains invalid characters or line breaks (CRLF injection prevented)")
+    if text != text.strip(" \t"):
+        # Recipients strip surrounding whitespace (RFC 9110 section 5.5), and not
+        # consistently, so the server would not see the configured value.
+        _fail(f"{role} has leading or trailing whitespace that the server would strip")
 
 
 def _validate_cookie_token(text: str, role: str = "Cookie parameter value", *, forbid_equals: bool = False) -> None:

@@ -211,8 +211,24 @@ class BOPLAEvidence:
     def evaluate(
         cls, owner: HTTPResult, other: HTTPResult, *, policy: Mapping[str, Any],
         field: Mapping[str, Any], identity: str, visitor_self: Optional[HTTPResult] = None,
+        assessments: Optional[Dict[int, Tuple[HTTPResult, Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
-        """Compare one explicitly selected field and identity, with no inference."""
+        """Compare one explicitly selected field and identity, with no inference.
+
+        Callers evaluating several fields of the same observations may pass one
+        ``assessments`` dict so each response is parsed once. Assessments are
+        only read here; each entry keeps its response alive and is matched by
+        identity, so a reused object id can never return another assessment.
+        """
+        def assess(result: HTTPResult) -> Dict[str, Any]:
+            if assessments is None:
+                return cls._assess(result)
+            cached = assessments.get(id(result))
+            if cached is None or cached[0] is not result:
+                cached = (result, cls._assess(result))
+                assessments[id(result)] = cached
+            return cached[1]
+
         evidence: Dict[str, Any] = {
             "owner_baseline_valid": False, "resource_bound": False, "resource_binding_valid": False,
             "private_value_identifiable": False, "other_response_valid": False,
@@ -234,7 +250,7 @@ class BOPLAEvidence:
         permission = field["access"].get(identity)
         if identity not in ("visitor", "anonymous") or permission not in ("allow", "deny"):
             return result(Verdict.INCONCLUSIVE, "No explicit field permission exists for this identity", "identity_field_permission")
-        own, low = cls._assess(owner), cls._assess(other)
+        own, low = assess(owner), assess(other)
         own_valid = AuthorizationEvidence._valid(own)
         evidence["owner_baseline_valid"] = own_valid
         if not own_valid:
@@ -254,7 +270,7 @@ class BOPLAEvidence:
             return result(Verdict.INCONCLUSIVE, "A declared identifiable complete private baseline is required", "identifiable_private_baseline")
         evidence["owner_private_data_paths"] = [path]
         if visitor_self is not None and identity == "visitor":
-            self_assessment = cls._assess(visitor_self)
+            self_assessment = assess(visitor_self)
             if not AuthorizationEvidence._valid(self_assessment):
                 return result(Verdict.INCONCLUSIVE, "Visitor self baseline is not valid", "visitor_self_baseline")
             self_values = AuthorizationEvidence._private_values(self_assessment["data"], (path,))
