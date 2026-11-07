@@ -41,7 +41,7 @@ def normalize_parameter_value(metadata: Dict[str, Any], value: Any, *, swagger2:
     """
     if not isinstance(metadata, dict):
         _fail("Parameter metadata must be an object")
-    schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
+    schema = metadata.get("schema", SmartDataGenerator.parameter_schema(metadata) if swagger2 else {})
     if not isinstance(value, str) or not isinstance(schema, dict):
         return value
     declared = schema.get("type")
@@ -164,7 +164,7 @@ def _settings(metadata: Dict[str, Any], value: Any, swagger2: bool) -> Tuple[str
     kind = _kind(value)
     if location == "path" and kind == "primitive" and _scalar(value) == "":
         _fail("Empty path parameter values are unsupported because they can select a different resource")
-    schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
+    schema = metadata.get("schema", SmartDataGenerator.parameter_schema(metadata) if swagger2 else {})
     if isinstance(schema, dict):
         declared = schema.get("type")
         if isinstance(declared, list):

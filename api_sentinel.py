@@ -9,7 +9,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, FrozenSet, Optional, Sequence
 
 from core import __version__
 from core.auditor import APISentinelAuditor
@@ -422,6 +422,11 @@ def _validate_report_paths(args: argparse.Namespace, source_files: Sequence[Path
         setattr(args, attribute, path)
 
 
+def _published_secrets(auditor: Optional[APISentinelAuditor]) -> FrozenSet[str]:
+    """Secrets to redact from an error message, if the auditor was created."""
+    return auditor.secret_values() if auditor is not None else frozenset()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     selected = list(sys.argv[1:] if argv is None else argv)
     if selected and selected[0] == "demo":
@@ -608,20 +613,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with PROPERTY_EVIDENCE_LOCK:
             report_stats = dict(auditor.stats)
             report_results = (list(auditor.results) if not auditor.bopla_config else [
-                sanitize_property_record(item, auditor._secret_values, omit_responses=True)
+                sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
                 for item in auditor.results])
             report_findings = (list(auditor.findings) if not auditor.bopla_config else [
-                sanitize_property_record(item, auditor._secret_values, omit_responses=True)
+                sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
                 for item in auditor.findings])
         _ensure_parent(args.output)
-        reproduction_secrets = set(auditor._secret_values)
+        reproduction_secrets = set(auditor.secret_values())
         for identity_name in auditor.identities:
-            reproduction_secrets.update(auditor._identity_headers(identity_name).values())
+            reproduction_secrets.update(auditor.identity_headers(identity_name).values())
         reproduction_templates = build_reproduction_templates(
-            report_findings, auditor._identity_headers("visitor"), reproduction_secrets,
+            report_findings, auditor.identity_headers("visitor"), reproduction_secrets,
         )
         report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
-                         sanitize_url(args.target, secret_values=auditor._secret_values))
+                         sanitize_url(args.target, secret_values=auditor.secret_values()))
         SecurityReportGenerator.generate(
             stats=report_stats,
             findings=report_findings,
@@ -629,7 +634,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             target_url=report_target,
             output_path=args.output,
             reproduction_templates=reproduction_templates,
-            secret_values=auditor._secret_values,
+            secret_values=auditor.secret_values(),
         )
         print(f"[OK] HTML report: {args.output}")
 
@@ -658,17 +663,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 results=report_results,
                 target_url=report_target,
                 output_path=args.export_sarif,
-                secret_values=auditor._secret_values,
+                secret_values=auditor.secret_values(),
                 spec_path=spec_path,
             )
             print("[OK] SARIF report: " + sanitize_log_text(
-                sanitize_text(args.export_sarif, secret_values=auditor._secret_values)
+                sanitize_text(args.export_sarif, secret_values=auditor.secret_values())
             ))
     except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc), secret_values=getattr(locals().get("auditor"), "_secret_values", ()))), file=sys.stderr)
+        print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc), secret_values=_published_secrets(locals().get("auditor")))), file=sys.stderr)
         return 2
     except Exception as exc:  # The CLI must not emit a healthy report after a fatal error.
-        print("[ERROR] Audit aborted: " + sanitize_log_text(sanitize_text(f"{type(exc).__name__}: {exc}", secret_values=getattr(locals().get("auditor"), "_secret_values", ()))), file=sys.stderr)
+        print("[ERROR] Audit aborted: " + sanitize_log_text(sanitize_text(f"{type(exc).__name__}: {exc}", secret_values=_published_secrets(locals().get("auditor")))), file=sys.stderr)
         return 2
 
     if args.fail_on_error and (

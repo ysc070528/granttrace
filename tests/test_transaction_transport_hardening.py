@@ -341,7 +341,7 @@ class IdentityTransportHardeningTests(unittest.TestCase):
             "owner": {"headers": {"X-Session": "a"}, "auth_header_names": ["X-Session"]},
             "visitor": {"headers": {"x-session": "b"}}, "anonymous": {},
         })
-        self.assertEqual(auditor._identity_headers("visitor")["x-session"], "b")
+        self.assertEqual(auditor.identity_headers("visitor")["x-session"], "b")
 
     def test_unsupported_charset_is_transport_error_not_uncaught_exception(self):
         class Response:

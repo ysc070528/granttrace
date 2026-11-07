@@ -138,7 +138,7 @@ class ResponseDiffEngine:
     ]
 
     @staticmethod
-    def _normalise_key(key: Any) -> str:
+    def normalise_key(key: Any) -> str:
         return _normalised_key_text(str(key))
 
     @classmethod
@@ -146,7 +146,7 @@ class ResponseDiffEngine:
         """Yield every nested mapping field, including fields inside arrays."""
         if isinstance(obj, dict):
             for raw_key, value in obj.items():
-                key = cls._normalise_key(raw_key)
+                key = cls.normalise_key(raw_key)
                 field_path = f"{path}.{raw_key}" if path else str(raw_key)
                 yield field_path, key, value
                 if isinstance(value, (dict, list)):
@@ -186,7 +186,7 @@ class ResponseDiffEngine:
         def envelope_fields(value: Any, prefix: str = ""):
             if isinstance(value, dict):
                 for raw_key, child in value.items():
-                    key = cls._normalise_key(raw_key)
+                    key = cls.normalise_key(raw_key)
                     path = f"{prefix}.{raw_key}" if prefix else str(raw_key)
                     yield path, key, child
                     if key in cls.RESPONSE_WRAPPER_KEYS and isinstance(child, (dict, list)):
@@ -239,7 +239,7 @@ class ResponseDiffEngine:
         return None
 
     @classmethod
-    def _assess_response(cls, status_code: int, body_str: str) -> Dict[str, Any]:
+    def assess_response(cls, status_code: int, body_str: str) -> Dict[str, Any]:
         """Classify one response and retain parsed JSON for internal comparison."""
         try:
             status = int(status_code)
@@ -368,13 +368,13 @@ class ResponseDiffEngine:
     @classmethod
     def classify_response(cls, status_code: int, body_str: str) -> Dict[str, Any]:
         """Return a serialisable response classification without echoing response data."""
-        assessment = cls._assess_response(status_code, body_str)
+        assessment = cls.assess_response(status_code, body_str)
         return {key: value for key, value in assessment.items() if key != "data"}
 
     @classmethod
     def is_soft_error(cls, status_code: int, body_str: str) -> Tuple[bool, str]:
         """Backward-compatible error predicate used by the existing auditor."""
-        assessment = cls._assess_response(status_code, body_str)
+        assessment = cls.assess_response(status_code, body_str)
         return assessment["is_error"], assessment["reason"] if assessment["is_error"] else ""
 
     @staticmethod
@@ -398,7 +398,7 @@ class ResponseDiffEngine:
         return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value))
 
     @classmethod
-    def _denial_body_is_clean(cls, assessment: Dict[str, Any], body: str) -> bool:
+    def denial_body_is_clean(cls, assessment: Dict[str, Any], body: str) -> bool:
         """Accept only a recognizable rejection envelope without business content.
 
         Unknown or unparseable content cannot prove that a denial withheld data.
@@ -425,11 +425,11 @@ class ResponseDiffEngine:
                     return False
                 if key in {"meta", "metadata"}:
                     return all(
-                        cls._normalise_key(raw) in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}
-                        and clean(child, cls._normalise_key(raw))
+                        cls.normalise_key(raw) in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}
+                        and clean(child, cls.normalise_key(raw))
                         for raw, child in value.items()
                     )
-                return all(clean(child, cls._normalise_key(raw)) for raw, child in value.items())
+                return all(clean(child, cls.normalise_key(raw)) for raw, child in value.items())
             if isinstance(value, list):
                 return key in cls.RESPONSE_WRAPPER_KEYS and all(clean(child) for child in value)
             if value is None or value == "":
@@ -501,8 +501,8 @@ class ResponseDiffEngine:
         if isinstance(obj, dict):
             fields = []
             for raw_key, value in obj.items():
-                key = cls._normalise_key(raw_key)
-                if cls._is_request_metadata_key(key):
+                key = cls.normalise_key(raw_key)
+                if cls.is_request_metadata_key(key):
                     continue
                 if not isinstance(value, (dict, list)) and (
                     key in cls.NON_RESOURCE_VALUE_KEYS or cls._looks_like_identifier_key(key)
@@ -530,9 +530,9 @@ class ResponseDiffEngine:
         pairs: Set[Tuple[str, str]] = set()
         if isinstance(obj, dict):
             for raw_key, value in obj.items():
-                key = cls._normalise_key(raw_key)
+                key = cls.normalise_key(raw_key)
                 child_path = f"{path}.{key}" if path else key
-                if cls._is_request_metadata_key(key):
+                if cls.is_request_metadata_key(key):
                     continue
                 if isinstance(value, (dict, list)):
                     pairs.update(cls._meaningful_leaf_pairs(value, child_path))
@@ -554,7 +554,7 @@ class ResponseDiffEngine:
         return pairs
 
     @classmethod
-    def _is_request_metadata_key(cls, key: str) -> bool:
+    def is_request_metadata_key(cls, key: str) -> bool:
         return (
             key in cls.METADATA_CONTAINER_KEYS
             or key.startswith(("requested_", "request_", "trace_", "correlation_"))
@@ -564,7 +564,7 @@ class ResponseDiffEngine:
     @classmethod
     def _normalise_resource_path(cls, path: str) -> str:
         return ".".join(
-            cls._normalise_key(part) for part in re.sub(r"\[\d+\]", "[]", path).split(".")
+            cls.normalise_key(part) for part in re.sub(r"\[\d+\]", "[]", path).split(".")
         )
 
     @classmethod
@@ -577,9 +577,9 @@ class ResponseDiffEngine:
         identifiers: Set[Tuple[str, str]] = set()
         if isinstance(obj, dict):
             for raw_key, value in obj.items():
-                key = cls._normalise_key(raw_key)
+                key = cls.normalise_key(raw_key)
                 child_path = f"{path}.{key}" if path else key
-                if cls._is_request_metadata_key(key):
+                if cls.is_request_metadata_key(key):
                     continue
                 if isinstance(value, (dict, list)):
                     identifiers.update(cls._resource_identifier_pairs(value, resource_id_paths, child_path))
@@ -621,7 +621,7 @@ class ResponseDiffEngine:
         return cls._set_similarity(left, right)
 
     @staticmethod
-    def _assessment_evidence(assessment: Dict[str, Any]) -> Dict[str, Any]:
+    def assessment_evidence(assessment: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "kind": assessment["kind"],
             "status_code": assessment["status_code"],
@@ -676,10 +676,10 @@ class ResponseDiffEngine:
 
         evidence = {
             "responses": {
-                "owner": cls._assessment_evidence(owner),
-                "visitor_cross": cls._assessment_evidence(visitor),
-                "anonymous": cls._assessment_evidence(anonymous),
-                "visitor_self": cls._assessment_evidence(visitor_self) if visitor_self else None,
+                "owner": cls.assessment_evidence(owner),
+                "visitor_cross": cls.assessment_evidence(visitor),
+                "anonymous": cls.assessment_evidence(anonymous),
+                "visitor_self": cls.assessment_evidence(visitor_self) if visitor_self else None,
             },
             "anonymous_denied": anonymous["kind"] == cls.RESPONSE_AUTH_DENIED,
             "anonymous_exact_match": False,
@@ -824,10 +824,10 @@ class ResponseDiffEngine:
         status_visitor, body_visitor = resp_visitor
         status_anon, body_anon = resp_anon
 
-        owner = cls._assess_response(status_owner, body_owner)
-        visitor = cls._assess_response(status_visitor, body_visitor)
-        anonymous = cls._assess_response(status_anon, body_anon)
-        self_assessment = cls._assess_response(*visitor_self) if visitor_self is not None else None
+        owner = cls.assess_response(status_owner, body_owner)
+        visitor = cls.assess_response(status_visitor, body_visitor)
+        anonymous = cls.assess_response(status_anon, body_anon)
+        self_assessment = cls.assess_response(*visitor_self) if visitor_self is not None else None
         if isinstance(resource_id_paths, str):
             resource_id_paths = [resource_id_paths]
         trusted_paths = set()
@@ -854,10 +854,10 @@ class ResponseDiffEngine:
         evidence["trusted_resource_id_paths"] = sorted(trusted_paths)
         evidence["denial_body_conflict"] = False
         evidence["visitor_denial_body_clean"] = (
-            cls._denial_body_is_clean(visitor, body_visitor) if visitor["is_auth_denial"] else None
+            cls.denial_body_is_clean(visitor, body_visitor) if visitor["is_auth_denial"] else None
         )
         evidence["anonymous_denial_body_clean"] = (
-            cls._denial_body_is_clean(anonymous, body_anon) if anonymous["is_auth_denial"] else None
+            cls.denial_body_is_clean(anonymous, body_anon) if anonymous["is_auth_denial"] else None
         )
         evidence["anonymous_authentication_violation"] = bool(
             requires_auth and anonymous["kind"] == cls.RESPONSE_VALID

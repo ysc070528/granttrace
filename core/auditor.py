@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from types import MappingProxyType
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
@@ -278,7 +278,7 @@ class APISentinelAuditor:
         fingerprints = {}
         for name in ("owner", "visitor", "anonymous"):
             material = []
-            for key, value in self._identity_headers(name).items():
+            for key, value in self.identity_headers(name).items():
                 if self._is_auth_header(key) and value.strip():
                     normalized = value.strip()
                     if key.lower() == "authorization" and " " in normalized:
@@ -323,7 +323,7 @@ class APISentinelAuditor:
                                     secrets.add(str(item))
 
         for identity_name, identity in self.identities.items():
-            for key, value in self._identity_headers(identity_name).items():
+            for key, value in self.identity_headers(identity_name).items():
                 if self._is_auth_header(key):
                     secrets.add(value)
                     if key.lower() == "authorization" and " " in value:
@@ -348,6 +348,15 @@ class APISentinelAuditor:
                         _collect_from_param(p_name, p_val)
 
         return secrets
+
+    def secret_values(self) -> FrozenSet[str]:
+        """Return the secret values published so far, for redacting output.
+
+        The set grows while a scan discovers secrets, so callers take a new
+        snapshot after the scan. The published set is only ever replaced,
+        never mutated, so reading it needs no lock.
+        """
+        return frozenset(self._secret_values)
 
     def _publish_secret_values(self, values: Set[str]) -> None:
         """Replace the published secret set; never mutate a shared snapshot.
@@ -432,7 +441,7 @@ class APISentinelAuditor:
         wait = max(wait, self.request_delay)
         return wait if wait <= self.MAX_RETRY_WAIT else None
 
-    def _identity_headers(self, identity_name: str) -> Dict[str, str]:
+    def identity_headers(self, identity_name: str) -> Dict[str, str]:
         identity = self.identities[identity_name]
         headers = {}
         for key, value in identity.get("headers", {}).items():
@@ -530,6 +539,13 @@ class APISentinelAuditor:
         content_type: str = "application/json",
         headers: Optional[Dict[str, str]] = None,
     ) -> HTTPResult:
+        """Send one request; every request the auditor makes passes through here.
+
+        This applies the read-safety check, request accounting and the bounded
+        rate-limit retry for GET/HEAD. Tests and the bundled demo replace it to
+        answer without a network. Together with ``_authoritative_patch_state`` it
+        is a supported extension point: both keep their names and signatures.
+        """
         self._ensure_parser_auth()
         if getattr(self._request_accounting, "attempts", None) is None:
             self._request_accounting.attempts = 0
@@ -563,7 +579,7 @@ class APISentinelAuditor:
                 request_headers = {
                     "accept": "application/json",
                     "user-agent": f"GrantTrace/{__version__}",
-                    **self._identity_headers(identity_name),
+                    **self.identity_headers(identity_name),
                 }
             encoded_data = None
             if data is not None:
@@ -620,7 +636,7 @@ class APISentinelAuditor:
         extra_values: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         self._ensure_parser_auth()
-        req_headers = dict(self._identity_headers(identity_name))
+        req_headers = dict(self.identity_headers(identity_name))
         parameters = ep.get("parameters", [])
         if not isinstance(parameters, list):
             return req_headers
@@ -662,7 +678,7 @@ class APISentinelAuditor:
                         # Missing credentials are intentional in an anonymous
                         # probe, including when the spec marks them required.
                         continue
-                    if all(self._identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
+                    if all(self.identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
                         continue
                     raise ParameterSerializationError(
                         f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
@@ -758,7 +774,7 @@ class APISentinelAuditor:
                         owner_val = self.identities[resource_identity].get("parameters", {}).get(name, owner_val)
                         owner_cookie = dict(
                             (key.strip(), value.strip())
-                            for part in self._identity_headers(resource_identity).get("cookie", "").split(";") if "=" in part
+                            for part in self.identity_headers(resource_identity).get("cookie", "").split(";") if "=" in part
                             for key, value in [part.split("=", 1)]
                         ).get(name)
                         owner_wire = owner_cookie.strip('"') if owner_cookie is not None else (
@@ -851,7 +867,7 @@ class APISentinelAuditor:
                 if normalized in {"authorization", "accept", "content-type"}:
                     continue  # Ignore ordinary declarations in both spec versions.
                 if (self._is_auth_header(name)
-                        and all(self._identity_headers(role).get(normalized) for role in ("owner", "visitor"))):
+                        and all(self.identity_headers(role).get(normalized) for role in ("owner", "visitor"))):
                     continue  # Authentication comes only from the actual requester.
             if location not in {"path", "query", "header", "cookie"}:
                 raise ParameterSerializationError("Unsupported parameter location; no request was sent")
@@ -924,10 +940,10 @@ class APISentinelAuditor:
         specification example, which would test a resource the identity does
         not own. Other parameters keep their generated schema value.
         """
-        if candidate_id is None or not SmartDataGenerator._is_resource_identifier(metadata):
+        if candidate_id is None or not SmartDataGenerator.is_resource_identifier(metadata):
             return SmartDataGenerator.generate_raw_value_for_param(metadata)
         name = metadata.get("name")
-        schema = metadata.get("schema", SmartDataGenerator._parameter_schema(metadata) if swagger2 else {})
+        schema = metadata.get("schema", SmartDataGenerator.parameter_schema(metadata) if swagger2 else {})
         value = candidate_id
         if (isinstance(schema, dict) and schema.get("type") == "string"
                 and isinstance(value, int) and not isinstance(value, bool)):

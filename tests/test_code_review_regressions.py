@@ -134,9 +134,9 @@ class ResponseAssessmentTests(unittest.TestCase):
         }
         for (status, body), kind in cases.items():
             with self.subTest(status=status, body=body):
-                self.assertEqual(ResponseDiffEngine._assess_response(status, body)["kind"], kind)
-        self.assertEqual(ResponseDiffEngine._assess_response(401, '{"id": 1}')["data"], {"id": 1})
-        self.assertIsNone(ResponseDiffEngine._assess_response(404, "not json")["data"])
+                self.assertEqual(ResponseDiffEngine.assess_response(status, body)["kind"], kind)
+        self.assertEqual(ResponseDiffEngine.assess_response(401, '{"id": 1}')["data"], {"id": 1})
+        self.assertIsNone(ResponseDiffEngine.assess_response(404, "not json")["data"])
 
     def test_structure_similarity_matches_public_helper(self) -> None:
         owner = json.dumps({"data": {"id": "1", "items": [{"a": 1, "b": 2}], "note": "o"}})

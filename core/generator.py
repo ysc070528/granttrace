@@ -82,7 +82,7 @@ class SmartDataGenerator:
     }
 
     @classmethod
-    def _parameter_schema(cls, param_meta: Dict[str, Any]) -> Dict[str, Any]:
+    def parameter_schema(cls, param_meta: Dict[str, Any]) -> Dict[str, Any]:
         schema = param_meta.get("schema")
         if isinstance(schema, dict):
             return schema
@@ -95,7 +95,7 @@ class SmartDataGenerator:
         }
 
     @classmethod
-    def _is_resource_identifier(cls, param_meta: Dict[str, Any]) -> bool:
+    def is_resource_identifier(cls, param_meta: Dict[str, Any]) -> bool:
         original = str(param_meta.get("name", ""))
         normalized = re.sub(r"[-.\s]+", "_", original).lower()
         if normalized in cls._NON_RESOURCE_PARAMETER_NAMES:
@@ -509,9 +509,9 @@ class SmartDataGenerator:
         resource (for example ``user_id`` or ``documentUuid``). Paging, search,
         sorting, and unrelated query parameters continue to use their schemas.
         """
-        schema = cls._parameter_schema(param_meta)
+        schema = cls.parameter_schema(param_meta)
 
-        if candidate_id is not None and cls._is_resource_identifier(param_meta):
+        if candidate_id is not None and cls.is_resource_identifier(param_meta):
             candidate = cls._coerce_for_schema(candidate_id, schema)
             if cls._value_satisfies_schema(candidate, schema):
                 return candidate
