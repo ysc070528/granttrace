@@ -15,7 +15,7 @@ because tests and the hash-pinned write transaction call them by these names.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from core.config_validator import ConfigValidator
 from core.evidence import _is_sensitive_key
@@ -39,11 +39,12 @@ class RequestBuilderMixin:
     parameter_values: Dict[str, Any]
     target_base_url: str
 
-    def _ensure_parser_auth(self) -> None:
-        raise NotImplementedError  # Provided by APISentinelAuditor.
+    if TYPE_CHECKING:
+        # Declared for type checking only: a runtime stub could shadow the
+        # auditor's implementation through another base class.
+        def _ensure_parser_auth(self) -> None: ...
 
-    def _publish_secret_values(self, values: Set[str]) -> None:
-        raise NotImplementedError  # Provided by APISentinelAuditor.
+        def _publish_secret_values(self, values: Set[str]) -> None: ...
 
     def _is_auth_header(self, name: str) -> bool:
         spec_headers = self._spec_auth_header_names()
