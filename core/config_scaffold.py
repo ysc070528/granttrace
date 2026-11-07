@@ -10,13 +10,26 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import AbstractSet, Any, Dict, List, Optional, Tuple
 
+from core.config_validator import ConfigValidator
 from core.parser import OpenAPIParser
 
 
 DRAFT_KEY = "_granttrace_draft"
 INPUT_PREFIX = "__GRANTTRACE_INPUT__:"
+WRITE_METHODS = ("PATCH", "PUT")
+# Resource parameters belong to the identity that owns the resource; header and
+# cookie values are sent by whichever identity makes the request.
+RESOURCE_IDENTITIES = ("owner", "visitor")
+REQUESTERS = ("owner", "visitor", "anonymous")
+# The scanner ignores these header declarations (RequestBuilderMixin._header_parameter).
+IGNORED_HEADERS = frozenset({"authorization", "accept", "content-type"})
+
+# Lower-case header and cookie names of the specification's API-key schemes;
+# None when the security schemes cannot be resolved.
+AuthNames = Optional[Tuple[AbstractSet[str], AbstractSet[str]]]
+NO_SPEC_AUTH: AuthNames = (frozenset(), frozenset())
 
 
 def _input(label: str) -> str:
@@ -45,9 +58,95 @@ def config_needs_input(config: Any) -> bool:
     return False
 
 
-def _parameter_notes(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _spec_auth_names(parser: OpenAPIParser) -> AuthNames:
+    """Return the header and cookie names of the specification's API-key schemes."""
+    try:
+        schemes = parser.get_security_schemes()
+    except (TypeError, ValueError, RuntimeError):
+        return None
+    names: Dict[str, set] = {"header": set(), "cookie": set()}
+    for scheme in schemes.values():
+        if isinstance(scheme, dict) and scheme.get("in") in names and isinstance(scheme.get("name"), str):
+            names[scheme["in"]].add(scheme["name"].lower())
+    return frozenset(names["header"]), frozenset(names["cookie"])
+
+
+def _request_value_review(
+    parameter: Dict[str, Any], name: str, location: str, schema: Dict[str, Any], operation: str,
+    auth: AuthNames, swagger2: bool,
+) -> Tuple[str, str]:
+    """Decide where a GET header or cookie value is drafted, and say why.
+
+    Returns the draft target ("" when nothing is drafted) and the review note.
+    Mirrors RequestBuilderMixin: it ignores some header declarations, sends a
+    declared authentication header only from both owner's and visitor's
+    identity headers (refusing the check otherwise, even for an optional one),
+    takes an authentication cookie only from the requesting identity, and
+    refuses unsupported cookie forms. Optional business values are left out
+    like optional query parameters.
+    """
+    if auth is None:
+        return "", (
+            "The specification's security schemes could not be resolved, so authentication headers and "
+            "cookies cannot be told apart from business ones; nothing was drafted. Fix the security schemes, "
+            "or add business values under parameter_values and authentication under identities.*.headers."
+        )
+    auth_headers, auth_cookies = auth
+    lowered = name.lower()
+    if location == "header" and lowered in IGNORED_HEADERS:
+        return "", (
+            "GrantTrace ignores this header declaration: media types come from the operation and "
+            "authentication from identities.*.headers. Nothing to configure here."
+        )
+    if location == "header" and ConfigValidator.is_auth_header(name, spec_auth_names=auth_headers):
+        return "identity_headers", (
+            "Authentication header: drafted for owner and visitor under identities.*.headers, which are sent "
+            "with every request; never put it in parameter_values. GrantTrace refuses this check unless both "
+            "identities send it, even when the parameter is optional. Anonymous requests omit it."
+        )
+    if location == "cookie" and (
+        lowered in auth_cookies
+        or any(word in lowered.replace("-", "_") for word in ConfigValidator.STANDARD_AUTH_COOKIE_WORDS)
+    ):
+        if parameter.get("required") is not True:
+            return "", (
+                "Optional authentication cookie: not drafted. When a test needs it, give owner and visitor "
+                "different identity-specific values under identities.*.parameters; never use common. "
+                "Anonymous requests omit it."
+            )
+        return "identity_parameters", (
+            "Authentication cookie: drafted for owner and visitor under identities.*.parameters. Values must "
+            "be identity-specific and differ between owner and visitor; never use common. Anonymous requests "
+            "omit it."
+        )
+    if "content" in parameter:
+        return "", (
+            "Parameters described with content are not supported; the check is INCONCLUSIVE before any request."
+        )
+    if location == "cookie" and (
+        swagger2 or parameter.get("style") == "cookie" or schema.get("type") in {"array", "object"}
+    ):
+        return "", (
+            "Cookie arrays and objects, style: cookie and Swagger 2 cookies are not supported; the check is "
+            "INCONCLUSIVE before any request."
+        )
+    if parameter.get("required") is not True:
+        return "", (
+            "Optional: not drafted. When a test needs it, add a value under parameter_values." + operation
+            + ".<identity> (or .common for a value every identity sends)."
+        )
+    return "requesters", (
+        "Sent by the requesting identity, including anonymous. Replace each placeholder with the value that "
+        "identity sends; if every identity sends the same value, one parameter_values." + operation
+        + ".common entry can replace them. Authentication belongs under identities.*.headers."
+    )
+
+
+def _parameter_notes(endpoint: Dict[str, Any], auth: AuthNames = NO_SPEC_AUTH,
+                     swagger2: bool = False) -> List[Dict[str, Any]]:
     notes = []
     present_paths = set()
+    operation = str(endpoint.get("method")) + " " + str(endpoint.get("path"))
     for parameter in endpoint["parameters"]:
         name, location = parameter.get("name"), parameter.get("in")
         if not isinstance(name, str) or not name:
@@ -74,13 +173,13 @@ def _parameter_notes(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
             item["items_type"] = schema["items"].get("type", "unspecified")
         if "content" in parameter:
             item["content_parameter"] = True
+        # Where build_config_scaffold drafts the value; removed before output.
+        item["_draft"] = "resources" if item["included_in_config"] else ""
         if location in {"header", "cookie"} and endpoint.get("method") == "GET":
-            item["needs_review"] = (
-                "GET header and cookie parameters are sent from parameter_values (common or per identity) "
-                "or identities.*.parameters. They are not drafted: add required values manually. "
-                "Authentication headers belong under identities.*.headers, authentication cookies must be "
-                "identity-specific, and cookie arrays or objects are not supported."
+            item["_draft"], item["needs_review"] = _request_value_review(
+                parameter, name, location, schema, operation, auth, swagger2,
             )
+            item["included_in_config"] = bool(item["_draft"])
         elif location not in {"path", "query", "body"}:
             item["needs_review"] = (
                 "Header and cookie parameters are sent only for GET operations, and form parameters are "
@@ -93,7 +192,7 @@ def _parameter_notes(endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
         if name not in present_paths:
             notes.append({
                 "name": name, "in": "path", "required": True, "type": "unspecified",
-                "included_in_config": True,
+                "included_in_config": True, "_draft": "resources",
                 "needs_review": "Missing OpenAPI parameter declaration; fix the contract before scanning.",
             })
     return notes
@@ -128,6 +227,8 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
     """
     parser = OpenAPIParser(spec_path)
     endpoints = parser.get_endpoints()
+    auth = _spec_auth_names(parser)
+    swagger2 = str(parser.raw_spec.get("swagger", "")).startswith("2.")
     draft: Dict[str, Any] = {
         "description": "INCOMPLETE offline draft. Complete the companion checklist before scanning.",
         DRAFT_KEY: {"status": "needs_user_input", "version": 1},
@@ -149,7 +250,8 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
         "offline": True,
         "limitations": [
             "OpenAPI cannot establish resource ownership or which identities should be allowed access.",
-            "OpenAPI cannot prove an independent GET observes committed PATCH changes or strong consistency.",
+            "OpenAPI cannot prove an independent GET observes committed PATCH or PUT changes or strong "
+            "consistency.",
             "This draft is incomplete and blocked; generating it sends no requests and authorizes no writes.",
             "Schema defaults and examples are not trusted as test resources or credentials and are not copied.",
         ],
@@ -161,14 +263,19 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
             "Replace every resource placeholder with an existing resource belonging to the named test "
             "identity. Parameter values are JSON values of the declared type, not Python list/boolean text. "
             "Fill optional query parameters deliberately when needed; do not guess resource ownership.",
+            "Fill the drafted GET header and cookie values for owner, visitor and anonymous: each requesting "
+            "identity sends its own. Keep authentication under identities.*.headers, and check each "
+            "operation's parameter notes for headers and cookies that were not drafted.",
             "Confirm permitted and denied access, including same-team sharing and administrator access, "
             "before treating cross-identity access as a finding. Configure bola.expected_public only for "
             "confirmed public operations and resource_id_paths only for confirmed response identifiers.",
-            "For each PATCH you intend to test, independently verify the GET readback path, field_map "
+            "For each PATCH or PUT you intend to test, independently verify the GET readback path, field_map "
             "(written field -> response field), resource parameters, consistency, baseline and rollback. "
-            "Remove unused PATCH readback entries; never infer strong consistency from a similar path.",
+            "Remove unused readback entries; never infer strong consistency from a similar path.",
             "Keep write_allowlist empty for read-only checks. Enabling writes later requires an explicit "
-            "reviewed PATCH allowlist and the separate --allow-write-tests flag.",
+            "reviewed PATCH/PUT allowlist and the separate --allow-write-tests flag; even then the CLI stops "
+            "PATCH and PUT checks against an external target before any write, because it cannot verify "
+            "the target's authoritative state.",
             "After completing this review, replace all __GRANTTRACE_INPUT__: placeholders and remove "
             "_granttrace_draft. Run --validate-config --config <config> --spec <spec>, then --dry-run with "
             "the same files and review the plan before any scan. Validation does not prove business policy.",
@@ -189,8 +296,8 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
     checklist["available_get_paths"] = get_paths
     for endpoint in endpoints:
         operation = endpoint["method"] + " " + endpoint["path"]
-        supported = endpoint["method"] in {"GET", "PATCH"}
-        parameters = _parameter_notes(endpoint)
+        supported = endpoint["method"] in {"GET", *WRITE_METHODS}
+        parameters = _parameter_notes(endpoint, auth, swagger2)
         entry: Dict[str, Any] = {
             "operation": operation,
             "scan_supported": supported,
@@ -200,21 +307,39 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
                 "same-team sharing or administrator access can be legitimate."
             ] if supported else ["This operation method is not actively tested by GrantTrace."],
         }
-        if supported:
-            names = [p["name"] for p in parameters if p["included_in_config"]]
-            for parameter in parameters:
-                if parameter["included_in_config"]:
-                    parameter["status"] = "needs_user_input"
-                    parameter["config_paths"] = [
-                        "parameter_values." + operation + "." + identity + "." + parameter["name"]
-                        for identity in ("owner", "visitor")
-                    ]
-            if names:
-                draft["parameter_values"][operation] = {
-                    identity: {name: _input(identity + " resource parameter " + name) for name in names}
-                    for identity in ("owner", "visitor")
-                }
-        if endpoint["method"] == "PATCH":
+        values: Dict[str, Dict[str, str]] = {}
+        for parameter in parameters:
+            target = parameter.pop("_draft", "")
+            if not supported:
+                parameter["included_in_config"] = False
+            if not supported or not target:
+                continue
+            name = parameter["name"]
+            parameter["status"] = "needs_user_input"
+            if target in {"identity_headers", "identity_parameters"}:
+                # Identity headers and parameters apply to every operation.
+                section, label = (("headers", "authentication header") if target == "identity_headers"
+                                  else ("parameters", "authentication cookie"))
+                parameter["config_paths"] = []
+                for identity in RESOURCE_IDENTITIES:
+                    existing = draft["identities"][identity][section]
+                    # Another operation may already declare it, in different letter case.
+                    key = next((key for key in existing if key.lower() == name.lower()), name)
+                    existing.setdefault(key, _input(identity + " " + label + " " + name))
+                    parameter["config_paths"].append("identities." + identity + "." + section + "." + key)
+                continue
+            identities = REQUESTERS if target == "requesters" else RESOURCE_IDENTITIES
+            label = "request " + parameter["in"] if target == "requesters" else "resource parameter"
+            parameter["config_paths"] = [
+                "parameter_values." + operation + "." + identity + "." + name for identity in identities
+            ]
+            for identity in identities:
+                values.setdefault(identity, {})[name] = _input(identity + " " + label + " " + name)
+        if values:
+            draft["parameter_values"][operation] = {
+                identity: values[identity] for identity in REQUESTERS if identity in values
+            }
+        if endpoint["method"] in WRITE_METHODS:
             draft["readbacks"][operation] = {
                 "method": "GET", "path": _input("verified GET readback path"),
                 "consistency": _input("verified strong, weak, or eventual consistency"),
@@ -230,6 +355,14 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
                 "instruction": "Candidates describe contract shapes only; verify each against real test behavior. "
                                "Nested fields use dot/bracket paths, for example data.role or members[0].role.",
             }
+            if endpoint["method"] == "PUT":
+                entry["readback_review"]["missing"].append("complete root document readback")
+                entry["readback_review"]["instruction"] += (
+                    " PUT replaces the whole resource: the readback must return the complete root document "
+                    "(no snapshot_path envelope), field_map must map each written field to the same path, "
+                    "ignore_readback_paths and baseline_payload must stay empty, and only application/json "
+                    "bodies are supported."
+                )
         checklist["operations"].append(entry)
     return draft, checklist
 

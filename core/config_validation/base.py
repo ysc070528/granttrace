@@ -112,6 +112,10 @@ class ValidatorBase:
 
     VALID_CONSISTENCY_VALUES = ("strong", "weak", "eventual")
     STANDARD_AUTH_HEADER_WORDS = ("authorization", "token", "api_key", "apikey", "cookie", "session", "credential")
+    # A cookie whose normalized name contains one of these words carries authentication.
+    STANDARD_AUTH_COOKIE_WORDS = STANDARD_AUTH_HEADER_WORDS + (
+        "auth", "jwt", "sid", "secret", "ticket", "pass", "login",
+    )
 
     @classmethod
     def _find_closest_match(cls, word: str, candidates: Sequence[str]) -> Optional[str]:
