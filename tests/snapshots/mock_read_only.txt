@@ -1,0 +1,24 @@
+exit code: 0
+--- stdout ---
+
+ ###  ## #   ###  #  #  ##### ##### ## #   ###   ###  ####
+ #    #  #  #  #  ## #    #     #   #  #  #  #  #     #
+ # ## ##    ####  # ##    #     #   ##    ####  #     ###
+ #  # # #   #  #  #  #    #     #   # #   #  #  #     #
+ ###  #  #  #  #  #  #    #     #   #  #  #  #   ###  ####
+             safety-first API authorization auditing  v<version>
+
+====================================================================
+GrantTrace <version> safety-first audit
+Specification: OpenAPI 3.0.3 | endpoints: 5
+Write tests: DISABLED (read-only mode)
+====================================================================
+
+====================================================================
+Confirmed vulnerabilities: 1
+Errors: 0 | inconclusive: 0
+Attempted coverage: 60.0% | conclusive coverage: 60.0%
+====================================================================
+[OK] HTML report: <tmp>/report.html
+[OK] JSON report: <tmp>/report.json
+--- stderr ---
