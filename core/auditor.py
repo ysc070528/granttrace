@@ -1034,6 +1034,23 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        plan = self._mass_assignment_preflight(ep, all_endpoints)
+        if plan is None:
+            return
+        with self._resource_lock(plan["mutation_url"]):
+            for case in plan["cases"]:
+                if self._mass_assignment_case(ep, plan, case):
+                    return
+        self._record_mass_assignment_summary(ep, plan)
+
+    def _mass_assignment_preflight(
+        self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Run every check that precedes a write.
+
+        Returns None after recording why no write may be sent; otherwise the
+        prepared cases, the shared result lists and the values the cases need.
+        """
         if ep.get("unresolved_schema_error"):
             sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
             self._record_result(
@@ -1043,33 +1060,33 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 f"Schema could not be resolved safely: {sanitized_err}; no request was sent",
                 evidence={"reason_category": "unresolved_reference", "requests_attempted": 0, "requests_sent": 0},
             )
-            return
+            return None
         if str(ep.get("method", "")).upper() not in self.WRITE_METHODS:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Only explicitly allowlisted reversible PATCH/PUT checks are supported; no method substitution or request was made",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "safety_signal": "method"})
-            return
+            return None
         operation_key = self._operation_key(ep)
         if self._writes_halted_reason:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED, self._writes_halted_reason,
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         if not self.allow_write_tests:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "State-changing checks are disabled; pass --allow-write-tests to opt in",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         if operation_key not in self.write_allowlist:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Endpoint is not in the explicit, case-sensitive write-test allowlist",
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0})
-            return
+            return None
         schema = ep.get("request_schema")
         if not isinstance(schema, dict) or not schema:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "No request schema is available; no write was sent")
-            return
+            return None
         content_type = str(ep.get("request_content_type") or "").split(";", 1)[0].strip().lower()
         allowed_types = {"application/json"} if ep["method"].upper() == "PUT" else {
             "application/json", "application/merge-patch+json"}
@@ -1078,31 +1095,31 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                                 "Only object application/json and application/merge-patch+json are supported; "
                                 "JSON Patch operation arrays and arbitrary vendor formats are not implemented",
                                 evidence={"reason_category": "detector_unimplemented", "requests_attempted": 0})
-            return
+            return None
         readback = self._readback_for(ep, all_endpoints)
         if (not readback or not readback.get("path")
                 or str(readback.get("method", "GET")).upper() != "GET"):
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "An independent GET readback mapping is required; no write was sent")
-            return
+            return None
         risk = read_only_risk(self._readback_endpoint(ep, readback))
         if risk:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Unsafe readback: " + risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
-            return
+            return None
         field_map = readback.get("field_map")
         if not isinstance(field_map, dict) or not field_map:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 "An explicit non-empty field_map is required; no write was sent")
-            return
+            return None
         try:
             generated = self._normalise_mutation_cases(schema)
         except ValueError as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
                                 f"A valid baseline could not be generated: {exc}; no write was sent")
-            return
+            return None
         cases = [case for case in generated if case["field_path"] in field_map]
         generated_paths = {case["field_path"] for case in cases}
         unverified = [f"{name}: no mutation case was generated" for name in field_map if name not in generated_paths]
@@ -1130,7 +1147,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                     f"Cookie parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
                     evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
                 )
-                return
+                return None
             if loc == "header" and (is_array or is_object):
                 kind = "array" if is_array else "object"
                 self._record_result(
@@ -1138,7 +1155,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                     f"Header {kind} parameter '{p_name}' serialization is not supported for {ep['method']} write operations; no write was sent",
                     evidence={"reason_category": "invalid_input", "requests_attempted": 0, "requests_sent": 0}
                 )
-                return
+                return None
         try:
             mutation_url = self._build_url(ep, "visitor")
             read_ep = self._readback_endpoint(ep, readback)
@@ -1147,14 +1164,14 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         except (ParameterSerializationError, RemoteRefError) as exc:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
-            return
+            return None
         risk = self._read_request_risk("GET", readback_url)
         if risk:
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.SKIPPED,
                                 "Unsafe readback: " + risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, **risk})
-            return
+            return None
 
         if not self._has_patch_state_authority():
             self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE,
@@ -1163,127 +1180,153 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0,
                                           "requests_sent": 0, "rollback_verified": False,
                                           "recovery_sent": False, "safety_signal": "unverified_state_authority"})
-            return
+            return None
+        return {
+            "operation_key": operation_key, "content_type": content_type, "readback": readback,
+            "field_map": field_map, "cases": cases, "mutation_url": mutation_url,
+            "unverified": unverified, "verified_safe": verified_safe, "tested": tested,
+            "case_summaries": case_summaries,
+        }
 
-        with self._resource_lock(mutation_url):
-            for case in cases:
-                field_path = case["field_path"]
-                try:
-                    read_url, before_http = self._readback_result(ep, readback, "visitor")
-                except (ParameterSerializationError, RemoteRefError) as exc:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
-                    return
-                if before_http.error:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        f"Read-before-write failed: {before_http.error}",
-                                        evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
-                    return
-                before = self._verified_patch_document(before_http, ep, mutation_url, readback)
-                if before is None:
-                    unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
-                    continue
-                try:
-                    snapshot = (prepare_patch(before, case, readback, method="PUT")
-                                if ep["method"].upper() == "PUT" else prepare_patch(before, case, readback))
-                    if not snapshot.matches(before):
-                        raise ValueError("original readback snapshot cannot be verified")
-                    # Merge Patch null members remove fields; they cannot restore an
-                    # explicitly present null from an object snapshot.
-                    def has_null_member(value):
-                        if isinstance(value, dict):
-                            return any(item is None or has_null_member(item) for item in value.values())
-                        return False  # Arrays replace as complete values.
-                    if content_type == "application/merge-patch+json" and has_null_member(snapshot.restore):
-                        raise ValueError("Merge Patch cannot restore present null object members")
-                    if content_type == "application/merge-patch+json":
-                        ensure_reversible_merge_patch(snapshot)
-                except (ValueError, KeyError, TypeError) as exc:
-                    unverified.append(f"{field_path}: {exc}; no write was sent")
-                    continue
+    def _mass_assignment_case(self, ep: Dict[str, Any], plan: Dict[str, Any], case: Dict[str, Any]) -> bool:
+        """Test one field under the resource lock; True when a final result was recorded."""
+        operation_key = plan["operation_key"]
+        content_type = plan["content_type"]
+        readback = plan["readback"]
+        field_map = plan["field_map"]
+        mutation_url = plan["mutation_url"]
+        unverified = plan["unverified"]
+        verified_safe = plan["verified_safe"]
+        tested = plan["tested"]
+        case_summaries = plan["case_summaries"]
+        field_path = case["field_path"]
+        try:
+            read_url, before_http = self._readback_result(ep, readback, "visitor")
+        except (ParameterSerializationError, RemoteRefError) as exc:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.INCONCLUSIVE, str(exc))
+            return True
+        if before_http.error:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                f"Read-before-write failed: {before_http.error}",
+                                evidence={"readback_url": read_url, "before": self._safe_body(before_http)})
+            return True
+        before = self._verified_patch_document(before_http, ep, mutation_url, readback)
+        if before is None:
+            unverified.append(f"{field_path}: readback requires a complete HTTP 200 JSON object matching independently verified authoritative state")
+            return False
+        try:
+            snapshot = (prepare_patch(before, case, readback, method="PUT")
+                        if ep["method"].upper() == "PUT" else prepare_patch(before, case, readback))
+            if not snapshot.matches(before):
+                raise ValueError("original readback snapshot cannot be verified")
+            # Merge Patch null members remove fields; they cannot restore an
+            # explicitly present null from an object snapshot.
+            def has_null_member(value):
+                if isinstance(value, dict):
+                    return any(item is None or has_null_member(item) for item in value.values())
+                return False  # Arrays replace as complete values.
+            if content_type == "application/merge-patch+json" and has_null_member(snapshot.restore):
+                raise ValueError("Merge Patch cannot restore present null object members")
+            if content_type == "application/merge-patch+json":
+                ensure_reversible_merge_patch(snapshot)
+        except (ValueError, KeyError, TypeError) as exc:
+            unverified.append(f"{field_path}: {exc}; no write was sent")
+            return False
 
-                # Recheck the authority immediately before transport; it may
-                # become unavailable while preparing the reversible snapshot.
-                if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
-                    unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
-                    continue
-                tested.append(field_path)
-                transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
-                mutation = transaction["mutation"]
-                after = transaction["after"]
-                exists, value = get_path(after or {}, snapshot.read_path)
-                persisted = exists and json_values_equal(value, snapshot.target)
-                evidence = {
-                    "field": field_path, "readback_field": field_map[field_path],
-                    "target_url": mutation_url,
-                    "readback_url": read_url,
-                    "request_content_type": (
-                        "application/json"
-                        if str(ep.get("request_content_type") or "application/json").lower() == "application/json"
-                        else str(ep.get("request_content_type") or "application/json")
-                    ),
-                    "snapshot_fields": list(snapshot.restore),
-                    "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
-                    "ignored_readback_paths": readback.get("ignore_readback_paths", []),
-                    "mutation": self._safe_body(mutation),
-                    "after": self._safe_body(transaction["after_http"]),
-                    "rollback": self._safe_body(transaction["rollback"]),
-                    "restored": self._safe_body(transaction["restored"]),
-                    "rollback_verified": transaction["rollback_verified"],
-                    "recovery_sent": transaction["recovery_sent"],
-                    "tested_fields": list(tested),
-                    "untested_fields": [name for name in field_map if name not in tested],
-                    "readback_consistency": readback.get("consistency", "unspecified"),
-                }
-                case_summaries.append({
-                    "field": field_path, "readback_field": field_map[field_path],
-                    "persisted": persisted,
-                    "rollback_verified": transaction["rollback_verified"],
-                    "recovery_sent": transaction["recovery_sent"],
-                })
-                if persisted:
-                    finding: Dict[str, Any] = {
-                        "type": "Mass Assignment (independent readback confirmed)",
-                        "cwe": "CWE-915", "severity": "Critical", "endpoint": operation_key,
-                        "target_url": mutation_url,
-                        "details": f"Privilege field '{field_path}' persisted after mutation",
-                        "injected_payload": {field_path: snapshot.target},
-                        "evidence": evidence,
-                    }
-                    with self._result_lock:
-                        self.stats["mass_assignment_confirmed"] += 1
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.CONFIRMED,
-                                        finding["details"], evidence, finding)
-                    if self._writes_halted_reason:
-                        self._record_result(ep, "ROLLBACK", Verdict.ERROR,
-                                            self._writes_halted_reason, evidence)
-                    return
-                if self._writes_halted_reason:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        self._writes_halted_reason, evidence)
-                    return
-                if transaction["failure"] or mutation.error or mutation.status == 0 or mutation.status >= 500:
-                    self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
-                                        "Mutation outcome was ambiguous; recovery was verified. "
-                                        + str(transaction["failure"] or mutation.error or mutation.status), evidence)
-                    return
-                if after is None:
-                    unverified.append(f"{field_path}: invalid read-after-write; original snapshot restored")
-                    continue
-                if not snapshot.matches(after):
-                    unverified.append(f"{field_path}: unexpected state change; original snapshot restored")
-                    continue
-                if readback.get("consistency") != "strong":
-                    unverified.append(f"{field_path}: unchanged state is not conclusive without strongly consistent readback")
-                    continue
-                if mutation.status in self.AUTH_DENIAL_STATUSES:
-                    verified_safe.append(field_path)
-                    continue
-                assessment = (ResponseDiffEngine.classify_response(mutation.status, mutation.body)
-                              if mutation.status != 204 else {"kind": ResponseDiffEngine.RESPONSE_VALID})
-                if mutation.ok and assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID:
-                    verified_safe.append(field_path)
-                else:
-                    unverified.append(f"{field_path}: mutation was rejected or returned a business error")
+        # Recheck the authority immediately before transport; it may
+        # become unavailable while preparing the reversible snapshot.
+        if self._verified_patch_document(before_http, ep, mutation_url, readback) is None:
+            unverified.append(f"{field_path}: authoritative initial state became unavailable; no write was sent")
+            return False
+        tested.append(field_path)
+        transaction = self._execute_patch_case(ep, mutation_url, readback, snapshot)
+        mutation = transaction["mutation"]
+        after = transaction["after"]
+        exists, value = get_path(after or {}, snapshot.read_path)
+        persisted = exists and json_values_equal(value, snapshot.target)
+        evidence = {
+            "field": field_path, "readback_field": field_map[field_path],
+            "target_url": mutation_url,
+            "readback_url": read_url,
+            "request_content_type": (
+                "application/json"
+                if str(ep.get("request_content_type") or "application/json").lower() == "application/json"
+                else str(ep.get("request_content_type") or "application/json")
+            ),
+            "snapshot_fields": list(snapshot.restore),
+            "verification_scope": "Authoritatively checked full readback document except explicitly ignored volatile paths",
+            "ignored_readback_paths": readback.get("ignore_readback_paths", []),
+            "mutation": self._safe_body(mutation),
+            "after": self._safe_body(transaction["after_http"]),
+            "rollback": self._safe_body(transaction["rollback"]),
+            "restored": self._safe_body(transaction["restored"]),
+            "rollback_verified": transaction["rollback_verified"],
+            "recovery_sent": transaction["recovery_sent"],
+            "tested_fields": list(tested),
+            "untested_fields": [name for name in field_map if name not in tested],
+            "readback_consistency": readback.get("consistency", "unspecified"),
+        }
+        case_summaries.append({
+            "field": field_path, "readback_field": field_map[field_path],
+            "persisted": persisted,
+            "rollback_verified": transaction["rollback_verified"],
+            "recovery_sent": transaction["recovery_sent"],
+        })
+        if persisted:
+            finding: Dict[str, Any] = {
+                "type": "Mass Assignment (independent readback confirmed)",
+                "cwe": "CWE-915", "severity": "Critical", "endpoint": operation_key,
+                "target_url": mutation_url,
+                "details": f"Privilege field '{field_path}' persisted after mutation",
+                "injected_payload": {field_path: snapshot.target},
+                "evidence": evidence,
+            }
+            with self._result_lock:
+                self.stats["mass_assignment_confirmed"] += 1
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.CONFIRMED,
+                                finding["details"], evidence, finding)
+            if self._writes_halted_reason:
+                self._record_result(ep, "ROLLBACK", Verdict.ERROR,
+                                    self._writes_halted_reason, evidence)
+            return True
+        if self._writes_halted_reason:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                self._writes_halted_reason, evidence)
+            return True
+        if transaction["failure"] or mutation.error or mutation.status == 0 or mutation.status >= 500:
+            self._record_result(ep, "MASS_ASSIGNMENT", Verdict.ERROR,
+                                "Mutation outcome was ambiguous; recovery was verified. "
+                                + str(transaction["failure"] or mutation.error or mutation.status), evidence)
+            return True
+        if after is None:
+            unverified.append(f"{field_path}: invalid read-after-write; original snapshot restored")
+            return False
+        if not snapshot.matches(after):
+            unverified.append(f"{field_path}: unexpected state change; original snapshot restored")
+            return False
+        if readback.get("consistency") != "strong":
+            unverified.append(f"{field_path}: unchanged state is not conclusive without strongly consistent readback")
+            return False
+        if mutation.status in self.AUTH_DENIAL_STATUSES:
+            verified_safe.append(field_path)
+            return False
+        assessment = (ResponseDiffEngine.classify_response(mutation.status, mutation.body)
+                      if mutation.status != 204 else {"kind": ResponseDiffEngine.RESPONSE_VALID})
+        if mutation.ok and assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID:
+            verified_safe.append(field_path)
+        else:
+            unverified.append(f"{field_path}: mutation was rejected or returned a business error")
+        return False
+
+    def _record_mass_assignment_summary(self, ep: Dict[str, Any], plan: Dict[str, Any]) -> None:
+        """Record SECURE only when every configured field was verified safe."""
+        readback = plan["readback"]
+        field_map = plan["field_map"]
+        mutation_url = plan["mutation_url"]
+        unverified = plan["unverified"]
+        verified_safe = plan["verified_safe"]
+        tested = plan["tested"]
+        case_summaries = plan["case_summaries"]
         evidence = {"tested_fields": tested, "safe_fields": verified_safe, "unverified": unverified,
                     "configured_fields": list(field_map), "target_url": mutation_url,
                     "cases": case_summaries,
