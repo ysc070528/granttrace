@@ -38,7 +38,8 @@ granttrace --spec openapi.yaml --config config.json \
 > - Passing `--allow-remote-refs` without at least one `--remote-ref-host` is an error (exit code 2).
 > - Passing `--remote-ref-host` without `--allow-remote-refs` is an error (exit code 2).
 > - Hostnames are matched exactly (case-insensitive ASCII); wildcard domains or subdomains are **not** permitted.
-> - Pass a bare hostname such as `schemas.example.com`. A value with a scheme or port (`https://schemas.example.com`, `schemas.example.com:443`) never matches, so nothing is fetched from it.
+> - Pass a bare hostname such as `schemas.example.com`. A value that can never match a `$ref` URL host — with a scheme, port, path, credentials or wildcard (`https://schemas.example.com`, `schemas.example.com:443`, `*.example.com`), or an empty value — is an error (exit code 2).
+> - Non-ASCII hostnames must be given in IDNA form (`xn--bcher-kva.example`, not `bücher.example`). IP literals are compared in canonical form; IPv6 may be written with or without brackets.
 > - Flags `--allow-http` or `--insecure` apply strictly to target API testing, **never** to remote schema retrieval.
 
 ---

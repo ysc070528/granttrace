@@ -76,6 +76,12 @@
 - Report a path item whose remote `$ref` fails as `INCONCLUSIVE`
   (`unresolved_reference`), as documented, instead of a skipped "UNKNOWN"
   method that `--fail-on-error` did not count (#52).
+- Reject `--remote-ref-host` values that can never match a `$ref` URL host:
+  a scheme, port, path, credentials, wildcard, whitespace, non-ASCII
+  characters (use the IDNA form) or an empty value. Such values were accepted
+  and then authorized nothing, so every remote reference failed later as
+  "not in the authorized allowlist". The CLI exits 2 and names the value. IPv6
+  literals are compared in canonical form, with or without brackets.
 - Bound YAML anchor/alias expansion in local specifications, referenced YAML
   files and remote `$ref` documents. A ~1 KB alias "bomb" previously stalled
   parsing for 13 s or more (merge keys inside `yaml.safe_load` itself); aliases

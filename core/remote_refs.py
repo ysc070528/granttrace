@@ -62,6 +62,85 @@ class RemoteRefResolutionError(RemoteRefError):
     """Raised when a remote reference cannot be fetched or resolved."""
 
 
+class InvalidRemoteRefHostError(RemoteRefError):
+    """Raised when an allowlist entry can never equal a remote $ref URL host."""
+
+
+_HOST_LABEL_RE = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
+_MAX_HOST_NAME_LENGTH = 253
+
+
+def _canonical_ip_literal(host: str) -> Optional[str]:
+    """Return the canonical text of an IP literal, or None for a host name."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
+
+
+def normalize_remote_ref_host(value: object) -> str:
+    """Return the allowlist form of a --remote-ref-host value.
+
+    Remote $ref URLs are authorized by exact host. A value that can never be
+    such a host (scheme, port, path, userinfo, wildcard) used to be accepted
+    and then authorize nothing, so it is rejected here. Messages never echo
+    the value: callers decide how to display it safely.
+    """
+    if not isinstance(value, str):
+        raise InvalidRemoteRefHostError("the value must be a string")
+    host = value.strip().lower()
+    if not host:
+        raise InvalidRemoteRefHostError("the value is empty")
+    if any(char.isspace() for char in host):
+        raise InvalidRemoteRefHostError("the value contains whitespace")
+    if any(ord(char) < 32 or ord(char) == 127 for char in host):
+        raise InvalidRemoteRefHostError("the value contains control characters")
+    if not host.isascii():
+        hint = ""
+        try:
+            hint = f"; use the IDNA form '{value.strip().encode('idna').decode('ascii')}'"
+        except UnicodeError:
+            pass
+        raise InvalidRemoteRefHostError(f"the host name must be ASCII{hint}")
+    if "://" in host:
+        raise InvalidRemoteRefHostError(
+            "the value contains a URL scheme; pass only the host name, e.g. 'schemas.example.com'"
+        )
+    if "@" in host:
+        raise InvalidRemoteRefHostError("the value contains credentials ('@'); pass only the host name")
+    if "*" in host:
+        raise InvalidRemoteRefHostError(
+            "wildcards are not supported; repeat --remote-ref-host for each exact host"
+        )
+    if any(char in host for char in "/?#\\"):
+        raise InvalidRemoteRefHostError(
+            "the value contains a path, query or fragment; pass only the host name"
+        )
+    if "[" in host or "]" in host:
+        if host.startswith("[") and "]:" in host:
+            raise InvalidRemoteRefHostError(
+                "the value contains a port; remote $ref URLs must use the default HTTPS port 443"
+            )
+        inner = host[1:-1] if host.startswith("[") and host.endswith("]") else ""
+        address = _canonical_ip_literal(inner) if ":" in inner else None
+        if address is None:
+            raise InvalidRemoteRefHostError("the bracketed value is not a valid IPv6 address")
+        return address
+    address = _canonical_ip_literal(host)
+    if address is not None:
+        return address
+    if ":" in host:
+        raise InvalidRemoteRefHostError(
+            "the value contains a port; remote $ref URLs must use the default HTTPS port 443"
+        )
+    name = host[:-1] if host.endswith(".") else host
+    if len(host) > _MAX_HOST_NAME_LENGTH or not all(
+        _HOST_LABEL_RE.fullmatch(label) for label in name.split(".")
+    ):
+        raise InvalidRemoteRefHostError("the value is not a valid host name")
+    return host
+
+
 # Specific cloud metadata and non-routable IP networks/addresses to block
 _BLOCKED_NETWORKS = (
     ipaddress.ip_network("100.64.0.0/10"),    # Carrier-grade NAT / Shared Address Space (RFC 6598)
@@ -240,7 +319,7 @@ class RemoteRefConfig:
                 "Loopback address resolution cannot be enabled for remote references"
             )
         normalized_hosts = frozenset(
-            h.strip().lower() for h in (remote_ref_hosts or []) if h and h.strip()
+            normalize_remote_ref_host(host) for host in (remote_ref_hosts or [])
         )
         return cls(
             allow_remote_refs=bool(allow_remote_refs),
@@ -531,8 +610,9 @@ class RemoteRefFetcher:
                 f"Non-standard port {port} is forbidden for remote $ref: {clean_url}"
             )
 
-        # Host allowlist exact matching
-        if hostname not in self.config.remote_ref_hosts:
+        # Host allowlist exact matching; IP literals compare in canonical form,
+        # as the allowlist stores them.
+        if (_canonical_ip_literal(hostname) or hostname) not in self.config.remote_ref_hosts:
             raise RemoteRefNotAllowedHostError(
                 f"Remote host '{hostname}' is not in the authorized allowlist "
                 f"{sorted(self.config.remote_ref_hosts)}: {clean_url}"
