@@ -24,7 +24,7 @@ from core.onboarding import (
     display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
 )
 from core.parser import OpenAPIParser
-from core.remote_refs import RemoteRefConfig
+from core.remote_refs import InvalidRemoteRefHostError, RemoteRefConfig, normalize_remote_ref_host
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
@@ -434,6 +434,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.remote_ref_host and not args.allow_remote_refs:
         print("[ERROR] --remote-ref-host requires --allow-remote-refs to be set", file=sys.stderr)
         return 2
+    for host in args.remote_ref_host:
+        try:
+            normalize_remote_ref_host(host)
+        except InvalidRemoteRefHostError as exc:
+            # repr() escapes control and invisible characters in the echoed value.
+            print(f"[ERROR] Invalid --remote-ref-host {host!r}: {exc}", file=sys.stderr)
+            return 2
 
     remote_ref_config = (
         RemoteRefConfig.create(
