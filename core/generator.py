@@ -20,6 +20,17 @@ class SchemaGenerationError(ValueError):
     """The bounded generator cannot construct a demonstrably valid request."""
 
 
+# Python considers True == 1, but JSON Schema does not.
+def _json_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[k], right[k]) for k in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 class SmartDataGenerator:
     PRIVILEGE_KEYS = [
         "is_admin",
@@ -308,21 +319,11 @@ class SmartDataGenerator:
             if selected in schema and not check(value, schema[selected]):
                 return False
 
-        def json_equal(left: Any, right: Any) -> bool:
-            # Python considers True == 1, but JSON Schema does not.
-            if isinstance(left, bool) != isinstance(right, bool):
-                return False
-            if isinstance(left, dict) and isinstance(right, dict):
-                return left.keys() == right.keys() and all(json_equal(left[k], right[k]) for k in left)
-            if isinstance(left, list) and isinstance(right, list):
-                return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right))
-            return left == right
-
-        if "const" in schema and not json_equal(value, schema["const"]):
+        if "const" in schema and not _json_equal(value, schema["const"]):
             return False
 
         enum = schema.get("enum")
-        if enum is not None and (not isinstance(enum, list) or not any(json_equal(value, item) for item in enum)):
+        if enum is not None and (not isinstance(enum, list) or not any(_json_equal(value, item) for item in enum)):
             return False
 
         schema_type = schema.get("type")
@@ -357,125 +358,152 @@ class SmartDataGenerator:
             return False
 
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            if not math.isfinite(value):
+            if not cls._validate_number_value(value, schema):
                 return False
-            minimum = schema.get("minimum")
-            maximum = schema.get("maximum")
-            exclusive_minimum = schema.get("exclusiveMinimum")
-            exclusive_maximum = schema.get("exclusiveMaximum")
-            if minimum is not None:
-                if exclusive_minimum is True and value <= minimum:
-                    return False
-                if exclusive_minimum is not True and value < minimum:
-                    return False
-            if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
-                if value <= exclusive_minimum:
-                    return False
-            if maximum is not None:
-                if exclusive_maximum is True and value >= maximum:
-                    return False
-                if exclusive_maximum is not True and value > maximum:
-                    return False
-            if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
-                if value >= exclusive_maximum:
-                    return False
-            multiple = schema.get("multipleOf")
-            if isinstance(multiple, (int, float)) and multiple > 0:
-                quotient = Fraction(str(value)) / Fraction(str(multiple))
-                if quotient.denominator != 1:
-                    return False
+        if isinstance(value, str) and not cls._validate_string_value(value, schema):
+            return False
+        if isinstance(value, list) and not cls._validate_array_value(value, schema, request=request):
+            return False
+        if isinstance(value, dict) and not cls._validate_object_value(value, schema, request=request):
+            return False
+        return True
 
-        if isinstance(value, str):
-            if len(value) < int(schema.get("minLength", 0)):
+    @classmethod
+    def _validate_number_value(cls, value: Any, schema: Dict[str, Any]) -> bool:
+        """Range and multipleOf constraints of an int or float that is not a bool."""
+        if not math.isfinite(value):
+            return False
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        if minimum is not None:
+            if exclusive_minimum is True and value <= minimum:
                 return False
-            max_length = schema.get("maxLength")
-            if max_length is not None and len(value) > int(max_length):
+            if exclusive_minimum is not True and value < minimum:
                 return False
-            pattern = schema.get("pattern")
-            if pattern:
-                try:
-                    if re.search(str(pattern), value) is None:
+        if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
+            if value <= exclusive_minimum:
+                return False
+        if maximum is not None:
+            if exclusive_maximum is True and value >= maximum:
+                return False
+            if exclusive_maximum is not True and value > maximum:
+                return False
+        if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
+            if value >= exclusive_maximum:
+                return False
+        multiple = schema.get("multipleOf")
+        if isinstance(multiple, (int, float)) and multiple > 0:
+            quotient = Fraction(str(value)) / Fraction(str(multiple))
+            if quotient.denominator != 1:
+                return False
+        return True
+
+    @classmethod
+    def _validate_string_value(cls, value: str, schema: Dict[str, Any]) -> bool:
+        """Length, pattern and format constraints of a string."""
+        if len(value) < int(schema.get("minLength", 0)):
+            return False
+        max_length = schema.get("maxLength")
+        if max_length is not None and len(value) > int(max_length):
+            return False
+        pattern = schema.get("pattern")
+        if pattern:
+            try:
+                if re.search(str(pattern), value) is None:
+                    return False
+            except re.error:
+                return False
+        fmt = str(schema.get("format", "")).lower()
+        if fmt == "uuid":
+            try:
+                uuid.UUID(value)
+            except (ValueError, AttributeError):
+                return False
+        elif fmt == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            return False
+        elif fmt == "date":
+            try:
+                datetime.date.fromisoformat(value)
+            except ValueError:
+                return False
+        elif fmt == "date-time":
+            try:
+                datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+        return True
+
+    @classmethod
+    def _validate_array_value(cls, value: List[Any], schema: Dict[str, Any], *, request: bool) -> bool:
+        """Size, uniqueness, item and contains constraints of an array."""
+        def check(candidate, child):
+            return cls._validate_schema_value(candidate, child, request=request)
+
+        if len(value) < int(schema.get("minItems", 0)):
+            return False
+        max_items = schema.get("maxItems")
+        if max_items is not None and len(value) > int(max_items):
+            return False
+        if schema.get("uniqueItems"):
+            if any(_json_equal(item, previous) for index, item in enumerate(value) for previous in value[:index]):
+                return False
+        prefix = schema.get("prefixItems", [])
+        items = schema.get("items", {})
+        if isinstance(items, list):
+            prefix, items = items, schema.get("additionalItems", {})
+        if not all(check(item, prefix[index] if index < len(prefix) else items) for index, item in enumerate(value)):
+            return False
+        if "contains" in schema:
+            count = sum(check(item, schema["contains"]) for item in value)
+            if count < schema.get("minContains", 1) or count > schema.get("maxContains", math.inf):
+                return False
+        return True
+
+    @classmethod
+    def _validate_object_value(cls, value: Dict[str, Any], schema: Dict[str, Any], *, request: bool) -> bool:
+        """Required, size, property, pattern and dependency constraints of an object."""
+        def check(candidate, child):
+            return cls._validate_schema_value(candidate, child, request=request)
+
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            return False
+        required = schema.get("required", [])
+        for name in required:
+            child = properties.get(name, {})
+            effective = cls._effective_schema(child) if isinstance(child, dict) else {}
+            if request and effective.get("readOnly"):
+                continue
+            if name not in value:
+                return False
+        if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", math.inf):
+            return False
+        patterns = schema.get("patternProperties", {})
+        for name, item in value.items():
+            if "propertyNames" in schema and not check(name, schema["propertyNames"]):
+                return False
+            if name in properties and not check(item, properties[name]):
+                return False
+            matched = [child for pattern, child in patterns.items() if re.search(pattern, name)]
+            if not all(check(item, child) for child in matched):
+                return False
+            if name not in properties and not matched and not check(item, schema.get("additionalProperties", {})):
+                return False
+        for name, dependencies in schema.get("dependentRequired", {}).items():
+            if name in value and not all(key in value for key in dependencies):
+                return False
+        for name, child in schema.get("dependentSchemas", {}).items():
+            if name in value and not check(value, child):
+                return False
+        for name, dependency in schema.get("dependencies", {}).items():
+            if name in value:
+                if isinstance(dependency, list):
+                    if not all(key in value for key in dependency):
                         return False
-                except re.error:
+                elif not check(value, dependency):
                     return False
-            fmt = str(schema.get("format", "")).lower()
-            if fmt == "uuid":
-                try:
-                    uuid.UUID(value)
-                except (ValueError, AttributeError):
-                    return False
-            elif fmt == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
-                return False
-            elif fmt == "date":
-                try:
-                    datetime.date.fromisoformat(value)
-                except ValueError:
-                    return False
-            elif fmt == "date-time":
-                try:
-                    datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-                except ValueError:
-                    return False
-
-        if isinstance(value, list):
-            if len(value) < int(schema.get("minItems", 0)):
-                return False
-            max_items = schema.get("maxItems")
-            if max_items is not None and len(value) > int(max_items):
-                return False
-            if schema.get("uniqueItems"):
-                if any(json_equal(item, previous) for index, item in enumerate(value) for previous in value[:index]):
-                    return False
-            prefix = schema.get("prefixItems", [])
-            items = schema.get("items", {})
-            if isinstance(items, list):
-                prefix, items = items, schema.get("additionalItems", {})
-            if not all(check(item, prefix[index] if index < len(prefix) else items) for index, item in enumerate(value)):
-                return False
-            if "contains" in schema:
-                count = sum(check(item, schema["contains"]) for item in value)
-                if count < schema.get("minContains", 1) or count > schema.get("maxContains", math.inf):
-                    return False
-
-        if isinstance(value, dict):
-            properties = schema.get("properties", {})
-            if not isinstance(properties, dict):
-                return False
-            required = schema.get("required", [])
-            for name in required:
-                child = properties.get(name, {})
-                effective = cls._effective_schema(child) if isinstance(child, dict) else {}
-                if request and effective.get("readOnly"):
-                    continue
-                if name not in value:
-                    return False
-            if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", math.inf):
-                return False
-            patterns = schema.get("patternProperties", {})
-            for name, item in value.items():
-                if "propertyNames" in schema and not check(name, schema["propertyNames"]):
-                    return False
-                if name in properties and not check(item, properties[name]):
-                    return False
-                matched = [child for pattern, child in patterns.items() if re.search(pattern, name)]
-                if not all(check(item, child) for child in matched):
-                    return False
-                if name not in properties and not matched and not check(item, schema.get("additionalProperties", {})):
-                    return False
-            for name, dependencies in schema.get("dependentRequired", {}).items():
-                if name in value and not all(key in value for key in dependencies):
-                    return False
-            for name, child in schema.get("dependentSchemas", {}).items():
-                if name in value and not check(value, child):
-                    return False
-            for name, dependency in schema.get("dependencies", {}).items():
-                if name in value:
-                    if isinstance(dependency, list):
-                        if not all(key in value for key in dependency):
-                            return False
-                    elif not check(value, dependency):
-                        return False
-
         return True
 
     @staticmethod
