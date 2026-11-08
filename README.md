@@ -87,7 +87,7 @@ HTML / JSON 报告保留在当前目录的 `granttrace-demo/` 唯一子目录，
 granttrace --spec your-openapi.yaml --init-config config.local.json
 ```
 
-2. **人工填写并核对**：打开配置和 checklist，填写不同的 Owner / Visitor 测试账户、可丢弃资源与业务授权预期。候选 PATCH 字段和 GET 路径只是接口合同提示；确认所需读回映射，删除不用的读回草稿，替换全部 `__GRANTTRACE_INPUT__:` 占位值，最后移除 `_granttrace_draft`。草稿未完成时会阻止验证、计划与扫描；`write_allowlist` 默认为空。
+2. **人工填写并核对**：打开配置和 checklist，填写不同的 Owner / Visitor 测试账户、可丢弃资源与业务授权预期。GET 必填的 header / cookie 值按发出请求的 Owner、Visitor、Anonymous 分别填写，认证 header / cookie 只按 Owner / Visitor 身份填写。候选 PATCH / PUT 字段和 GET 路径只是接口合同提示；确认所需读回映射，删除不用的读回草稿，替换全部 `__GRANTTRACE_INPUT__:` 占位值，最后移除 `_granttrace_draft`。草稿未完成时会阻止验证、计划与扫描；`write_allowlist` 默认为空。
 
 3. **离线验证配置与规范**，检查终端中的 scope、模式、警告和下一步：
 

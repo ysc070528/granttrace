@@ -88,13 +88,8 @@ class RequestBuilderMixin:
                             if c_name == norm_name:
                                 return True
 
-        auth_cookie_words = (
-            "authorization", "token", "api_key", "apikey", "cookie",
-            "session", "credential", "auth", "jwt", "sid", "secret",
-            "ticket", "pass", "login",
-        )
         normalized = norm_name.replace("-", "_")
-        return any(word in normalized for word in auth_cookie_words)
+        return any(word in normalized for word in ConfigValidator.STANDARD_AUTH_COOKIE_WORDS)
 
     def _validate_identities(self) -> None:
         missing = {"owner", "visitor", "anonymous"} - set(self.identities)

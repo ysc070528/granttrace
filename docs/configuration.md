@@ -14,9 +14,9 @@
 granttrace --spec openapi.json --init-config config.local.json
 ```
 
-生成 `config.local.json` 与 `config.local.checklist.json`，列出账户、资源参数和 PATCH 独立读回待填项。已有文件不会被覆盖，不复制规范里的示例凭据或资源值，不发送请求。`write_allowlist` 默认为空，没有授权任何主动 PATCH。
+生成 `config.local.json` 与 `config.local.checklist.json`，列出账户、资源参数、GET 必填的 header / cookie 值和 PATCH / PUT 独立读回待填项。业务 header / cookie 按发出请求的 Owner、Visitor、Anonymous 各起草一个占位值（各身份相同时可合并到 `common`）；认证 header 起草在 `identities.*.headers`，必填的认证 cookie 起草在 `identities.*.parameters`，只给 Owner / Visitor。可选参数、被忽略的 `Accept` 等声明和不支持的 cookie 形式不起草，checklist 逐项说明原因。已有文件不会被覆盖，不复制规范里的示例凭据或资源值，不发送请求。`write_allowlist` 默认为空，没有授权任何主动 PATCH。
 
-2. **人工核对配置和 checklist**：填写不同的有效 Owner / Visitor 测试凭据、各自可丢弃资源和业务授权预期；工具不会推断资源归属、管理员或团队共享权限、`expected_visitor_access`、`expected_public`。候选写字段和 GET 路径只是 OpenAPI 合同提示，须自行确认读回独立性、`field_map`、一致性与恢复路径。首次只读接入可移除未填写且不用的 `readbacks`，保持 `write_allowlist: []`。替换全部 `__GRANTTRACE_INPUT__:` 占位值，完成审核后才移除 `_granttrace_draft`；未完成的草稿仍会阻止验证、计划与扫描。
+2. **人工核对配置和 checklist**：填写不同的有效 Owner / Visitor 测试凭据、各自可丢弃资源和业务授权预期；工具不会推断资源归属、管理员或团队共享权限、`expected_visitor_access`、`expected_public`。候选写字段和 GET 路径只是 OpenAPI 合同提示，须自行确认读回独立性、`field_map`、一致性与恢复路径；PUT 读回还须返回完整根文档，`field_map` 只能把字段映射到相同路径。首次只读接入可移除未填写且不用的 `readbacks`，保持 `write_allowlist: []`。替换全部 `__GRANTTRACE_INPUT__:` 占位值，完成审核后才移除 `_granttrace_draft`；未完成的草稿仍会阻止验证、计划与扫描。
 
 3. **离线验证配置与选定规范**，不发送请求：
 

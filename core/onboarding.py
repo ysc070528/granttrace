@@ -74,7 +74,7 @@ def init_guidance(spec_path: str, config_path: str, checklist_path: str) -> list
         "[NOTE] Local-only preparation: no requests were sent.",
         "[NEXT] 1. Open the configuration and checklist: " + display_path(checklist_path),
         "[NEXT] 2. Fill Owner / Visitor test identities and real disposable resource values.",
-        "[NEXT] 3. Review BOLA expectations and PATCH readback mappings manually; contract hints are not guarantees.",
+        "[NEXT] 3. Review BOLA expectations and PATCH/PUT readback mappings manually; contract hints are not guarantees.",
         "[NEXT] 4. Replace all __GRANTTRACE_INPUT__: placeholders.",
         "[NEXT] 5. Remove _granttrace_draft only after completing review.",
         "[NEXT] Validate offline:",

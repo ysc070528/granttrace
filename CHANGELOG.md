@@ -23,6 +23,19 @@
   `--remote-ref-host`): exact host allowlist, SSRF and DNS-rebinding defences,
   no redirects, size/count/depth/time limits, and no fetching in offline modes.
   See [docs/remote-references.md](docs/remote-references.md) (#48).
+- `--init-config` drafts the remaining inputs a scan needs, as placeholders
+  that still block validation until replaced. Required GET business headers and
+  cookies get one value per requesting identity (owner, visitor and anonymous)
+  in `parameter_values`; declared authentication headers go to owner's and
+  visitor's `identities.*.headers`, and required authentication cookies to their
+  `identities.*.parameters`. PUT operations get parameter values and a readback
+  draft like PATCH, with the extra PUT rules in the checklist. Optional
+  parameters, ignored headers such as `Accept` and unsupported cookie forms
+  are not drafted, and the checklist says why for each. A draft completed with
+  real values now plans every drafted GET check, where previously its required
+  headers and cookies were missing. The checklist no longer marks parameters of
+  operations GrantTrace does not test, such as DELETE, as included in the
+  draft (#73).
 
 ### Changed
 
