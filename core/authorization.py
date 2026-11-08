@@ -63,11 +63,16 @@ class AuthorizationEvidence:
     @classmethod
     def _evidence(
         cls, owner: HTTPResult, other: HTTPResult, anonymous: HTTPResult,
-        private_data_paths: Iterable[str], other_name: str,
+        private_data_paths: Iterable[str], other_name: str, not_found_is_denial: bool = False,
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         owner_assessment = cls.assess(owner)
         other_assessment = cls.assess(other)
         anonymous_assessment = cls.assess(anonymous)
+        if not_found_is_denial and cls.valid(owner_assessment):
+            # The operation's opt-in: a 404 to the same request hides the object.
+            other_assessment = ResponseDiffEngine.not_found_as_denial(other_assessment, other.body, owner_assessment)
+            anonymous_assessment = ResponseDiffEngine.not_found_as_denial(
+                anonymous_assessment, anonymous.body, owner_assessment)
         paths = () if isinstance(private_data_paths, (str, bytes)) else tuple(private_data_paths)
         owner_values = cls.private_values(owner_assessment["data"], paths)
         other_values = cls.private_values(other_assessment["data"], paths)
@@ -87,6 +92,8 @@ class AuthorizationEvidence:
             },
             "missing_evidence": [],
         }
+        if not_found_is_denial:
+            evidence["not_found_is_denial"] = True  # Recorded only when the operation opts in.
         if not cls.valid(owner_assessment):
             evidence["missing_evidence"].append("owner_baseline")
         if not owner_values:
@@ -102,9 +109,10 @@ class AuthorizationEvidence:
     @classmethod
     def evaluate_auth(
         cls, owner: HTTPResult, anonymous: HTTPResult, *, requires_auth: bool,
-        expected_public: bool = False, private_data_paths: Iterable[str] = (),
+        expected_public: bool = False, private_data_paths: Iterable[str] = (), not_found_is_denial: bool = False,
     ) -> Dict[str, Any]:
-        own, anon, _, evidence = cls._evidence(owner, anonymous, anonymous, private_data_paths, "anonymous")
+        own, anon, _, evidence = cls._evidence(
+            owner, anonymous, anonymous, private_data_paths, "anonymous", not_found_is_denial)
         evidence.update({"requires_auth": requires_auth, "expected_public": expected_public})
         if not own["complete"] or not anon["complete"]:
             return cls._result(Verdict.INCONCLUSIVE, "An authentication response is incomplete or failed transport", evidence)
@@ -134,7 +142,8 @@ class AuthorizationEvidence:
         cls, owner: HTTPResult, visitor: HTTPResult, anonymous: HTTPResult, *,
         role_policy: Mapping[str, Any], private_data_paths: Iterable[str] = (), candidate: bool = False,
     ) -> Dict[str, Any]:
-        own, vis, anon, evidence = cls._evidence(owner, visitor, anonymous, private_data_paths, "visitor")
+        own, vis, anon, evidence = cls._evidence(
+            owner, visitor, anonymous, private_data_paths, "visitor", role_policy.get("not_found_is_denial") is True)
         roles = {key: role_policy.get(key) for key in ("required_role", "owner_role", "visitor_role")}
         evidence.update({"role_policy": roles, "privileged_candidate": candidate})
         if role_policy.get("expected_public") is True and (roles["required_role"] or evidence["private_data_paths"]):
@@ -169,6 +178,7 @@ class AuthorizationEvidence:
     ) -> Dict[str, Any]:
         own, vis, anon, evidence = cls._evidence(
             owner, visitor, anonymous, policy.get("private_data_paths", ()), "visitor",
+            policy.get("not_found_is_denial") is True,
         )
         expected_access = policy.get("expected_visitor_access", "deny")
         expected_public = policy.get("expected_public") is True

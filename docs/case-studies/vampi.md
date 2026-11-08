@@ -13,7 +13,7 @@ the run changed in GrantTrace itself.
 | Date | 2026-11-08 |
 | VAmPI | commit `f16052d`, run from source on `127.0.0.1` (Python 3.11, Flask 2.2.2, connexion 2.14.2) |
 | Modes | vulnerable (`vulnerable=1`, port 5002) and secure (`vulnerable=0`, port 5001) |
-| GrantTrace | 2.6.0 with [#80](https://github.com/ysc070528/granttrace/pull/80) |
+| GrantTrace | 2.6.0 with [#80](https://github.com/ysc070528/granttrace/pull/80) and [#82](https://github.com/ysc070528/granttrace/pull/82) |
 | Specification | VAmPI's own `openapi_specs/openapi3.yml`, unmodified (14 operations) |
 | Scan | read-only; 14 GET requests per mode, no writes |
 
@@ -21,7 +21,9 @@ the run changed in GrantTrace itself.
 
 - GrantTrace **confirmed** VAmPI's broken object level authorization: a
   logged-in user can read another user's book, including its secret. The secure
-  mode produced **no false positive**.
+  mode produced **no false positive**, and with the `not_found_is_denial` opt-in
+  from [#82](https://github.com/ysc070528/granttrace/pull/82) it reports the
+  secure-mode book lookup as `SECURE`.
 - The first run did not confirm it. VAmPI denies anonymous requests with an
   RFC 9457 Problem Details body, which GrantTrace did not recognize as a clean
   denial, so the finding stayed `SUSPICIOUS`. That was fixed in
@@ -36,7 +38,7 @@ the run changed in GrantTrace itself.
 
 | VAmPI vulnerability | Vulnerable mode | Secure mode | Notes |
 |---|---|---|---|
-| Broken Object Level Authorization (`GET /books/v1/{book_title}`) | **`CONFIRMED`** (SARIF `GT-BOLA-001`) | `INCONCLUSIVE` | Found. In secure mode VAmPI answers another user's book with 404, which GrantTrace does not treat as proof of a denial (see [limits](#limits-this-run-showed)). |
+| Broken Object Level Authorization (`GET /books/v1/{book_title}`) | **`CONFIRMED`** (SARIF `GT-BOLA-001`) | `SECURE` with `not_found_is_denial`; `INCONCLUSIVE` without | Found. In secure mode VAmPI answers another user's book with 404, which counts as a denial only with the opt-in (see [the 404 opt-in](#the-404-opt-in)). |
 | Excessive data exposure (`GET /users/v1/_debug`) | `INCONCLUSIVE` | `INCONCLUSIVE` | **Missed.** The endpoint returns every user's password to anyone, in both modes (VAmPI notes that some issues stay in secure mode). Its specification declares it without authentication, so GrantTrace has no documented boundary to test. |
 | Unauthorized password change (`PUT /users/v1/{username}/password`) | `SKIPPED` | `SKIPPED` | Out of scope: writes against external APIs are refused. |
 | Mass assignment (`admin` in `POST /users/v1/register`) | `SKIPPED` | `SKIPPED` | Out of scope: no POST tests, and mass assignment runs only in the built-in demo. |
@@ -55,7 +57,7 @@ other skipped operations have no detector or need writes.
 | `GET /me` | Broken Authentication | `SECURE` | `SECURE` |
 | `GET /users/v1/_debug` | BOLA (collection) | `INCONCLUSIVE` | `INCONCLUSIVE` |
 | `GET /users/v1/_debug` | Broken Authentication | `INCONCLUSIVE`: not applicable, no authentication required by the specification | `INCONCLUSIVE` |
-| `GET /books/v1/{book_title}` | BOLA | **`CONFIRMED`** | `INCONCLUSIVE`: Visitor got 404 |
+| `GET /books/v1/{book_title}` | BOLA | **`CONFIRMED`** | `SECURE`: the Visitor's 404 read as a denial (`not_found_is_denial`) |
 | `GET /books/v1/{book_title}` | Broken Authentication | `SECURE` | `SECURE` |
 | `GET /users/v1/{username}` | BOLA | `PUBLIC` (configured as public) | `PUBLIC` |
 | `POST` / `DELETE` operations (4) | – | `SKIPPED`: no detector | `SKIPPED` |
@@ -64,11 +66,11 @@ other skipped operations have no detector or need writes.
 | Checks (17 per mode) | Vulnerable mode | Secure mode |
 |---|---|---|
 | Confirmed | 1 | 0 |
-| Secure | 2 | 2 |
+| Secure | 2 | 3 |
 | Public | 1 | 1 |
-| Inconclusive | 3 | 4 |
+| Inconclusive | 3 | 3 |
 | Skipped | 10 | 10 |
-| Attempted / conclusive coverage | 28.6% / 14.3% | 28.6% / 7.1% |
+| Attempted / conclusive coverage | 28.6% / 14.3% | 28.6% / 14.3% |
 | HTTP requests sent | 14 | 14 |
 
 Coverage is low by design: four of the 14 operations are POST or DELETE, two
@@ -101,6 +103,9 @@ The first run used the same configuration and the same 14 requests:
 | `GET /books/v1/{book_title}` Broken Authentication, both modes | `INCONCLUSIVE` | `SECURE` |
 | `GET /me` Broken Authentication, both modes | `INCONCLUSIVE` | `SECURE` |
 
+Without `not_found_is_denial`, the secure mode's book BOLA stays
+`INCONCLUSIVE`, as in the first run; see [the 404 opt-in](#the-404-opt-in).
+
 VAmPI is built on connexion, which sends 401 responses as
 `application/problem+json`. GrantTrace accepted a fixed set of denial envelopes:
 the Problem Details members `type` and `title` were not among them, a numeric
@@ -113,13 +118,30 @@ accepts a problem body as a denial only when all of its members are standard,
 its status is 401 or 403, and its text is a denial message; anything else still
 keeps it suspicious.
 
+## The 404 opt-in
+
+Secure VAmPI looks books up by title *and* owner, so another user's book is
+"not found":
+
+```json
+{"status": "fail", "message": "Book not found!"}
+```
+
+By default GrantTrace reports such a 404 as `INCONCLUSIVE`, because a 404 can
+also mean a wrong parameter value.
+[#82](https://github.com/ysc070528/granttrace/pull/82) adds
+`not_found_is_denial` to the operation's `bola` policy for APIs known to hide
+objects this way. A Visitor or Anonymous 404 then counts as a denial only when
+the Owner received a valid response to the same request, the body only says the
+object was not found, and none of the Owner's values appears in it. With it, the
+secure mode's book BOLA is `SECURE` with confidence 0.95, below an explicit 401
+or 403, and the evidence records the setting. The vulnerable mode is unchanged:
+the Visitor gets 200 with the Owner's book, so the finding stays `CONFIRMED`.
+`prepare_config.py` sets the option for this operation because VAmPI's source
+shows the 404 is its secure-mode access check.
+
 ## Limits this run showed
 
-- **A 404 is not treated as a denial.** Secure VAmPI looks up books by title
-  *and* owner, so another user's book is "not found". GrantTrace reports
-  `INCONCLUSIVE` rather than `SECURE`, because a 404 can also mean a wrong
-  parameter value. An opt-in to accept 404 as a denial when the Owner received
-  200 for the same URL would make this case conclusive.
 - **Unauthenticated endpoints are only tested against the specification.**
   `GET /users/v1/_debug` hands every user's password to anyone, but VAmPI's
   specification documents it without authentication, so Broken Authentication
@@ -177,6 +199,7 @@ one book for each, and fills the draft: the tokens, the parameter values for
 both identities, `book_title` as the resource identifier, `secret` as private
 data, `GET /users/v1/{username}` as public (VAmPI shows basic user information
 to everyone), and the Owner's password in `/users/v1/_debug` as private data.
+It also sets `not_found_is_denial` for the book lookup, as described above.
 The configuration holds live tokens; the `.local.json` name keeps it out of
 Git and out of release archives. The launcher raises VAmPI's token lifetime
 from 60 seconds to an hour so that tokens do not expire mid-scan.

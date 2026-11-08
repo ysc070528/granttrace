@@ -108,6 +108,7 @@ class ValidatorBase:
         "required_role",
         "owner_role",
         "visitor_role",
+        "not_found_is_denial",
     }
 
     VALID_CONSISTENCY_VALUES = ("strong", "weak", "eventual")
