@@ -143,6 +143,7 @@ described in [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SEC
 - [Authorization evidence and coverage](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md)
 - [Business scenario acceptance](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md) (Chinese)
 - [Case study: VAmPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/vampi.md): what a scan of a deliberately vulnerable API found and missed
+- [Case study: crAPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/crapi.md): the same for OWASP's microservice API
 - [Verification records](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md)
 
 ## Development

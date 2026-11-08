@@ -1,0 +1,10 @@
+# crAPI 1.1.6 without its chatbot, which needs an LLM API key.
+# crapi-web's nginx resolves the crapi-chatbot host at startup and exits
+# when it is missing, so the Mailhog container answers to that name too.
+# Chatbot routes are then not served; they are not in crAPI's OpenAPI spec.
+services:
+  mailhog:
+    networks:
+      default:
+        aliases:
+          - crapi-chatbot

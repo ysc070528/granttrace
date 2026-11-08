@@ -63,6 +63,15 @@
   details from the whole report. The configuration guide now points to field
   rules for private fields on operations without an authentication
   requirement (#83).
+- A case study of a read-only scan of OWASP crAPI 1.1.6: GrantTrace confirms
+  another user's mechanic report (challenge 2), the order lookup without
+  authentication (challenge 14), an administrator user list any user can read,
+  and, with BOPLA field rules, post authors' email addresses and vehicle IDs
+  (challenge 4). Challenge 1 stays `SUSPICIOUS` because crAPI's identity service
+  answers requests without a token with a Java `toString()` instead of JSON.
+  `examples/crapi/` holds the setup script and a Compose override that runs
+  crAPI without its chatbot. See
+  [docs/case-studies/crapi.md](docs/case-studies/crapi.md) (#85).
 
 ### Changed
 
