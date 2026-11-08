@@ -72,6 +72,11 @@
   `examples/crapi/` holds the setup script and a Compose override that runs
   crAPI without its chatbot. See
   [docs/case-studies/crapi.md](docs/case-studies/crapi.md) (#85).
+- A comparison of GrantTrace's approach with Autorize, AuthMatrix, ZAP's Access
+  Control Testing add-on and Akto, from their documentation: where requests come
+  from, what is expected, how a result is decided, and when another tool fits
+  better. It compares approaches, not detection rates. See
+  [docs/comparison.md](docs/comparison.md) (#86).
 
 ### Changed
 

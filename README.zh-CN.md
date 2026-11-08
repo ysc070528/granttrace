@@ -119,6 +119,7 @@ GrantTrace 自身的漏洞请按 [SECURITY.md](https://github.com/ysc070528/gran
 - [业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md)
 - [实测案例：VAmPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/vampi.md)（英文）：扫描一个故意含漏洞的 API，发现了什么、漏掉了什么
 - [实测案例：crAPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/crapi.md)（英文）：OWASP 的微服务靶场 API
+- [与同类工具的对比](https://github.com/ysc070528/granttrace/blob/main/docs/comparison.md)（英文）：Autorize、AuthMatrix、ZAP、Akto
 - [验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md)（英文）
 
 ## 开发
