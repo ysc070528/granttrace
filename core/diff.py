@@ -65,9 +65,11 @@ class ResponseDiffEngine:
     # Full-message grammar only: a denial prefix must not conceal a reflected
     # credential, business value, or an unknown explanatory suffix.
     AUTH_DENIAL_PATTERNS = (
-        r"(?:(?:jwt|bearer|access|authentication|auth) )?token (?:is |was |has )?"
+        r"(?:(?:jwt|bearer|access|authentication|authorization|auth) )?token (?:is |was |has )?"
         r"(?:required|missing|invalid|expired|not provided|not valid|not found)",
-        r"(?:missing|invalid|expired) (?:(?:jwt|bearer|access|authentication|auth) )?token",
+        r"(?:missing|invalid|expired) (?:(?:jwt|bearer|access|authentication|authorization|auth) )?token",
+        r"no (?:(?:jwt|bearer|access|authentication|authorization|auth) )?token (?:was |is )?"
+        r"(?:provided|supplied|given|found|sent)",
         r"jwt (?:is |has )?(?:required|missing|invalid|expired)",
         r"(?:jwt|token|jwt token) (?:signature )?(?:verification|validation) failed",
         r"authentication (?:is )?(?:required|failed)",
@@ -126,6 +128,18 @@ class ResponseDiffEngine:
         "reason",
     }
     RESPONSE_WRAPPER_KEYS = {"payload", "result", "response", "data", "error", "errors"}
+    TRACING_KEYS = frozenset({"timestamp", "request_id", "requestid", "trace_id", "traceid"})
+    # RFC 9457 (formerly RFC 7807) Problem Details members. A problem body is a
+    # clean denial only when each member is one of these and carries a denial.
+    # `instance` is excluded: without the request target, a URI reference
+    # naming another user's resource cannot be told from the requested one.
+    PROBLEM_DETAILS_MEMBERS = frozenset({"type", "title", "status", "detail"})
+    # A problem type naming an HTTP status section, as ASP.NET Core emits;
+    # any other type URI may identify an application resource.
+    PROBLEM_STATUS_TYPE_URI = re.compile(
+        r"https?://(?:tools\.ietf\.org/html/|datatracker\.ietf\.org/doc/html/|www\.rfc-editor\.org/rfc/)"
+        r"rfc(?:7231|7235|9110)(?:\.html)?#section-[0-9.]+"
+    )
     METADATA_CONTAINER_KEYS = {"meta", "metadata", "request", "query", "params", "headers", "trace"}
 
     # Kept for callers that introspect the old constant. Detection itself is recursive.
@@ -411,12 +425,13 @@ class ResponseDiffEngine:
             return cls._is_auth_denial_message(body)
         if isinstance(data, str):
             return cls._is_auth_denial_message(data)
+        if cls._is_problem_details_denial(data):
+            return True
 
         def clean(value: Any, key: str = "") -> bool:
             known_keys = (
                 cls.RESPONSE_WRAPPER_KEYS | cls.CODE_KEYS | cls.MESSAGE_KEYS
-                | cls.ERROR_VALUE_KEYS | {"success", "meta", "metadata", "timestamp",
-                                          "request_id", "requestid", "trace_id", "traceid"}
+                | cls.ERROR_VALUE_KEYS | {"success", "meta", "metadata"} | cls.TRACING_KEYS
             )
             if key and key not in known_keys:
                 return False
@@ -425,7 +440,7 @@ class ResponseDiffEngine:
                     return False
                 if key in {"meta", "metadata"}:
                     return all(
-                        cls.normalise_key(raw) in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}
+                        cls.normalise_key(raw) in cls.TRACING_KEYS
                         and clean(child, cls.normalise_key(raw))
                         for raw, child in value.items()
                     )
@@ -434,10 +449,12 @@ class ResponseDiffEngine:
                 return key in cls.RESPONSE_WRAPPER_KEYS and all(clean(child) for child in value)
             if value is None or value == "":
                 return True
-            if key in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}:
+            if key in cls.TRACING_KEYS:
                 return cls._tracing_scalar_is_clean(key, value)
             if key in cls.CODE_KEYS:
                 return isinstance(value, (int, str)) and value in cls.AUTH_ERROR_CODES
+            if key == "status" and type(value) in (int, str) and value in cls.AUTH_ERROR_CODES:
+                return True  # A numeric 401 / 403 status; textual statuses are checked below.
             if key == "success":
                 return value in (False, 0, "0", "false")
             if key in cls.MESSAGE_KEYS or key in cls.ERROR_VALUE_KEYS:
@@ -447,6 +464,35 @@ class ResponseDiffEngine:
             return False
 
         return clean(data)
+
+    @classmethod
+    def _is_problem_details_denial(cls, data: Any) -> bool:
+        """Recognize an RFC 9457 problem body that only states a 401 / 403 denial.
+
+        Every member must be `type`, `title`, `status`, `detail` or a tracing
+        field: an extension member, an `instance`, a nested value or
+        explanatory text may carry data.
+        """
+        if not isinstance(data, dict) or not data:
+            return False
+        keys = [cls.normalise_key(raw) for raw in data]
+        if not {"type", "title"} & set(keys):
+            return False  # Not a problem document; the ordinary envelope rules apply.
+        for key, value in zip(keys, data.values()):
+            if key not in cls.PROBLEM_DETAILS_MEMBERS | cls.TRACING_KEYS:
+                return False  # An extension member may carry application data.
+            if key in cls.TRACING_KEYS:
+                accepted = cls._tracing_scalar_is_clean(key, value)
+            elif key == "status":
+                accepted = type(value) in (int, str) and value in cls.AUTH_ERROR_CODES
+            elif key == "type":
+                accepted = isinstance(value, str) and (
+                    value == "about:blank" or cls.PROBLEM_STATUS_TYPE_URI.fullmatch(value) is not None)
+            else:  # title, detail
+                accepted = cls._is_auth_denial_message(value)
+            if not accepted:
+                return False
+        return True
 
     @classmethod
     def _extract_keys(cls, obj: Any) -> Set[str]:
