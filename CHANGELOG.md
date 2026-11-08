@@ -85,10 +85,10 @@
 ### Fixed
 
 - Recognize RFC 9457 (RFC 7807) Problem Details bodies as clean 401/403 denials.
-  Frameworks such as connexion, ASP.NET Core and Spring send
-  `application/problem+json`, for example `{"type": "about:blank", "title":
-  "Unauthorized", "status": 401, "detail": "No authorization token provided"}`.
-  GrantTrace treated these members as possible business data, so a scan of
+  connexion sends them as `application/problem+json`, for example `{"type":
+  "about:blank", "title": "Unauthorized", "status": 401, "detail": "No
+  authorization token provided"}`, and ASP.NET Core and Spring can be configured
+  to. GrantTrace treated these members as possible business data, so a scan of
   VAmPI, a deliberately vulnerable API, reported its book BOLA as `SUSPICIOUS`
   instead of `CONFIRMED`, and Broken Authentication on its protected reads as
   `INCONCLUSIVE` instead of `SECURE`: the anonymous denial could not serve as a

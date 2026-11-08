@@ -1,7 +1,7 @@
 """RFC 9457 (RFC 7807) Problem Details bodies are recognized as clean denials.
 
-Frameworks such as connexion, ASP.NET Core and Spring return 401 and 403 as
-application/problem+json. A run against VAmPI, a deliberately vulnerable API,
+connexion returns 401 and 403 as application/problem+json, and ASP.NET Core
+and Spring can be configured to. A run against VAmPI, a deliberately vulnerable API,
 missed its BOLA: the Visitor read the Owner's book, but the Anonymous 401 body
 {"type": "about:blank", "title": "Unauthorized", "status": 401, "detail": "No
 authorization token provided"} was treated as possible business data, so the
