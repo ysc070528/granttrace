@@ -54,6 +54,15 @@
   confidence 0.95, below an explicit 401 or 403, and the evidence records the
   setting. Secure-mode VAmPI's book lookup now reports `SECURE` instead of
   `INCONCLUSIVE` (#82).
+- The VAmPI case study confirms the debug endpoint's password exposure with a
+  BOPLA field rule: the Owner's password in `/users/v1/_debug` may be read by
+  the Owner only, although the specification leaves the endpoint open, so both
+  the Visitor and Anonymous results are `CONFIRMED` (`GT-BOPLA-001`) in both
+  modes. `examples/vampi/prepare_config.py --debug-field-rule` writes the rule;
+  it runs as a separate scan because BOPLA's privacy boundary omits response
+  details from the whole report. The configuration guide now points to field
+  rules for private fields on operations without an authentication
+  requirement (#83).
 
 ### Changed
 
