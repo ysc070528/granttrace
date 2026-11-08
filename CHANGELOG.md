@@ -72,6 +72,16 @@
 
 ### Fixed
 
+- Refuse checks of operations that send a credential in the query string, before
+  any request. Each URL is built from the resource owner's parameter values and
+  sent by every identity, so an `apiKey` scheme `in: query` (or the RFC 6750
+  `access_token` parameter) made the visitor and anonymous requests carry the
+  owner's key: against a correctly secured API they appeared to read the owner's
+  resource, giving false `SUSPICIOUS` or `CONFIRMED` results. Such checks are now
+  `INCONCLUSIVE` (`invalid_input`) with a reason saying query-string credentials
+  are not supported, and `--init-config` no longer drafts them as resource
+  parameters. Ordinary query parameters, including names such as `page_token`,
+  are unaffected (#75).
 - Stop refusing GET checks over an optional authentication header that neither
   owner nor visitor configures. A header parameter classified as authentication
   (for example `X-Session-Id`, or an API-key scheme's header) blocked the check

@@ -67,6 +67,15 @@ class RequestBuilderMixin:
             if scheme.get("in") == "header" and scheme.get("name")
         }
 
+    def _is_auth_query_parameter(self, name: str) -> bool:
+        """Whether a query parameter carries credentials: an apiKey scheme's name, or access_token."""
+        lowered = name.lower()
+        return lowered in ConfigValidator.STANDARD_AUTH_QUERY_PARAMETERS or any(
+            scheme.get("in") == "query" and isinstance(scheme.get("name"), str)
+            and scheme["name"].lower() == lowered
+            for scheme in self.parser.get_security_schemes().values()
+        )
+
     def _spec_auth_cookie_names(self) -> Set[str]:
         return {
             scheme["name"].lower()
@@ -531,6 +540,16 @@ class RequestBuilderMixin:
                     continue  # Authentication comes only from the actual requester.
             if location not in {"path", "query", "header", "cookie"}:
                 raise ParameterSerializationError("Unsupported parameter location; no request was sent")
+            if location == "query" and isinstance(name, str) and self._is_auth_query_parameter(name):
+                # One URL, built from the resource owner's values, is sent by
+                # several identities: the visitor and anonymous would send the
+                # owner's credential and appear authorized.
+                raise ParameterSerializationError(
+                    f"Query parameter '{name}' carries authentication; each URL is built from the resource "
+                    "owner's parameter values and sent by every identity, so the visitor and anonymous requests "
+                    "would carry the owner's credential. API keys in the query string are not supported; "
+                    "no request was sent"
+                )
             if swagger2 and location == "cookie":
                 raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
             if location in {"header", "cookie"} and str(ep.get("method", "")).upper() != "GET":

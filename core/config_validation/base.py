@@ -116,6 +116,9 @@ class ValidatorBase:
     STANDARD_AUTH_COOKIE_WORDS = STANDARD_AUTH_HEADER_WORDS + (
         "auth", "jwt", "sid", "secret", "ticket", "pass", "login",
     )
+    # Query parameters that carry credentials without an apiKey scheme declaring
+    # them: RFC 6750 section 2.3 sends bearer tokens as access_token.
+    STANDARD_AUTH_QUERY_PARAMETERS = ("access_token",)
 
     @classmethod
     def _find_closest_match(cls, word: str, candidates: Sequence[str]) -> Optional[str]:
