@@ -44,6 +44,28 @@ class IdentityChecks(ValidatorBase):
             )
 
         for identity_name, identity_data in identities.items():
+            if identity_name == "roles":
+                if not isinstance(identity_data, dict):
+                    issues.append(
+                        ConfigIssue(
+                            path="identities.roles",
+                            message="'identities.roles' must be an object of roles",
+                            expected="dict / JSON object",
+                            actual=safe_diagnostic_value(identity_data),
+                        )
+                    )
+                else:
+                    for role_name, role_info in identity_data.items():
+                        if not isinstance(role_info, dict):
+                            issues.append(
+                                ConfigIssue(
+                                    path=f"identities.roles.{role_name}",
+                                    message=f"Role '{role_name}' must be an object",
+                                    expected="dict / JSON object",
+                                    actual=safe_diagnostic_value(role_info),
+                                )
+                            )
+                continue
             if identity_name not in expected_identities:
                 closest = cls._find_closest_match(str(identity_name), sorted(expected_identities))
                 suggestion = f"Did you mean '{closest}'?" if closest else None

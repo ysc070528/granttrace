@@ -48,7 +48,10 @@ granttrace demo
 
 ## 为什么是 GrantTrace / Why GrantTrace
 
-- **Compare identities**：比较 Owner / Visitor / Anonymous 等身份访问同一资源的结果。
+- **Compare identities**：比较 Owner / Visitor / Anonymous 等多身份访问同一资源的结果，精准捕获 BOLA / IDOR / BFLA 逻辑漏洞。
+- **Support Read-Only POST**：全面支持微服务与 RPC-over-HTTP 架构中常见的只读 POST 接口越权审计，未声明只读的写入操作继续安全跳过。
+- **Heuristic BOPLA Discovery**：自动挖掘未脱敏过度暴露的敏感属性（电话、薪资、秘钥凭证等）。
+- **Multi-Role RBAC Matrix**：一键生成角色权限访问矩阵图，低权限角色越权与隔离边界一目了然。
 - **Verify real side effects**：内部演示将读回与自己持有的实际数据库核对；普通 GET、HTTP 200 或一致性声明不构成权威实际状态证据。
 - **Restore safely**：内部主动测试使用显式 allowlist、完整原始快照及权威恢复核验；恢复失败或无法核验时停止该 auditor 后续写入。
 

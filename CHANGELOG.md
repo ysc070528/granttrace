@@ -4,6 +4,15 @@
 
 ### Added
 
+- Read-only POST BOLA auditing: operations configured with explicit `read_only: true`
+  and a request `body` now execute cross-identity BOLA comparison using POST transport.
+  Unconfigured or state-modifying POST operations remain safely skipped without sending writes.
+- Heuristic BOPLA sensitive property exposure detection (OWASP API3:2023): detects
+  unmasked sensitive properties (such as phone, salary, credentials, and identity IDs)
+  exposed to unauthorized visitors when `detect_sensitive_exposure: true` is configured.
+- Multi-role RBAC access matrix: supports optional `identities.roles` definitions to
+  audit access permissions across multiple user roles concurrently, detecting privilege
+  violations against `required_role` and rendering an interactive RBAC matrix table in the HTML report.
 - Read-only Broken Authentication (CWE-306, SARIF `GT-AUTH-001`) and Broken
   Function Level Authorization (CWE-285, `GT-BFLA-001`) checks, and private-data
   checks for collection endpoints (CWE-639). Confirmation requires explicitly

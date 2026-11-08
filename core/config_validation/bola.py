@@ -187,3 +187,37 @@ class BolaChecks(ValidatorBase):
                             actual=safe_diagnostic_value(role),
                         )
                     )
+
+            if "read_only" in policy and not isinstance(policy["read_only"], bool):
+                issues.append(
+                    ConfigIssue(
+                        path=f"bola.{ep_key}.read_only",
+                        message="'read_only' must be a boolean",
+                        expected="boolean",
+                        actual=safe_diagnostic_value(policy["read_only"]),
+                    )
+                )
+
+            if "body" in policy:
+                body_val = policy["body"]
+                if not isinstance(body_val, (dict, list, str, int, float, bool)):
+                    issues.append(
+                        ConfigIssue(
+                            path=f"bola.{ep_key}.body",
+                            message="'body' must be a JSON-serializable object or value",
+                            expected="JSON-serializable object / dict",
+                            actual=safe_diagnostic_value(body_val),
+                        )
+                    )
+
+            if is_valid and method == "POST" and not policy.get("read_only"):
+                issues.append(
+                    ConfigIssue(
+                        path=f"bola.{ep_key}.read_only",
+                        message="POST operation in BOLA policy should declare 'read_only: true' to be audited; otherwise it will be skipped for safety",
+                        expected="read_only: true",
+                        actual=safe_diagnostic_value(policy.get("read_only")),
+                        suggestion="Add '\"read_only\": true' to this BOLA policy",
+                        is_warning=True,
+                    )
+                )

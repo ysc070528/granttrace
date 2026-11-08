@@ -301,6 +301,7 @@ class SecurityReportGenerator:
         results: Optional[List[Dict[str, Any]]] = None,
         reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
         secret_values: Iterable[str] = (),
+        rbac_matrix: Optional[Dict[str, Any]] = None,
     ) -> None:
         with PROPERTY_EVIDENCE_LOCK:
             stats = dict(stats)
@@ -329,10 +330,11 @@ class SecurityReportGenerator:
         warning_html = cls._scope_warnings_html(stats)
         results_html = cls._results_html(results)
         findings_html = cls._findings_html(findings, reproduction_templates)
+        rbac_html = cls._rbac_matrix_html(rbac_matrix)
         document = cls._render_document(
             target_url=target_url, generated_at=generated_at, results=results, findings=findings,
             cards_html=cards_html, accounting_html=accounting_html, warning_html=warning_html,
-            results_html=results_html, findings_html=findings_html,
+            results_html=results_html, findings_html=findings_html, rbac_html=rbac_html,
         )
         with open(output_path, "w", encoding="utf-8", newline="") as handle:
             handle.write(document)
@@ -518,6 +520,43 @@ class SecurityReportGenerator:
         return findings_html
 
     @classmethod
+    def _rbac_matrix_html(cls, rbac_matrix: Optional[Dict[str, Any]]) -> str:
+        if not rbac_matrix or not isinstance(rbac_matrix, dict):
+            return ""
+        all_roles = []
+        for ep_data in rbac_matrix.values():
+            for r_name in ep_data.get("roles", {}):
+                if r_name not in all_roles:
+                    all_roles.append(r_name)
+        if not all_roles:
+            return ""
+        role_headers = "".join(f"<th>{cls._escape(r.upper())}</th>" for r in all_roles)
+        rows = []
+        for ep_key, ep_data in sorted(rbac_matrix.items()):
+            cells = []
+            for r_name in all_roles:
+                r_info = ep_data.get("roles", {}).get(r_name, {})
+                access = r_info.get("access", "N/A")
+                color = "#16a34a" if access == "ALLOWED" else "#dc2626" if access == "VIOLATION" else "#64748b"
+                status = r_info.get("status", "")
+                badge = f'<span class="pill" style="background:{color}">{cls._escape(access)}</span>'
+                if status:
+                    badge += f" <small>({status})</small>"
+                cells.append(f"<td>{badge}</td>")
+            rows.append(f"<tr><td><code>{cls._escape(ep_key)}</code></td>{''.join(cells)}</tr>")
+        return f"""
+        <section class="card" style="margin-top: 24px;">
+            <h2>Role-Based Access Control (RBAC) Matrix</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead><tr><th>Endpoint</th>{role_headers}</tr></thead>
+                    <tbody>{"".join(rows)}</tbody>
+                </table>
+            </div>
+        </section>
+        """
+
+    @classmethod
     def _render_document(
         cls,
         *,
@@ -530,6 +569,7 @@ class SecurityReportGenerator:
         warning_html: str,
         results_html: str,
         findings_html: str,
+        rbac_html: str = "",
     ) -> str:
         """The complete HTML page around the rendered sections."""
         status_options = "".join(

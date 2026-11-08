@@ -214,3 +214,60 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
    - **退出码 0**：当前配置检查通过；有 warning 也保留此成功退出码，应人工阅读警告；
    - **退出码 2**：配置存在非法字段或语义冲突，一次性输出所有违规字段路径、预期值与实际值。
    > **注意**：正常扫描加载配置时，CLI 也会在初始化阶段调用同款校验逻辑；配置非法则拒绝启动（退出码 2）。离线检查成功不能证明业务授权策略正确，也不授权写测试。原有字段含义、草稿阻断和验证判定保持不变。
+
+## v2.7.0 扩展检测能力配置
+
+### 1. 只读 POST 接口 BOLA 审计
+
+针对企业微服务与 RPC-over-HTTP 中常见的只读 POST 查询接口（如 `POST /orders/query`），在 `bola` 中显式声明 `read_only: true` 并提供请求体 `body`：
+
+```json
+{
+  "bola": {
+    "POST /api/documents/query": {
+      "read_only": true,
+      "body": {
+        "owner": {"doc_id": "doc_owner_1001"},
+        "visitor": {"doc_id": "doc_owner_1001"},
+        "visitor_self": {"doc_id": "doc_visitor_2002"}
+      }
+    }
+  }
+}
+```
+
+未显式声明 `read_only: true` 的未知 POST 操作仍保持安全跳过（`SKIPPED`），绝不盲目发起写请求。
+
+### 2. BOPLA 敏感对象属性过度暴露（API3:2023）启发式挖掘
+
+在操作配置中添加 `"detect_sensitive_exposure": true`。审计引擎会自动分析响应数据，比对未授权 Visitor 接收到的数据中是否包含未脱敏的 Owner 私密属性（如未掩码的 `phone`, `salary`, `id_card`, `secret` 等）：
+
+```json
+{
+  "bola": {
+    "GET /api/user/profile": {
+      "expected_visitor_access": "deny",
+      "detect_sensitive_exposure": true
+    }
+  }
+}
+```
+
+### 3. 多角色 RBAC 权限矩阵（Role-Based Access Control Matrix）
+
+在 `identities` 节中通过 `roles` 定义多个命名角色（如管理员、审计员、普通访客），工具将自动对端点进行多角色并发审计，并在 HTML 报告与 JSON 结果中生成直观的 RBAC 权限矩阵视图：
+
+```json
+{
+  "identities": {
+    "owner": {"token": "Bearer admin_tok"},
+    "visitor": {"token": "Bearer viewer_tok"},
+    "anonymous": {},
+    "roles": {
+      "administrator": {"token": "Bearer admin_tok", "role": "administrator"},
+      "operator": {"token": "Bearer op_tok", "role": "operator"},
+      "viewer": {"token": "Bearer view_tok", "role": "viewer"}
+    }
+  }
+}
+```

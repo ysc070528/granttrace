@@ -671,6 +671,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
     )
     report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
                      sanitize_url(args.target, secret_values=auditor.secret_values()))
+    report_rbac = getattr(auditor, "rbac_matrix", None)
     SecurityReportGenerator.generate(
         stats=report_stats,
         findings=report_findings,
@@ -679,23 +680,27 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
         output_path=args.output,
         reproduction_templates=reproduction_templates,
         secret_values=auditor.secret_values(),
+        rbac_matrix=report_rbac,
     )
     print(f"[OK] HTML report: {args.output}")
 
     if args.export_json:
         _ensure_parent(args.export_json)
         with open(args.export_json, "w", encoding="utf-8") as handle:
+            json_payload = {
+                "tool_version": __version__,
+                "report_schema_version": 2,
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "elapsed_seconds": round(elapsed, 3),
+                "target": report_target,
+                "stats": report_stats,
+                "results": report_results,
+                "findings": report_findings,
+            }
+            if report_rbac:
+                json_payload["rbac_matrix"] = report_rbac
             json.dump(
-                {
-                    "tool_version": __version__,
-                    "report_schema_version": 2,
-                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "elapsed_seconds": round(elapsed, 3),
-                    "target": report_target,
-                    "stats": report_stats,
-                    "results": report_results,
-                    "findings": report_findings,
-                },
+                json_payload,
                 handle,
                 indent=2,
                 ensure_ascii=False,

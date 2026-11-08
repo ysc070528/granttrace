@@ -108,6 +108,9 @@ class ValidatorBase:
         "required_role",
         "owner_role",
         "visitor_role",
+        "read_only",
+        "body",
+        "detect_sensitive_exposure",
     }
 
     VALID_CONSISTENCY_VALUES = ("strong", "weak", "eventual")
