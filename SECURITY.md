@@ -3,15 +3,20 @@
 GrantTrace sends requests to the target named on the command line. Use it
 only against systems for which you have explicit authorization.
 
-The default mode does not execute mutation checks. `--allow-write-tests`
-enables state-changing PATCH requests and must be limited to disposable test
-data. Every operation must be present in an explicit write allowlist. POST and
-PUT are not mutated automatically because generic compensation and full-state
-restoration cannot be inferred safely. Active checks require a JSON request
-schema plus a configured GET readback endpoint and explicit field mapping. When a
-change is observed, the scanner attempts to restore the original value and
-verifies the restoration. A rollback failure is reported as an error and must
-be investigated immediately.
+The default mode does not execute mutation checks. Since 2.6.0, write checks
+against a target named on the command line also stop before any write: GrantTrace
+cannot independently verify an external API's authoritative resource state, so
+even with `--allow-write-tests`, an explicit write allowlist, readback mappings
+and `consistency: "strong"`, allowlisted PATCH and PUT checks are reported as
+`INCONCLUSIVE` (`unverified_state_authority`) and send nothing. The built-in demo,
+which owns its data, is the only place the full flow runs. POST and DELETE are
+never sent as tests.
+
+Where the flow does run, every operation must be in the explicit write
+allowlist, and active checks require a JSON request schema plus a configured GET
+readback endpoint and explicit field mapping. When a change is observed, the
+scanner attempts to restore the original value and verifies the restoration. A
+rollback failure is reported as an error and must be investigated immediately.
 
 Since version 2.2, GrantTrace snapshots complete written containers and arrays, using observed
 business values instead of generated examples. Every possibly committed mutation

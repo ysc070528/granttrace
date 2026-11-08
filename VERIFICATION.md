@@ -3,9 +3,58 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
-## v2.6.0 release preparation - 2026-11-08
+## v2.6.0 pre-release acceptance - 2026-11-08
 
-Status: **local validation passed; v2.6.0 is not published.** On 2026-11-08 the
+Status: **accepted for release; v2.6.0 is not published.** Release candidate:
+commit `96255c3` (head of PR #87: main `2ce7093` plus documentation and package
+metadata only); the commit after it adds only this record. PRs #78 to #87 merged
+after the [first preparation round](#v260-release-preparation-first-round---2026-11-08).
+PR #84 (2.7.0 features) is not part of this release.
+
+Environment: Linux x86_64 container; CPython **3.13.18** for coverage, linting,
+acceptance scripts and the build, plus CPython **3.9.25** and **3.14.6**; PyYAML
+**6.0.3**, pytest **9.2.0** (**8.4.2** on 3.9), coverage **7.17.2**, Ruff
+**0.17.4**, Mypy **2.4.1**, build **1.6.1**, Twine **7.0.0**, setuptools
+**84.2.1**, wheel **0.48.0**; Docker **29.9.2** for crAPI. The Windows package was
+built and checked by the GitHub-hosted `windows-2025` runner; no Windows host was
+used locally.
+
+| Check | Result |
+|---|---|
+| CI on the candidate | 9 of 9 passed: Ruff, Mypy, tests on 3.9 / 3.12 / 3.14, runtime dependency audit, Windows x64 portable, Analyze Python, CodeQL |
+| Full regression suite | 1249 passed and 2336 subtests passed on CPython 3.13.18 and 3.14.6; 1249 passed on 3.9.25; full unittest passed |
+| Branch-aware coverage | 89.77% combined (statements 6821 / 7436, branches 3219 / 3748 = 85.89%); required minimum 80% |
+| Acceptance scripts | PR42 adversarial; PR43 integration (89 tests, pinned method hashes, source `96255c3`, clean tree); authorization coverage, authoritative and generic HTTP; business scenarios 6 / 6; JSON / YAML examples |
+| Wheel / sdist | Isolated `python -m build`; `twine check --strict` passed for both. Wheel: 43 files, no caches or tests. Sdist: 191 files including `CODE_OF_CONDUCT.md`, `examples/` and the case-study helpers, and no local configurations, build output or caches. Metadata: `Version: 2.6.0`, the new `Summary`, `Requires-Python: >=3.9`, `Requires-Dist: PyYAML>=6.0` |
+| Clean installations | The wheel in new virtual environments on CPython 3.9.25, 3.13.18 and 3.14.6, and the sdist on 3.13.18, each outside the checkout: `granttrace --version` prints `GrantTrace 2.6.0` and `core` loads from `site-packages`; `granttrace demo` exits 0 with BOLA and mass assignment confirmed, 100% conclusive coverage, 21 requests, rollback verified, the database restored and the server stopped. `scripts/verify_install.py --wheel` passed on the built wheel: versions consistent, 0 PATCH in read-only and external active scans, 0 requests for the offline plan |
+| README development flow | `python mock_server/server.py` and a scan with `config.example.json`: exit 0, BOLA confirmed, 11 requests |
+| Version consistency | `pyproject.toml`, `core.__version__`, CLI, HTML and JSON reports, the schema fetcher's User-Agent, the Windows launcher and README, the Windows build and verification scripts, and the publishing workflow's choices all say 2.6.0. PyPI's latest is 2.5.3; there is no `v2.6.0` tag or Release yet |
+| Windows x64 portable | Built from `96255c3` (clean tree) in [run 42484093708](https://github.com/ysc070528/granttrace/actions/runs/42484093708) on Windows Server 2025 with Python 3.14.5 and PyInstaller 6.22.3: `GrantTrace-v2.6.0-Windows-x64.zip`, 10,722,272 bytes, SHA256 `1fd1b032f4c18ec8bf8ed7b72d1ae3c57f55d672d7201c0a972bcd4947bac8b2`. `scripts/verify_windows_portable.py` passed: extraction to paths with spaces and Chinese characters outside the checkout, no Python on the child PATH, `--version` and `--help`, active and read-only demos, an offline YAML plan with 0 requests, `Start-Demo.bat`, the loopback port closed and no package process left. The artifact host was not reachable from this environment, so the ZIP was not downloaded and rehashed here, and no one double-clicked it on a clean Windows machine |
+| VAmPI regression | Vulnerable and secure modes, standard and field-rule scans: every verdict and SARIF result matches the [case study](docs/case-studies/vampi.md); 14 requests per scan |
+| crAPI regression | Standard and field-rule scans: every verdict and SARIF result matches the [case study](docs/case-studies/crapi.md); 43 requests per scan; the gateway log shows GrantTrace sent only GET |
+| Secrets | A pattern scan of all 190 tracked files found no keys, tokens or JWTs; the only match is a dummy private-key marker in a redaction test. Example configurations use placeholders; the crAPI helper contains crAPI's own published lab administrator login. GitHub secret scanning is not enabled for the repository |
+| Documentation | Relative links, anchors and links to this repository: 0 problems. Capability statements corrected in #87 |
+
+Local candidate hashes, built from `96255c3` in the container:
+
+```text
+29914dbab1236e2c40b8c2a96e5200178b02d12268c0ca70c5dbb612f657145a  granttrace-2.6.0-py3-none-any.whl
+697cfb8872f5c98b2fef02d5ae7ac1ea5101df1fdf7f2f2d44c269dbe6fb3baa  granttrace-2.6.0.tar.gz
+```
+
+The publishing workflow builds the uploaded distributions from the tag. The
+Release's Windows ZIP and `SHA256SUMS.txt` come from the Windows workflow run on
+the release commit itself; their hashes differ from the candidate above because
+the build records its source commit.
+
+Still to do: CI on the merge commit, then the tag, the GitHub Release with the
+Windows assets, PyPI publishing and the post-release checks in the
+[release checklist](docs/release-checklist.md), including a clean Windows machine.
+
+## v2.6.0 release preparation, first round - 2026-11-08
+
+Status: **first round, superseded by the
+[pre-release acceptance](#v260-pre-release-acceptance---2026-11-08) above.** On 2026-11-08 the
 latest [GitHub Release](https://github.com/ysc070528/granttrace/releases/latest)
 and the latest [PyPI](https://pypi.org/project/granttrace/) version were both
 2.5.3. The checks below ran on release commit `c359eb1` (branch

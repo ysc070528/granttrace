@@ -1,4 +1,4 @@
-include CHANGELOG.md CONTRIBUTING.md SECURITY.md VERIFICATION.md
+include CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md VERIFICATION.md
 include config.example.json config.schema.json openapi.json test_suite.py
 recursive-include scripts *.py
 recursive-include tests *.py

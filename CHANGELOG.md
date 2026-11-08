@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.6.0 - Unreleased
+## 2.6.0 - 2026-11-08
 
 ### Added
 
@@ -290,6 +290,15 @@
     them afterwards raises `AttributeError` (#61).
   - `_http_request` and `_authoritative_patch_state` are documented extension
     points and keep their names and signatures (#60).
+- Documentation: the v2.5.3 post-release acceptance records (#36 to #41), user
+  documentation synced with merged behavior (#54), the contributing guide's
+  output checks (#72) and the first release-preparation record (#78). Before
+  release, SECURITY.md, the command-line reference and the configuration guide
+  now state that write checks against an external target stop before any write;
+  the package description no longer lists mass assignment, which only the
+  built-in demo performs; the command-line reference documents `--workers` and
+  `--timeout`; a Code of Conduct (Contributor Covenant 2.1) is added; and the
+  Windows guide describes the released state (#87).
 
 ## 2.5.3 - 2026-10-15
 
