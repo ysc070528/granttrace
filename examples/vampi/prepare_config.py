@@ -2,13 +2,18 @@
 
 Usage:
     python prepare_config.py http://127.0.0.1:5002 draft.json vampi.local.json
+    python prepare_config.py --debug-field-rule http://127.0.0.1:5002 draft.json debug.local.json
 
 The draft comes from `granttrace --spec openapi3.yml --init-config draft.json`.
 The script registers an Owner and a Visitor, logs both in, adds one book for
 each, and writes a configuration that keeps the scan read-only. Run it only
 against a VAmPI instance you started yourself; it needs no third-party packages.
 The output holds live tokens: keep the `.local.json` suffix, which Git ignores.
-See docs/case-studies/vampi.md.
+
+--debug-field-rule adds a BOPLA field rule: the Owner's password in
+/users/v1/_debug may be read by the Owner only. While any BOPLA rule is set,
+reports omit response bodies, URLs and reasons for every check, so run it as
+a separate scan. See docs/case-studies/vampi.md.
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ def call(base: str, method: str, path: str, body=None, token=None) -> dict:
         raise SystemExit(f"{method} {path} failed with HTTP {error.code}: {error.read()[:200]!r}")
 
 
-def main(base: str, draft_path: str, output_path: str) -> None:
+def main(base: str, draft_path: str, output_path: str, debug_field_rule: bool = False) -> None:
     suffix = secrets.token_hex(3)
     accounts = {}
     for role in ("owner", "visitor"):
@@ -72,6 +77,21 @@ def main(base: str, draft_path: str, output_path: str) -> None:
         # A user's password is private; the debug endpoint lists every user.
         "GET /users/v1/_debug": {"private_data_paths": [f"users[{owner_index}].password"]},
     }
+    if debug_field_rule:
+        # The specification leaves /users/v1/_debug open, so no Broken Authentication boundary
+        # applies; a field rule states that the Owner's password is the Owner's alone anyway.
+        config["bopla"] = {"GET /users/v1/_debug": {
+            "policy_id": "vampi-debug-passwords",
+            "context_id": "owner-user-entry",
+            "resource_binding": {f"users[{owner_index}].username": accounts["owner"]["username"]},
+            "fields": [{
+                "rule_id": "password-owner-only",
+                "path": f"users[{owner_index}].password",
+                "baseline_representation": "full_private_value",
+                "value_is_resource_specific": True,
+                "access": {"owner": "allow", "visitor": "deny", "anonymous": "deny"},
+            }],
+        }}
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=2)
     print(f"Owner {accounts['owner']['username']} and Visitor {accounts['visitor']['username']} "
@@ -79,6 +99,7 @@ def main(base: str, draft_path: str, output_path: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    arguments = [argument for argument in sys.argv[1:] if argument != "--debug-field-rule"]
+    if len(arguments) != 3:
         raise SystemExit(__doc__)
-    main(*sys.argv[1:4])
+    main(*arguments, debug_field_rule="--debug-field-rule" in sys.argv[1:])

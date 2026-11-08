@@ -29,17 +29,17 @@ the run changed in GrantTrace itself.
   denial, so the finding stayed `SUSPICIOUS`. That was fixed in
   [#80](https://github.com/ysc070528/granttrace/pull/80); the results below are
   from the fixed version, with the first run shown for comparison.
-- Of VAmPI's nine listed vulnerabilities, one is the kind GrantTrace confirms
-  today. One more (the debug endpoint) is an authorization problem it reported
-  only as `INCONCLUSIVE`. The rest need write tests, POST tests or techniques
-  GrantTrace does not attempt.
+- Of VAmPI's nine listed vulnerabilities, GrantTrace confirms two: the BOLA in
+  the standard scan, and the debug endpoint's password exposure with a BOPLA
+  field rule, run as a separate scan. The rest need write tests, POST tests or
+  techniques GrantTrace does not attempt.
 
 ## VAmPI's vulnerabilities
 
 | VAmPI vulnerability | Vulnerable mode | Secure mode | Notes |
 |---|---|---|---|
 | Broken Object Level Authorization (`GET /books/v1/{book_title}`) | **`CONFIRMED`** (SARIF `GT-BOLA-001`) | `SECURE` with `not_found_is_denial`; `INCONCLUSIVE` without | Found. In secure mode VAmPI answers another user's book with 404, which counts as a denial only with the opt-in (see [the 404 opt-in](#the-404-opt-in)). |
-| Excessive data exposure (`GET /users/v1/_debug`) | `INCONCLUSIVE` | `INCONCLUSIVE` | **Missed.** The endpoint returns every user's password to anyone, in both modes (VAmPI notes that some issues stay in secure mode). Its specification declares it without authentication, so GrantTrace has no documented boundary to test. |
+| Excessive data exposure (`GET /users/v1/_debug`) | **`CONFIRMED`** with a field rule (SARIF `GT-BOPLA-001`); `INCONCLUSIVE` without | the same | Found with a BOPLA field rule. The endpoint returns every user's password to anyone, in both modes (VAmPI notes that some issues stay in secure mode). Its specification declares it without authentication, so the standard checks have no boundary to test (see [the debug endpoint](#the-debug-endpoint)). |
 | Unauthorized password change (`PUT /users/v1/{username}/password`) | `SKIPPED` | `SKIPPED` | Out of scope: writes against external APIs are refused. |
 | Mass assignment (`admin` in `POST /users/v1/register`) | `SKIPPED` | `SKIPPED` | Out of scope: no POST tests, and mass assignment runs only in the built-in demo. |
 | SQL injection, user and password enumeration, ReDoS, missing rate limiting, weak JWT signing key | – | – | Out of scope: GrantTrace compares identities' access; it does not inject payloads, measure timing or forge tokens. |
@@ -140,14 +140,54 @@ the Visitor gets 200 with the Owner's book, so the finding stays `CONFIRMED`.
 `prepare_config.py` sets the option for this operation because VAmPI's source
 shows the 404 is its secure-mode access check.
 
+## The debug endpoint
+
+`GET /users/v1/_debug` returns every user, password included, to anyone. The
+standard scan configures the Owner's password as `private_data_paths`, but that
+only feeds checks that need a boundary to compare against: Broken
+Authentication applies where the specification requires authentication, and
+VAmPI's specification declares this endpoint without any; the collection check
+needs a clean anonymous denial. Both stay `INCONCLUSIVE`.
+
+A BOPLA field rule states the boundary directly: the field is readable by the
+Owner and by no one else, whatever the operation's authentication. A field
+`deny` is not overridden by an operation the specification leaves open.
+
+```json
+{"bopla": {"GET /users/v1/_debug": {
+  "policy_id": "vampi-debug-passwords",
+  "context_id": "owner-user-entry",
+  "resource_binding": {"users[7].username": "gt_owner_…"},
+  "fields": [{
+    "rule_id": "password-owner-only",
+    "path": "users[7].password",
+    "baseline_representation": "full_private_value",
+    "value_is_resource_specific": true,
+    "access": {"owner": "allow", "visitor": "deny", "anonymous": "deny"}
+  }]
+}}}
+```
+
+`resource_binding` ties the rule to the Owner's entry in the list, so the
+password compared is the Owner's own. With the rule, each mode reports BOPLA
+`CONFIRMED` (SARIF `GT-BOPLA-001`) for both the Visitor and Anonymous, as two
+leak groups; the other verdicts are as in the standard scan, and each scan
+again sent 14 GET requests. The secure mode's two findings are true positives:
+VAmPI serves the debug endpoint whatever its vulnerable switch.
+
+The rule runs as a separate scan because of a privacy boundary: while any BOPLA
+rule is configured, the HTML and JSON reports omit response bodies, concrete
+URLs and reasons for every check of that scan, and SARIF omits the target, so
+that a private value seen later in the scan cannot leak through an earlier
+result. Each reason reads "Property privacy boundary: response details omitted";
+verdicts, rule IDs, field paths and status codes remain.
+`prepare_config.py --debug-field-rule` writes the rule for a fresh Owner.
+
 ## Limits this run showed
 
-- **Unauthenticated endpoints are only tested against the specification.**
-  `GET /users/v1/_debug` hands every user's password to anyone, but VAmPI's
-  specification documents it without authentication, so Broken Authentication
-  does not apply and the collection check has no clean anonymous denial to
-  compare with. A configuration option stating that an operation must not
-  expose `private_data_paths` to Anonymous would let GrantTrace confirm this.
+- **The specification sets the authentication boundary.** Without a field
+  rule, an endpoint the specification leaves open is not tested for missing
+  authentication, and a field rule costs the detail of that scan's report.
 - **Writes and POST are out of scope.** Unauthorized password change and mass
   assignment need requests that change state; GrantTrace refuses those against
   external APIs.
@@ -162,7 +202,8 @@ shows the 404 is its secure-mode access check.
   The test accounts and books were created beforehand by the helper script, not
   by GrantTrace.
 - Bearer tokens, book secrets, and the passwords and email addresses returned
-  by `_debug` were redacted in the HTML, JSON and SARIF reports.
+  by `_debug` were redacted in the HTML, JSON and SARIF reports. In the
+  field-rule scans, neither test account's password appears in any report.
 
 ## Reproduce
 
@@ -189,6 +230,12 @@ granttrace --spec openapi3.yml --config vampi.local.json --dry-run
 granttrace --spec openapi3.yml --config vampi.local.json \
   --target http://127.0.0.1:5002 --allow-http \
   -o vampi.html --export-json vampi.json --export-sarif vampi.sarif
+
+# The debug endpoint's field rule, as a separate scan with its own accounts.
+python examples/vampi/prepare_config.py --debug-field-rule http://127.0.0.1:5002 draft.json debug.local.json
+granttrace --spec openapi3.yml --config debug.local.json \
+  --target http://127.0.0.1:5002 --allow-http \
+  -o debug.html --export-json debug.json --export-sarif debug.sarif
 ```
 
 For the secure mode, start `run_vampi.py VAmPI-secure 5001 0`, request
@@ -199,7 +246,8 @@ one book for each, and fills the draft: the tokens, the parameter values for
 both identities, `book_title` as the resource identifier, `secret` as private
 data, `GET /users/v1/{username}` as public (VAmPI shows basic user information
 to everyone), and the Owner's password in `/users/v1/_debug` as private data.
-It also sets `not_found_is_denial` for the book lookup, as described above.
+It also sets `not_found_is_denial` for the book lookup, as described above;
+with `--debug-field-rule` it adds the BOPLA rule for the debug endpoint.
 The configuration holds live tokens; the `.local.json` name keeps it out of
 Git and out of release archives. The launcher raises VAmPI's token lifetime
 from 60 seconds to an hour so that tokens do not expire mid-scan.
