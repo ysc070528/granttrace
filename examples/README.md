@@ -18,11 +18,11 @@ bundled mock, then copies the reports of a fresh demo run here.
 `tests/test_committed_examples.py` fails when the committed reports no longer
 match a fresh demo run.
 
-These reports were generated with Python 3.14.6 and PyYAML 6.0.3 from `main`
-after the 2.5.3 release. They declare version 2.5.3 but include the changes
-listed under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md), such as BOLA
-reasons in English. The JSON records the UTC generation time; the demo chose the
-loopback port for that run, so the target is not a fixed address.
+These reports were generated with Python 3.14.6 and PyYAML 6.0.3 during the
+2.6.0 release preparation and declare version 2.6.0; see
+[CHANGELOG.md](../CHANGELOG.md) for the changes since 2.5.3. The JSON records
+the UTC generation time; the demo chose the loopback port for that run, so the
+target is not a fixed address.
 
 Expected aggregate result:
 
