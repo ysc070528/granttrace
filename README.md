@@ -140,7 +140,7 @@ described in [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SEC
 - [Parameter serialization](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md) (Chinese)
 - [Property-level checks (BOPLA)](https://github.com/ysc070528/granttrace/blob/main/docs/bopla-readonly.md) (Chinese)
 - [Remote `$ref` resolution](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)
-- [Authorization evidence and coverage](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md)
+- [Authorization evidence hardening](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md) (v2.5.2 audit record)
 - [Business scenario acceptance](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md) (Chinese)
 - [Case study: VAmPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/vampi.md): what a scan of a deliberately vulnerable API found and missed
 - [Case study: crAPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/crapi.md): the same for OWASP's microservice API
@@ -159,7 +159,8 @@ python -m pytest
 To scan the bundled mock target, run `python mock_server/server.py` and, in a
 second terminal, `granttrace --spec openapi.json --config config.example.json
 --target http://127.0.0.1:8080`. [CONTRIBUTING.md](https://github.com/ysc070528/granttrace/blob/main/CONTRIBUTING.md)
-lists the checks CI runs.
+lists the checks CI runs. Contributors follow the
+[Code of Conduct](https://github.com/ysc070528/granttrace/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 

@@ -7,12 +7,10 @@ BOPLA 检查、GET header / cookie 参数、可选远程 `$ref` 和多项安全�
 推荐 Windows 10 / 11（64 位）。启动器自动打开 HTML 并打印确切路径；报告保存在
 解压目录的 `granttrace-demo/session-*/run-*/`，每次运行使用新的目录。
 
-**v2.6.0 尚未发布。** 普通用户从官方 [最新 Release](https://github.com/ysc070528/granttrace/releases/latest)
+普通用户从官方 [最新 Release](https://github.com/ysc070528/granttrace/releases/latest)
 下载页面实际提供的 Windows ZIP 和 `SHA256SUMS.txt`，解压运行前使用 `Get-FileHash -Algorithm SHA256`
-核对 ZIP 与校验文件中的记录；2026-11-08 核验时最新发布为
-[v2.5.3](https://github.com/ysc070528/granttrace/releases/tag/v2.5.3)。
-本轮 2.6.0 构建用于发布准备，以下构建工作流只上传 Actions artifact，
-不自动修改 tag / Release 或上传 PyPI。
+核对 ZIP 与校验文件中的记录。下文的构建工作流只上传 Actions artifact，
+不自动修改 tag / Release 或上传 PyPI；Release 附件由维护者从发布提交对应的 artifact 中取出并核对后上传。
 
 ## 本地构建
 
@@ -62,8 +60,8 @@ CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍�
 这些步骤用于维护者验证构建产物，不会替换已经提供的 Release 附件。
 
 构建与验收结果记录在 [VERIFICATION.md](../VERIFICATION.md)。2.6.0 的发布准备在 Linux 上进行，
-没有本地 Windows 构建；便携包由发布准备 PR 的 Windows x64 portable CI 构建并自动验收，
-正式发布前仍须在最终提交上取得干净的 CI 制品。2.5.3 的历史本地准备输出曾位于 `dist/v2.5.3-windows/`。
+没有本地 Windows 构建；便携包由 Windows x64 portable CI 在发布提交上构建并自动验收，
+Release 附件取自该次运行的 artifact。2.5.3 的历史本地准备输出曾位于 `dist/v2.5.3-windows/`。
 自动 smoke 通过 `GRANTTRACE_DEMO_NO_OPEN=1`
 抑制浏览器，并经标准输入确认启动器暂停，不代表人工双击、浏览器视觉验收或干净 Windows 实测。
 PR #29 的历史默认启动器验证保留在 [验证历史](history/release-verification-history.md)。

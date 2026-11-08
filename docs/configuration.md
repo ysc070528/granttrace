@@ -1,12 +1,14 @@
 # 配置指南
 
-> PR #42 / #43 未发布安全收紧：外部 CLI 的主动 PATCH / PUT 缺少权威状态核验实现，现有写开关、allowlist、field_map 和 `consistency: strong` 配置不能解除阻断。参数仍可解析；结果为 `INCONCLUSIVE`、不发 PATCH / PUT。内置 Demo 直接核对自有数据库，仅演示已有 PATCH。见 [复核与兼容性说明](pr42-state-authority-review.md) 和 [整合验收](pr43-integration-review.md)。
+> 2.6.0 起的安全收紧（PR #42 / #43）：外部 CLI 的主动 PATCH / PUT 缺少权威状态核验实现，现有写开关、allowlist、field_map 和 `consistency: strong` 配置不能解除阻断。参数仍可解析；结果为 `INCONCLUSIVE`、不发 PATCH / PUT。内置 Demo 直接核对自有数据库，仅演示已有 PATCH。见 [复核与兼容性说明](pr42-state-authority-review.md) 和 [整合验收](pr43-integration-review.md)。
 
 [返回项目首页](../README.zh-CN.md)
 
 ## 推荐首次接入流程
 
-`OpenAPI → --init-config → 人工填写与核对 → --validate-config → --dry-run → 人工确认 → 首次只读扫描 → 可选主动 PATCH`
+`OpenAPI → --init-config → 人工填写与核对 → --validate-config → --dry-run → 人工确认 → 只读扫描`
+
+对外部目标，流程到只读扫描为止；下文第 6 步的主动 PATCH 目前只在能直接核验自有数据的内置 Demo 中执行。
 
 1. **离线生成草稿**：
 
@@ -45,7 +47,7 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
 
 真实扫描会发送读取请求；上例没有 `--allow-write-tests`，因此发送 **0 PATCH**，即使配置中已有允许清单。终端推荐的首次真实扫描同样保持只读。
 
-6. **以后有需要才显式开启主动 PATCH**：同时需要明确的 `write_allowlist`、合法独立 GET readback 映射、真实扫描中的 `--allow-write-tests`，以及运行时的快照、写入与恢复条件。先人工确认专用可丢弃资源、字段映射、读回一致性及恢复预期，再单独选择写模式；配置条目存在或计划显示 `writes_enabled` 都不证明实际目标可恢复。
+6. **以后有需要才显式开启主动 PATCH**：对外部目标，即使满足以下全部条件，PATCH / PUT 仍会在写入前停止并记为 `INCONCLUSIVE`（见文首说明）；这些条件描述的是能核验权威状态的场景。同时需要明确的 `write_allowlist`、合法独立 GET readback 映射、真实扫描中的 `--allow-write-tests`，以及运行时的快照、写入与恢复条件。先人工确认专用可丢弃资源、字段映射、读回一致性及恢复预期，再单独选择写模式；配置条目存在或计划显示 `writes_enabled` 都不证明实际目标可恢复。
 
 OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。二者不能证明资源归属、预期授权策略、合法测试权限、生产 readback 一致性或真实 PATCH 恢复能力。尤其 `consistency: "strong"` 是操作者经核实后的约定，不是离线工具验证出来的保证。
 

@@ -8,11 +8,13 @@
 |---|---|
 | `--init-config FILE` | 离线生成待填写配置和相邻 checklist；未完成草稿不能扫描 |
 | `--validate-config` | 离线检查配置并退出（检查通过含 warning 返回 0，错误返回 2），不发送网络请求 |
-| `--allow-write-tests` | 开启允许清单内的 PATCH 写入、读回和回滚检查 |
-| `--write-endpoint "PATCH /path"` | 将主动检查限制到指定 PATCH 端点，可重复使用 |
+| `--allow-write-tests` | 允许执行允许清单内的 PATCH 写入、读回和回滚检查。对命令行指定的外部目标，工具无法核验权威资源状态，这些检查在任何写入前停止并记为 `INCONCLUSIVE`（`unverified_state_authority`）；完整写入流程只在内置 demo 中运行 |
+| `--write-endpoint "PATCH /path"` | 将主动检查限制到指定 PATCH 端点，可重复使用；外部目标同样受上述权威状态门限制 |
 | `--insecure` | 关闭 TLS 证书校验，仅用于隔离测试环境 |
 | `--allow-http` | 允许访问非本机的明文 HTTP 目标 |
-| `--delay` | 所有线程共享的最小请求间隔。目标返回 HTTP 429（或带 `Retry-After` 的 503）时，GET 读取按 `Retry-After`（无该头时依次等待 1、2 秒）最多重试 2 次，期间所有线程一起暂停；要求等待超过 30 秒时不重试，结果保持不确定。PATCH / PUT 从不重试 |
+| `--workers`, `-w` | 并发执行只读检查的线程数，默认 4 |
+| `--timeout` | 单个请求的超时秒数，默认 6 |
+| `--delay` | 所有线程共享的最小请求间隔（秒，默认 0.05）。目标返回 HTTP 429（或带 `Retry-After` 的 503）时，GET 读取按 `Retry-After`（无该头时依次等待 1、2 秒）最多重试 2 次，期间所有线程一起暂停；要求等待超过 30 秒时不重试，结果保持不确定。PATCH / PUT 从不重试 |
 | `--max-response-bytes` | 单个响应允许读取的最大字节数 |
 | `--allow-remote-refs` | 允许经 HTTPS 抓取规范中的远程 `$ref`；默认关闭，须与 `--remote-ref-host` 同时使用。`--dry-run` / `--validate-config` 即使传入也不联网，见 [远程引用说明](remote-references.md) |
 | `--remote-ref-host HOST` | 授权一个可抓取远程 `$ref` 的主机，精确匹配，只写主机名；带 `https://`、端口、路径、凭据或通配符的值会报错（退出码 2），非 ASCII 域名须写成 IDNA 形式（`xn--...`），可重复使用 |
@@ -165,7 +167,9 @@ HTML 的确认漏洞卡片可提供 **cURL 复现模板（请填入授权测试�
 
 尝试覆盖率按至少尝试一次 HTTP 请求的不同 method/path 端点计数；请求前拦截与配置失败不计入，网络失败计入。确定性覆盖率仅计已尝试且得到 CONFIRMED、SECURE、PUBLIC 或 AUTHORIZED 的不同端点；两者均以全部规范端点为分母，恢复结果不扩大覆盖率。报告保留原有字段，并增加执行分类、请求尝试数和端点计数；[加固说明](authorization-audit-hardening.md) 记录兼容性与安全边界。
 
-## v2.2 配置与迁移说明
+## 配置与迁移要点
+
+以下要点自 v2.2 起陆续加入，适用于当前版本。
 
 先用只读模式或本地计划核对范围：
 
