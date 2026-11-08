@@ -478,6 +478,51 @@ class HeaderCookieParameterTests(unittest.TestCase):
         self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
         self.assertIn("cannot be supplied via parameter values", auditor.results[0]["reason"])
 
+    def test_optional_auth_header_configured_for_no_identity_is_not_sent(self) -> None:
+        """Like an optional authentication cookie, an unconfigured optional one is omitted."""
+        spec = self._make_spec([
+            {"name": "X-Session-Id", "in": "header", "schema": {"type": "string"}},
+        ])
+        auditor = self._run_audit(spec, self._make_config())
+        self.assertEqual(len(ParameterRecordingHandler.requests), 4)
+        for _, _, headers in ParameterRecordingHandler.requests:
+            self.assertNotIn("x-session-id", {name.lower() for name in headers})
+        self.assertNotEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE, auditor.results[0]["reason"])
+
+    def test_optional_auth_header_from_parameter_values_is_still_refused(self) -> None:
+        """Being optional does not let a shared value stand in for identity credentials."""
+        spec = self._make_spec([
+            {"name": "X-Session-Id", "in": "header", "schema": {"type": "string"}},
+        ])
+        config = self._make_config(parameter_values={
+            "GET /api/documents/{doc_id}": {"common": {"X-Session-Id": "SHARED_POISON_SESSION"}},
+        })
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("cannot be supplied via parameter values", auditor.results[0]["reason"])
+
+    def test_auth_header_configured_for_one_identity_is_refused(self) -> None:
+        """Owner and visitor must send the same authentication headers to be compared."""
+        spec = self._make_spec([
+            {"name": "X-Session-Id", "in": "header", "schema": {"type": "string"}},
+        ])
+        config = self._make_config(extra_identities={"owner": {"headers": {"X-Session-Id": "OWNER_SESSION"}}})
+        auditor = self._run_audit(spec, config)
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("configured for only one of owner and visitor", auditor.results[0]["reason"])
+
+    def test_required_auth_header_missing_from_identities_says_where_to_configure_it(self) -> None:
+        spec = self._make_spec([
+            {"name": "X-API-Key", "in": "header", "required": True, "schema": {"type": "string"}},
+        ])
+        auditor = self._run_audit(spec, self._make_config())
+        self.assertEqual(ParameterRecordingHandler.requests, [])
+        self.assertEqual(auditor.results[0]["verdict"], Verdict.INCONCLUSIVE)
+        self.assertIn("Missing required authentication header 'X-API-Key'", auditor.results[0]["reason"])
+        self.assertIn("identities.*.headers", auditor.results[0]["reason"])
+
     def test_required_identity_auth_cookie_preserves_anonymous_wire_probe(self) -> None:
         """An identity Cookie satisfies its declaration while anonymous sends no credential."""
         path = "/api/cookie-documents/{doc_id}"

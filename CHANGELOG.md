@@ -26,9 +26,10 @@
 - `--init-config` drafts the remaining inputs a scan needs, as placeholders
   that still block validation until replaced. Required GET business headers and
   cookies get one value per requesting identity (owner, visitor and anonymous)
-  in `parameter_values`; declared authentication headers go to owner's and
+  in `parameter_values`; required authentication headers go to owner's and
   visitor's `identities.*.headers`, and required authentication cookies to their
-  `identities.*.parameters`. PUT operations get parameter values and a readback
+  `identities.*.parameters` (#74 stopped drafting optional authentication
+  headers). PUT operations get parameter values and a readback
   draft like PATCH, with the extra PUT rules in the checklist. Optional
   parameters, ignored headers such as `Accept` and unsupported cookie forms
   are not drafted, and the checklist says why for each. A draft completed with
@@ -71,6 +72,15 @@
 
 ### Fixed
 
+- Stop refusing GET checks over an optional authentication header that neither
+  owner nor visitor configures. A header parameter classified as authentication
+  (for example `X-Session-Id`, or an API-key scheme's header) blocked the check
+  as `INCONCLUSIVE` unless both identities sent it, even when the specification
+  marks it optional, and the reason wrongly said a value was "supplied via
+  parameter values". It is now omitted, like an optional authentication cookie.
+  A value from `parameter_values` and a header configured for only one of owner
+  and visitor are still refused, and a missing required one is refused with a
+  reason that says to configure it under `identities.*.headers` (#74).
 - Use an identity's `id` for its resource parameter exactly or not at all.
   Lenient integer parsing turned `"007"`, `"1_001"` or `" 1002 "` into 7, 1001
   or 1002, and an id outside the schema (such as `"abc"`, or `"0"` below a

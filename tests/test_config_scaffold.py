@@ -235,6 +235,7 @@ class HeaderCookieAndPutDraftTests(unittest.TestCase):
                     {"name": "X-Partner", "in": "header", "required": True, "schema": {"type": "string"}},
                     {"name": "app_session", "in": "cookie", "required": True, "schema": {"type": "string"}},
                     {"name": "remember_login", "in": "cookie", "schema": {"type": "string"}},
+                    {"name": "X-Session-Id", "in": "header", "schema": {"type": "string"}},
                     {"name": "prefs", "in": "cookie", "required": True,
                      "schema": {"type": "array", "items": {"type": "string"}}},
                 ]},
@@ -282,6 +283,7 @@ class HeaderCookieAndPutDraftTests(unittest.TestCase):
             "X-Trace": "Optional: not drafted",
             "Accept": "ignores",
             "remember_login": "Optional authentication cookie",
+            "X-Session-Id": "Optional authentication header",
             "prefs": "not supported",
         }
         drafted = json.dumps(self.draft["parameter_values"])
