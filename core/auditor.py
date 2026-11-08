@@ -747,6 +747,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             expected_public=expected_public,
             requires_auth=requires_auth,
             resource_id_paths=policy.get("resource_id_paths"),
+            not_found_is_denial=policy.get("not_found_is_denial") is True,
         )
 
         verdict = self._map_bola_verdict(evaluation.get("verdict", "INCONCLUSIVE"))
@@ -824,7 +825,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         if requires_auth or private_paths:
             decisions.append(("BROKEN_AUTH", "CWE-306", AuthorizationEvidence.evaluate_auth(
                 owner, anonymous, requires_auth=requires_auth, expected_public=expected_public,
-                private_data_paths=private_paths)))
+                private_data_paths=private_paths, not_found_is_denial=policy.get("not_found_is_denial") is True)))
         candidate = self._is_admin_endpoint(ep)
         if candidate or policy.get("required_role"):
             decisions.append(("BFLA", "CWE-285", AuthorizationEvidence.evaluate_bfla(

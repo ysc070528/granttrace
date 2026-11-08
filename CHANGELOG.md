@@ -46,6 +46,32 @@
   headers and cookies were missing. The checklist no longer marks parameters of
   operations GrantTrace does not test, such as DELETE, as included in the
   draft (#73).
+- A case study of a scan of VAmPI, a deliberately vulnerable API, in its
+  vulnerable and secure modes: which of its vulnerabilities GrantTrace confirms,
+  which it misses and why, and the request log of the read-only scan. Helper
+  scripts in `examples/vampi/` reproduce it. See
+  [docs/case-studies/vampi.md](docs/case-studies/vampi.md) (#81).
+- `bola.<operation>.not_found_is_denial` reads a 404 as a denial, for APIs
+  that hide other users' objects with "not found" instead of 403. A Visitor or
+  Anonymous 404 counts only when the Owner received a valid response to the
+  same request, the body is empty or only says the object was not found (a
+  full-message grammar with at most one word naming the resource type, in a
+  known error envelope or Problem Details), and none of the Owner's values
+  appears in it; any other 404 keeps its default meaning, `INCONCLUSIVE`.
+  BOLA, Broken Authentication, BFLA and collection checks of the operation
+  apply it; BOPLA field rules do not. A 404 denial gives `SECURE` with
+  confidence 0.95, below an explicit 401 or 403, and the evidence records the
+  setting. Secure-mode VAmPI's book lookup now reports `SECURE` instead of
+  `INCONCLUSIVE` (#82).
+- The VAmPI case study confirms the debug endpoint's password exposure with a
+  BOPLA field rule: the Owner's password in `/users/v1/_debug` may be read by
+  the Owner only, although the specification leaves the endpoint open, so both
+  the Visitor and Anonymous results are `CONFIRMED` (`GT-BOPLA-001`) in both
+  modes. `examples/vampi/prepare_config.py --debug-field-rule` writes the rule;
+  it runs as a separate scan because BOPLA's privacy boundary omits response
+  details from the whole report. The configuration guide now points to field
+  rules for private fields on operations without an authentication
+  requirement (#83).
 
 ### Changed
 
@@ -54,6 +80,13 @@
   2.5.3. The remote `$ref` fetcher's User-Agent now follows the runtime version
   instead of a hard-coded `2.5.3`. Refresh release documentation and the example
   reports.
+- Rewrite the README as an English project page, with a Chinese translation in
+  `README.zh-CN.md`: what GrantTrace does and a quick start first, a table of the
+  checks with what each needs, and a plain list of what is not supported. Mass
+  assignment is described as demo-only, as it is for external APIs. The report
+  screenshot is retaken from the 2.6.0 demo, a confirmed-finding screenshot is
+  added, and the README no longer states a release status that each release had
+  to update. Chinese documentation links back to the Chinese README (#79).
 - Report BOLA reasons in English, like every other check. The JSON `reason`,
   finding `details` and per-response `reason` evidence of BOLA checks were the
   only Chinese reasons; the HTML report shows the same text. Verdicts,
@@ -86,6 +119,22 @@
 
 ### Fixed
 
+- Recognize RFC 9457 (RFC 7807) Problem Details bodies as clean 401/403 denials.
+  connexion sends them as `application/problem+json`, for example `{"type":
+  "about:blank", "title": "Unauthorized", "status": 401, "detail": "No
+  authorization token provided"}`, and ASP.NET Core and Spring can be configured
+  to. GrantTrace treated these members as possible business data, so a scan of
+  VAmPI, a deliberately vulnerable API, reported its book BOLA as `SUSPICIOUS`
+  instead of `CONFIRMED`, and Broken Authentication on its protected reads as
+  `INCONCLUSIVE` instead of `SECURE`: the anonymous denial could not serve as a
+  clean baseline. A problem body now counts as a denial only when every member
+  is `type`, `title`, `status`, `detail` or a tracing ID, `status` is 401 or
+  403, `type` is `about:blank` or an HTTP RFC status link, and `title` and
+  `detail` are denial messages. Any other member or text keeps it suspicious,
+  including `instance`: the check does not know the request path, so it cannot
+  tell whether the URI names the requested resource or another user's. Ordinary
+  JSON envelopes also accept a numeric `status` of 401 or 403 and messages such
+  as "No authorization token provided" (#80).
 - Refuse checks of operations that send a credential in the query string, before
   any request. Each URL is built from the resource owner's parameter values and
   sent by every identity, so an `apiKey` scheme `in: query` (or the RFC 6750

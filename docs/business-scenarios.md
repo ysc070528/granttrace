@@ -1,6 +1,6 @@
 # 业务授权场景验收
 
-[返回项目首页](../README.md)
+[返回项目首页](../README.zh-CN.md)
 
 运行 `python scripts/verify_business_scenarios.py`，会在本机临时 HTTP 服务执行每个场景，并生成 `dist/business-scenarios.json`。真值先于扫描定义；统计只按是否确认漏洞计算误报和漏报，另列不确定结果，避免将“没有发现”当作安全。
 

@@ -109,6 +109,16 @@ class BolaChecks(ValidatorBase):
                     )
                 )
 
+            if "not_found_is_denial" in policy and not isinstance(policy["not_found_is_denial"], bool):
+                issues.append(
+                    ConfigIssue(
+                        path=f"bola.{ep_key}.not_found_is_denial",
+                        message="'not_found_is_denial' must be a boolean",
+                        expected="boolean (defaults to false)",
+                        actual=safe_diagnostic_value(policy["not_found_is_denial"]),
+                    )
+                )
+
             if "expected_visitor_access" in policy and policy["expected_visitor_access"] not in ("allow", "deny"):
                 issues.append(
                     ConfigIssue(

@@ -47,3 +47,11 @@ See [VERIFICATION.md](../VERIFICATION.md) for the full test scope.
 
 These numbers describe only the bundled fixture. They are not a claim about
 coverage, false positives, or false negatives on another API.
+
+## VAmPI
+
+`vampi/` holds the helper scripts for the
+[VAmPI case study](../docs/case-studies/vampi.md): `run_vampi.py` starts a VAmPI
+checkout on 127.0.0.1 without the Flask debugger, and `prepare_config.py`
+creates two test accounts in it and fills a configuration drafted with
+`--init-config`. Run them only against a VAmPI instance you started yourself.

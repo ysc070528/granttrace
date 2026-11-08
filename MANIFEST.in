@@ -3,6 +3,8 @@ include config.example.json config.schema.json openapi.json test_suite.py
 recursive-include scripts *.py
 recursive-include tests *.py
 recursive-include docs *.md
-include docs/assets/report-preview.png
+include docs/assets/report-preview.png docs/assets/report-finding.png
+include README.zh-CN.md
 include examples/README.md examples/sample_report.html examples/sample_result.json
+recursive-include examples/vampi *.py
 global-exclude __pycache__ *.py[cod] *.local.json

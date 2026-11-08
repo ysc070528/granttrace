@@ -1,6 +1,6 @@
 # 命令行、结果与迁移
 
-[返回项目首页](../README.md)
+[返回项目首页](../README.zh-CN.md)
 
 ## 常用参数
 
@@ -181,6 +181,7 @@ granttrace --spec openapi.json --config config.json --dry-run --export-json plan
 - 嵌套字段支持 `members[0].role`。工具发送和恢复完整的 members 容器；读回包装不一致时，可配置 `snapshot_path: "data"` 或 `snapshot_field_map: {"members": "data.team"}` 映射请求根字段。
 - 恢复核验默认比较**完整读回文档**，会发现请求字段以外的派生权限变化。对已知无安全影响的时间戳可配置 `ignore_readback_paths: ["updatedAt"]`；禁止忽略任何实际写入字段/容器。不要忽略权限、派生权限或业务状态；无法恢复的变动会停写并要求人工处置。
 - 公开接口需显式 `security: []`，或在 bola 策略中设置 expected_public: true；这不能覆盖规范已声明的鉴权要求。403 正文含业务数据、历史日志中的拒绝词、匿名公开投影之外的私有增量，均不被误当作安全。
+- RFC 9457（RFC 7807）Problem Details 形式的 401/403（`application/problem+json`，connexion 默认如此，ASP.NET Core、Spring 可配置为如此）视为干净拒绝的条件：只含 `type`、`title`、`status`、`detail` 和追踪 ID；`status` 为 401 或 403；`type` 为 `about:blank` 或 HTTP RFC 状态码链接；`title`、`detail` 为拒绝语句。出现其他扩展成员、自定义 type URI 或说明性文字时仍按可疑处理；带 `instance` 的拒绝（如 Spring 默认附带请求路径）也按可疑处理，因为检查不知道请求路径，无法区分它指向本次请求的资源还是其他用户的资源。
 - 默认不把任意 *_id 视为资源归属证据。仅在确认业务含义后配置 `{"bola": {"GET /records/{id}": {"resource_id_paths": ["data.id"]}}}`；支持 items[].id，已知请求回显/metadata/trace 路径始终排除。
 - OpenAPI 3.1 schema $ref siblings 分别按来源解析、按约束交集处理；3.0/Swagger 结构性 siblings 明确拒绝，请改写为 allOf。缺失引用不再静默转成空 schema。
 - readOnly 特权字段仍属于攻击候选，但普通基线不包含 readOnly。生成器递归验证样本，无法合成的复杂 schema 显式失败，不以非法样本证明安全。

@@ -65,9 +65,11 @@ class ResponseDiffEngine:
     # Full-message grammar only: a denial prefix must not conceal a reflected
     # credential, business value, or an unknown explanatory suffix.
     AUTH_DENIAL_PATTERNS = (
-        r"(?:(?:jwt|bearer|access|authentication|auth) )?token (?:is |was |has )?"
+        r"(?:(?:jwt|bearer|access|authentication|authorization|auth) )?token (?:is |was |has )?"
         r"(?:required|missing|invalid|expired|not provided|not valid|not found)",
-        r"(?:missing|invalid|expired) (?:(?:jwt|bearer|access|authentication|auth) )?token",
+        r"(?:missing|invalid|expired) (?:(?:jwt|bearer|access|authentication|authorization|auth) )?token",
+        r"no (?:(?:jwt|bearer|access|authentication|authorization|auth) )?token (?:was |is )?"
+        r"(?:provided|supplied|given|found|sent)",
         r"jwt (?:is |has )?(?:required|missing|invalid|expired)",
         r"(?:jwt|token|jwt token) (?:signature )?(?:verification|validation) failed",
         r"authentication (?:is )?(?:required|failed)",
@@ -81,6 +83,19 @@ class ResponseDiffEngine:
         r"(?:缺少|需要)(?:有效的)?(?:令牌|token|jwt|jwt令牌)",
     )
     ERROR_STATUS_WORDS = {"error", "fail", "failed", "failure", "denied"}
+    # A 404 is a denial only for operations that opt in with not_found_is_denial.
+    # Like AUTH_DENIAL_PATTERNS, a full-message grammar: the one free word names a
+    # resource type, and not_found_as_denial rejects it if it equals an Owner value.
+    NOT_FOUND_CODES = {404, "404"}
+    NOT_FOUND_PATTERNS = (
+        r"(?:(?:http )?404 )?not found",
+        r"(?:the )?(?:requested )?(?:[a-z]{1,32} )?(?:(?:was|is) )?not found",
+        r"(?:the )?(?:requested )?(?:[a-z]{1,32} )?(?:could not|cannot|can not) be found",
+        r"(?:the )?(?:requested )?[a-z]{1,32} does not exist",
+        r"no such [a-z]{1,32}",
+        r"no [a-z]{1,32} (?:was )?found",
+        r"(?:资源|记录|数据|对象)?(?:不存在|未找到)",
+    )
     ERROR_VALUE_KEYS = {
         "error",
         "errors",
@@ -126,6 +141,18 @@ class ResponseDiffEngine:
         "reason",
     }
     RESPONSE_WRAPPER_KEYS = {"payload", "result", "response", "data", "error", "errors"}
+    TRACING_KEYS = frozenset({"timestamp", "request_id", "requestid", "trace_id", "traceid"})
+    # RFC 9457 (formerly RFC 7807) Problem Details members. A problem body is a
+    # clean denial only when each member is one of these and carries a denial.
+    # `instance` is excluded: without the request target, a URI reference
+    # naming another user's resource cannot be told from the requested one.
+    PROBLEM_DETAILS_MEMBERS = frozenset({"type", "title", "status", "detail"})
+    # A problem type naming an HTTP status section, as ASP.NET Core emits;
+    # any other type URI may identify an application resource.
+    PROBLEM_STATUS_TYPE_URI = re.compile(
+        r"https?://(?:tools\.ietf\.org/html/|datatracker\.ietf\.org/doc/html/|www\.rfc-editor\.org/rfc/)"
+        r"rfc(?:7231|7235|9110)(?:\.html)?#section-[0-9.]+"
+    )
     METADATA_CONTAINER_KEYS = {"meta", "metadata", "request", "query", "params", "headers", "trace"}
 
     # Kept for callers that introspect the old constant. Detection itself is recursive.
@@ -176,6 +203,14 @@ class ResponseDiffEngine:
         if normalised in cls.AUTH_ERROR_WORDS:
             return True
         return any(re.fullmatch(pattern, normalised) for pattern in cls.AUTH_DENIAL_PATTERNS)
+
+    @classmethod
+    def _is_not_found_message(cls, value: Any) -> bool:
+        """Recognize a complete "not found" message, never a substring."""
+        if not isinstance(value, str):
+            return False
+        normalised = re.sub(r"\s+", " ", value.strip().lower()).rstrip(".!?。！？")
+        return any(re.fullmatch(pattern, normalised) for pattern in cls.NOT_FOUND_PATTERNS)
 
     @classmethod
     def _detect_nested_soft_error(cls, data: Any) -> Optional[Tuple[str, str]]:
@@ -403,20 +438,28 @@ class ResponseDiffEngine:
 
         Unknown or unparseable content cannot prove that a denial withheld data.
         Metadata allowance is deliberately limited to scalar tracing fields.
+        A 404 that not_found_as_denial accepted may also state "not found".
         """
         if body is None or not str(body).strip():
             return True
+        not_found = bool(assessment.get("not_found_denial"))
+        codes = cls.AUTH_ERROR_CODES | cls.NOT_FOUND_CODES if not_found else cls.AUTH_ERROR_CODES
+
+        def denial_message(value: Any) -> bool:
+            return cls._is_auth_denial_message(value) or (not_found and cls._is_not_found_message(value))
+
         data = assessment["data"]
         if data is None:
-            return cls._is_auth_denial_message(body)
+            return denial_message(body)
         if isinstance(data, str):
-            return cls._is_auth_denial_message(data)
+            return denial_message(data)
+        if cls._is_problem_details_denial(data, not_found=not_found):
+            return True
 
         def clean(value: Any, key: str = "") -> bool:
             known_keys = (
                 cls.RESPONSE_WRAPPER_KEYS | cls.CODE_KEYS | cls.MESSAGE_KEYS
-                | cls.ERROR_VALUE_KEYS | {"success", "meta", "metadata", "timestamp",
-                                          "request_id", "requestid", "trace_id", "traceid"}
+                | cls.ERROR_VALUE_KEYS | {"success", "meta", "metadata"} | cls.TRACING_KEYS
             )
             if key and key not in known_keys:
                 return False
@@ -425,7 +468,7 @@ class ResponseDiffEngine:
                     return False
                 if key in {"meta", "metadata"}:
                     return all(
-                        cls.normalise_key(raw) in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}
+                        cls.normalise_key(raw) in cls.TRACING_KEYS
                         and clean(child, cls.normalise_key(raw))
                         for raw, child in value.items()
                     )
@@ -434,19 +477,97 @@ class ResponseDiffEngine:
                 return key in cls.RESPONSE_WRAPPER_KEYS and all(clean(child) for child in value)
             if value is None or value == "":
                 return True
-            if key in {"timestamp", "request_id", "requestid", "trace_id", "traceid"}:
+            if key in cls.TRACING_KEYS:
                 return cls._tracing_scalar_is_clean(key, value)
             if key in cls.CODE_KEYS:
-                return isinstance(value, (int, str)) and value in cls.AUTH_ERROR_CODES
+                return isinstance(value, (int, str)) and value in codes
+            if key == "status" and type(value) in (int, str) and value in codes:
+                return True  # A numeric 401 / 403 status; textual statuses are checked below.
             if key == "success":
                 return value in (False, 0, "0", "false")
             if key in cls.MESSAGE_KEYS or key in cls.ERROR_VALUE_KEYS:
-                return cls._is_auth_denial_message(value) or (
+                return denial_message(value) or (
                     isinstance(value, str) and value.strip().lower() in cls.ERROR_STATUS_WORDS
                 )
             return False
 
         return clean(data)
+
+    @classmethod
+    def _is_problem_details_denial(cls, data: Any, *, not_found: bool = False) -> bool:
+        """Recognize an RFC 9457 problem body that only states a 401 / 403 denial
+        (or a 404 that not_found_as_denial accepted).
+
+        Every member must be `type`, `title`, `status`, `detail` or a tracing
+        field: an extension member, an `instance`, a nested value or
+        explanatory text may carry data.
+        """
+        if not isinstance(data, dict) or not data:
+            return False
+        keys = [cls.normalise_key(raw) for raw in data]
+        if not {"type", "title"} & set(keys):
+            return False  # Not a problem document; the ordinary envelope rules apply.
+        for key, value in zip(keys, data.values()):
+            if key not in cls.PROBLEM_DETAILS_MEMBERS | cls.TRACING_KEYS:
+                return False  # An extension member may carry application data.
+            if key in cls.TRACING_KEYS:
+                accepted = cls._tracing_scalar_is_clean(key, value)
+            elif key == "status":
+                accepted = type(value) in (int, str) and (
+                    value in cls.AUTH_ERROR_CODES or (not_found and value in cls.NOT_FOUND_CODES))
+            elif key == "type":
+                accepted = isinstance(value, str) and (
+                    value == "about:blank" or cls.PROBLEM_STATUS_TYPE_URI.fullmatch(value) is not None)
+            else:  # title, detail
+                accepted = cls._is_auth_denial_message(value) or (not_found and cls._is_not_found_message(value))
+            if not accepted:
+                return False
+        return True
+
+    @classmethod
+    def not_found_as_denial(
+        cls, assessment: Dict[str, Any], body: str, owner: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Read a 404 as a denial for an operation that sets not_found_is_denial.
+
+        Some APIs hide another user's object with 404. That reading needs the
+        Owner's valid response to the same request, a body that only says the
+        object was not found, and no Owner value in that body; otherwise the
+        assessment is returned unchanged and the 404 stays undecidable.
+        """
+        if (assessment["kind"] != cls.RESPONSE_HTTP_CLIENT_ERROR or assessment["status_code"] != 404
+                or owner["kind"] != cls.RESPONSE_VALID):
+            return assessment
+        denial = dict(
+            assessment, kind=cls.RESPONSE_AUTH_DENIED, is_auth_denial=True, not_found_denial=True,
+            reason="HTTP 404 accepted as a denial (not_found_is_denial): the Owner received a valid "
+                   "response to the same request",
+        )
+        if not cls.denial_body_is_clean(denial, body):
+            return assessment
+        data = assessment["data"]
+        texts = [str(body or "")] if data is None else [value for value in cls._scalars(data) if isinstance(value, str)]
+        words = {word for text in texts for word in re.findall(r"[\w-]+", text.lower())}
+        owner_values = {
+            str(value).strip().lower() for value in cls._scalars(owner["data"])
+            if isinstance(value, str) or type(value) is int
+        }
+        # The free word in "<word> not found" must not be the Owner's data.
+        if words & owner_values:
+            return assessment
+        return denial
+
+    @classmethod
+    def _scalars(cls, value: Any) -> Iterable[Any]:
+        """Every scalar in a parsed JSON document, including array items."""
+        if isinstance(value, dict):
+            for child in value.values():
+                yield from cls._scalars(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from cls._scalars(child)
+        else:
+            yield value
 
     @classmethod
     def _extract_keys(cls, obj: Any) -> Set[str]:
@@ -806,6 +927,7 @@ class ResponseDiffEngine:
         expected_public: bool = False,
         requires_auth: bool = False,
         resource_id_paths: Optional[Iterable[str]] = None,
+        not_found_is_denial: bool = False,
     ) -> Dict[str, Any]:
         """
         Evaluate BOLA using owner, cross-visitor, anonymous and optional self baselines.
@@ -819,6 +941,8 @@ class ResponseDiffEngine:
         ``resource_id_paths`` contains trusted dot paths, e.g. ``data.user_id`` or
         ``items[].id``. No implicit *_id discovery is used for confirmation.
         Known request/trace metadata is excluded even if configured as an id path.
+        ``not_found_is_denial`` reads a Visitor or Anonymous 404 for the Owner's
+        resource as a denial; see ``not_found_as_denial``.
         """
         status_owner, body_owner = resp_owner
         status_visitor, body_visitor = resp_visitor
@@ -827,6 +951,9 @@ class ResponseDiffEngine:
         owner = cls.assess_response(status_owner, body_owner)
         visitor = cls.assess_response(status_visitor, body_visitor)
         anonymous = cls.assess_response(status_anon, body_anon)
+        if not_found_is_denial:
+            visitor = cls.not_found_as_denial(visitor, body_visitor, owner)
+            anonymous = cls.not_found_as_denial(anonymous, body_anon, owner)
         self_assessment = cls.assess_response(*visitor_self) if visitor_self is not None else None
         if isinstance(resource_id_paths, str):
             resource_id_paths = [resource_id_paths]
@@ -845,6 +972,8 @@ class ResponseDiffEngine:
             owner_values, visitor_values, anon_values, body_visitor, body_anon,
             expected_public=expected_public, requires_auth=requires_auth,
         )
+        if not_found_is_denial:
+            evidence["not_found_is_denial"] = True  # Recorded only when the operation opts in.
 
         if owner["kind"] != cls.RESPONSE_VALID:
             return cls._result(
