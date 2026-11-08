@@ -91,6 +91,15 @@
   A value from `parameter_values` and a header configured for only one of owner
   and visitor are still refused, and a missing required one is refused with a
   reason that says to configure it under `identities.*.headers` (#74).
+- Stop sending invented values for optional query parameters that nobody
+  configured. Every declared query parameter got a generated value, so a scan
+  could request `?as_user=sample_text&status=active&include_deleted=false`:
+  such values can filter out the tested resource, make the target reject the
+  request or change its behavior, so the comparison no longer measured
+  authorization. An unconfigured optional query parameter is now omitted, or
+  sent with its declared `default`, as header and cookie parameters already
+  were. Required parameters and resource identifiers such as `owner_id` keep
+  their previous values (#76).
 - Use an identity's `id` for its resource parameter exactly or not at all.
   Lenient integer parsing turned `"007"`, `"1_001"` or `" 1002 "` into 7, 1001
   or 1002, and an id outside the schema (such as `"abc"`, or `"0"` below a

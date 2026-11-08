@@ -30,6 +30,7 @@ Cookie 参数目前仅支持标量（`form` 样式，如 `session_track=xyz789`�
 - 严禁 CRLF 注入（值含 `\r`、`\n`、`\0`）及控制字符；Cookie 值仅接受 RFC 6265 cookie-octet，拒绝空格、双引号、逗号、分号和反斜杠。
 - 新增业务 Header / Cookie 参数支持仅限 GET 操作及 GET 读回，非 GET 写入操作（PATCH/PUT）不支持 Header 数组、对象或 Cookie 参数，不启用新的 PATCH / PUT 写入路径。
 - 暂不支持参数 `content` 编码、嵌套或空容器（如 `[]`、`{}`）、包含自身分隔符的数据（如 header 数组项含逗号）、所有 Cookie 数组与对象参数、OpenAPI 3.2 的 `style: cookie`、`allowReserved: true` 以及 Swagger 2.0 cookie 参数或非 body 对象。这些在发起端点请求前明确记录 `INCONCLUSIVE` 和具体原因，不猜测、不静默转成列表文本或遗漏必需参数。缺少必需参数或校验失败时 0 请求发送。不得笼统宣称所有 OpenAPI 3.x 参数组合均已支持。
+- 未配置的可选查询参数不发送；声明了 `default` 时发送该默认值，与 header / cookie 一致。工具不再为其编造示例值、枚举首项或布尔值。资源标识类查询参数（如 `owner_id`）仍取所属身份的 `id`，必填查询参数缺少配置时仍按 schema 生成。
 - `deepObject` 必须显式声明 `explode: true`。账户的 `headers` 仍可提供 Authorization、API Key、Cookie；它们与已声明业务 Header / Cookie 参数的自动序列化受各自的安全隔离保护。
 
 独立读回与被测操作使用相同编码器。读回可在 `readbacks.<operation>.parameters` 中明确提供 GET 参数元数据；请确认所选资源和参数映射的业务含义。

@@ -593,8 +593,18 @@ class RequestBuilderMixin:
             if metadata.get("in") != "query":
                 continue
             name = metadata.get("name")
-            value = (values.get(name) if name in values
-                     else self._unconfigured_parameter_value(metadata, candidate_id, resource_identity, swagger2))
+            schema = metadata.get("schema")
+            if name in values:
+                value = values[name]
+            elif metadata.get("required") is True or (
+                    candidate_id is not None and SmartDataGenerator.is_resource_identifier(metadata)):
+                value = self._unconfigured_parameter_value(metadata, candidate_id, resource_identity, swagger2)
+            elif "default" in metadata or (isinstance(schema, dict) and "default" in schema):
+                value = metadata["default"] if "default" in metadata else schema["default"]
+            else:
+                # An invented value (sample text, the first enum member, an
+                # example) could filter out the resource or change behavior.
+                continue
             pairs = serialize_query_parameter(metadata, value, swagger2=swagger2)
             for encoded_name, _ in pairs:
                 if encoded_name in emitted_names and emitted_names[encoded_name] != index:
@@ -617,7 +627,8 @@ class RequestBuilderMixin:
         canonical rules as configured parameter values. It is never normalized
         by lenient int() parsing ("007" -> 7, "1_001" -> 1001) or replaced by a
         specification example, which would test a resource the identity does
-        not own. Other parameters keep their generated schema value.
+        not own. Other parameters keep their generated schema value; _build_url
+        calls this only for required ones and resource identifiers.
         """
         if candidate_id is None or not SmartDataGenerator.is_resource_identifier(metadata):
             return SmartDataGenerator.generate_raw_value_for_param(metadata)
