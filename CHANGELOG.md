@@ -71,7 +71,7 @@
   answers requests without a token with a Java `toString()` instead of JSON.
   `examples/crapi/` holds the setup script and a Compose override that runs
   crAPI without its chatbot. See
-  [docs/case-studies/crapi.md](docs/case-studies/crapi.md) (#84).
+  [docs/case-studies/crapi.md](docs/case-studies/crapi.md) (#85).
 
 ### Changed
 
