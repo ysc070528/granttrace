@@ -59,6 +59,20 @@ OpenAPI 描述接口合同；validator 检查配置结构及支持的语义。�
 
 该配置仅适用于本次身份与资源组合。相同操作检查不获授权的用户或另一租户时，要更换测试配置并设为 `deny`。工具不会由团队名或角色名自动推断权限。真值与统计见 [业务场景验收](business-scenarios.md)。
 
+## 用 404 隐藏他人资源的 API
+
+```json
+{"bola": {"GET /books/{title}": {"resource_id_paths": ["book_title"], "not_found_is_denial": true}}}
+```
+
+有些 API 不返回 403，而是对他人资源返回 404（例如按“标题 + 当前用户”查询，他人的资源就是“不存在”）。默认情况下 404 不算拒绝：它同样可能是参数值写错或资源已删除，因此结论是 `INCONCLUSIVE`。确认该操作确实用 404 隐藏他人资源后，可设置 `not_found_is_denial: true`，此时 Visitor 或 Anonymous 收到的 404 只在同时满足以下条件时按拒绝处理：
+
+- Owner 对同一请求得到有效响应（2xx 非空 JSON）；
+- 404 正文为空，或只是“未找到”类拒绝：`{"detail": "Not found."}`、`{"status": "fail", "message": "Book not found!"}`、`{"code": 404, "message": "Resource not found"}`、Problem Details（`title: "Not Found"`、`status: 404`）等，消息须完整匹配 “not found / does not exist / no such …” 等语法，最多含一个表示资源类型的单词；
+- 正文中没有任何 Owner 响应里的值（例如 `"alice not found"` 在 Owner 名为 alice 时不算）。
+
+不满足时 404 保持默认含义。满足时 BOLA 可得出 `SECURE`（置信度 0.95，低于明确的 401/403），匿名 404 也可作为 BOLA 确认和认证检查所需的干净拒绝基线；同一操作的 Broken Authentication、BFLA 和集合检查一并适用，BOPLA 字段规则不受影响。证据中记录 `not_found_is_denial: true`，被采纳的 404 显示为 `AUTH_DENIED`，理由写明该设置。
+
 ## 新增只读检测的证据策略
 
 以下示例仍属于按操作配置的 `bola` 节。`private_data_paths` 表示业务方已核定所选 Owner 基准中这些**具体值属于 Owner 私有数据**；不能仅因字段名敏感或响应中出现 Owner ID 就填写。不要配置公共商品名、通用状态或共享值。
@@ -145,7 +159,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 - `parameter_values`：按 `METHOD /path` 为非身份参数提供确定的有效资源值。
 - `write_allowlist`：声明 PATCH / PUT 检查范围；仍受权威状态验证门控制，普通外部 API 不会因该声明解锁写入。
 - `readbacks`：写接口对应的独立 GET 路径、字段映射及一致性约定。
-- `bola`（可选）：按操作配置公开/共享策略、资源标识、私有数据证据路径和明确的功能权限边界。
+- `bola`（可选）：按操作配置公开/共享策略、资源标识、私有数据证据路径、明确的功能权限边界，以及是否把隐藏资源的 404 视为拒绝（`not_found_is_denial`）。
 - `bopla`（可选）：按操作和选中资源配置精确字段许可；仅支持 GET，字段规则不继承整对象公开/共享许可。
 
 简化示例：

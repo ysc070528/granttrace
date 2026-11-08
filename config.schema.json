@@ -345,6 +345,11 @@
           "default": "deny",
           "description": "Expected cross-resource access for ONLY the configured Visitor, Owner and resource pair. Use allow for a verified sharing/admin relationship; not a blanket endpoint exemption."
         },
+        "not_found_is_denial": {
+          "type": "boolean",
+          "default": false,
+          "description": "Read a Visitor or Anonymous 404 for the Owner's resource as a denial, for APIs that hide other users' objects with 404. Applies only when the Owner received a valid response to the same request and the 404 body only says the object was not found, without any Owner value. Default false: a 404 can also mean a wrong parameter value."
+        },
         "resource_id_paths": {
           "type": "array",
           "description": "JSON field paths containing trustworthy resource ownership identifiers",

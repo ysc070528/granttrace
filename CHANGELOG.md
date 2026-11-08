@@ -42,6 +42,18 @@
   which it misses and why, and the request log of the read-only scan. Helper
   scripts in `examples/vampi/` reproduce it. See
   [docs/case-studies/vampi.md](docs/case-studies/vampi.md) (#81).
+- `bola.<operation>.not_found_is_denial` reads a 404 as a denial, for APIs
+  that hide other users' objects with "not found" instead of 403. A Visitor or
+  Anonymous 404 counts only when the Owner received a valid response to the
+  same request, the body is empty or only says the object was not found (a
+  full-message grammar with at most one word naming the resource type, in a
+  known error envelope or Problem Details), and none of the Owner's values
+  appears in it; any other 404 keeps its default meaning, `INCONCLUSIVE`.
+  BOLA, Broken Authentication, BFLA and collection checks of the operation
+  apply it; BOPLA field rules do not. A 404 denial gives `SECURE` with
+  confidence 0.95, below an explicit 401 or 403, and the evidence records the
+  setting. Secure-mode VAmPI's book lookup now reports `SECURE` instead of
+  `INCONCLUSIVE` (#82).
 
 ### Changed
 

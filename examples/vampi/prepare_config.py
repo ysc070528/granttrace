@@ -63,8 +63,10 @@ def main(base: str, draft_path: str, output_path: str) -> None:
     config["readbacks"] = {}        # first scan is read-only: no PUT readbacks
     config["write_allowlist"] = []
     config["bola"] = {
-        # VAmPI: only the owner of a book may see its secret.
-        "GET /books/v1/{book_title}": {"resource_id_paths": ["book_title"], "private_data_paths": ["secret"]},
+        # VAmPI: only the owner of a book may see its secret. In secure mode it looks books up by
+        # title and owner, so another user's book is "Book not found!" (404): read that as a denial.
+        "GET /books/v1/{book_title}": {"resource_id_paths": ["book_title"], "private_data_paths": ["secret"],
+                                       "not_found_is_denial": True},
         # VAmPI: unregistered users may see basic user information.
         "GET /users/v1/{username}": {"expected_public": True},
         # A user's password is private; the debug endpoint lists every user.

@@ -371,7 +371,7 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
             "value_similarity", "exact_value_match", "visitor_self_provided", "visitor_self_exact_match",
             "visitor_self_value_similarity", "visitor_cross_baseline_valid", "visitor_self_baseline_valid",
             "owner_self_distinct", "denial_body_conflict", "anonymous_authentication_violation",
-            "anonymous_owner_value_match", "anonymous_owner_identifier_match",
+            "anonymous_owner_value_match", "anonymous_owner_identifier_match", "not_found_is_denial",
         }
 
         def without_oracle(value: Any) -> Any:
