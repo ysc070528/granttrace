@@ -157,6 +157,23 @@ class RequestBuilderMixin:
                                     secrets.add(str(item))
 
         for identity_name, identity in self.identities.items():
+            if identity_name == "roles" and isinstance(identity, dict):
+                for role_name, role_data in identity.items():
+                    if isinstance(role_data, dict):
+                        for key, value in self.identity_headers(role_name).items():
+                            if self._is_auth_header(key):
+                                secrets.add(value)
+                                if key.lower() == "authorization" and " " in value:
+                                    secrets.add(value.split(" ", 1)[1])
+                                if key.lower() == "cookie":
+                                    for part in value.split(";"):
+                                        if "=" in part:
+                                            c_val = part.split("=", 1)[1].strip().strip('"')
+                                            if c_val:
+                                                secrets.add(c_val)
+                        for p_name, p_val in role_data.get("parameters", {}).items():
+                            _collect_from_param(p_name, p_val)
+                continue
             for key, value in self.identity_headers(identity_name).items():
                 if self._is_auth_header(key):
                     secrets.add(value)
@@ -184,7 +201,12 @@ class RequestBuilderMixin:
         return secrets
 
     def identity_headers(self, identity_name: str) -> Dict[str, str]:
-        identity = self.identities[identity_name]
+        if identity_name in self.identities:
+            identity = self.identities[identity_name]
+        elif isinstance(self.identities.get("roles"), dict) and identity_name in self.identities["roles"]:
+            identity = self.identities["roles"][identity_name]
+        else:
+            raise KeyError(f"Unknown identity: {identity_name}")
         headers = {}
         for key, value in identity.get("headers", {}).items():
             normalized = str(key).strip().lower()

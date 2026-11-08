@@ -388,7 +388,7 @@ class VersionConsistencyTests(unittest.TestCase):
 
     def test_core_package_version(self):
         import core
-        self.assertEqual(core.__version__, "2.6.0")
+        self.assertEqual(core.__version__, "2.7.0")
 
 
 if __name__ == "__main__":

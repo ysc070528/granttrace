@@ -43,7 +43,7 @@ is in the repository.
 - **Sensitive property exposure (BOPLA).** Detects unmasked sensitive properties
   (credentials, phone numbers, identity numbers, salary) returned to unauthorized visitors.
 - **Multi-role RBAC access matrix.** Evaluates access boundaries across multiple
-  configured roles concurrently, pinpointing role privilege violations.
+  configured roles in a structured matrix, pinpointing role privilege violations.
 - **Plan before you send.** `--init-config` drafts a configuration and a review
   checklist from the specification, `--validate-config` checks it offline, and
   `--dry-run` shows what would be requested while sending nothing.

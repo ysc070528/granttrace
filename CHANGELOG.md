@@ -1,18 +1,29 @@
 # Changelog
 
-## 2.6.0 - Unreleased
+## 2.7.0 - Unreleased
 
 ### Added
 
 - Read-only POST BOLA auditing: operations configured with explicit `read_only: true`
   and a request `body` now execute cross-identity BOLA comparison using POST transport.
-  Unconfigured or state-modifying POST operations remain safely skipped without sending writes.
+  Supports both shared JSON payloads and explicit identity-mapped request bodies (`owner`,
+  `visitor`, `visitor_self`, `roles`). Unconfigured or state-modifying POST operations
+  remain safely skipped without sending write requests.
 - Heuristic BOPLA sensitive property exposure detection (OWASP API3:2023): detects
-  unmasked sensitive properties (such as phone, salary, credentials, and identity IDs)
+  unmasked sensitive properties (such as credentials, phone numbers, ID cards, salaries)
   exposed to unauthorized visitors when `detect_sensitive_exposure: true` is configured.
+  Enforces strict exact-path matching, ignores booleans, masked strings, and null/empty
+  scalars, respects authorization policies, and suppresses false positives on legitimate access.
 - Multi-role RBAC access matrix: supports optional `identities.roles` definitions to
-  audit access permissions across multiple user roles concurrently, detecting privilege
-  violations against `required_role` and rendering an interactive RBAC matrix table in the HTML report.
+  probe access permissions across multiple user roles under global rate-limiting and throttling,
+  evaluating privileged role baselines and detecting privilege violations against `required_role`.
+  Renders a structured RBAC matrix table in the HTML report and sanitized JSON output.
+
+### Changed
+
+- Synchronize package, runtime, Windows distribution and release-workflow versions to `2.7.0`.
+
+## 2.6.0
 - Read-only Broken Authentication (CWE-306, SARIF `GT-AUTH-001`) and Broken
   Function Level Authorization (CWE-285, `GT-BFLA-001`) checks, and private-data
   checks for collection endpoints (CWE-639). Confirmation requires explicitly

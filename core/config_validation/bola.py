@@ -219,6 +219,20 @@ class BolaChecks(ValidatorBase):
                             actual=safe_diagnostic_value(body_val),
                         )
                     )
+                elif isinstance(body_val, dict):
+                    # If identity-mapped body, validate sub-bodies
+                    identity_keys = {"owner", "visitor", "visitor_self", "anonymous", "roles", "common"}
+                    if any(k in body_val for k in ("owner", "visitor", "visitor_self")):
+                        for sub_k, sub_v in body_val.items():
+                            if sub_k in identity_keys and not isinstance(sub_v, (dict, list, str, int, float, bool)) and sub_v is not None:
+                                issues.append(
+                                    ConfigIssue(
+                                        path=f"bola.{ep_key}.body.{sub_k}",
+                                        message=f"Body for identity '{sub_k}' must be JSON-serializable",
+                                        expected="JSON-serializable value",
+                                        actual=safe_diagnostic_value(sub_v),
+                                    )
+                                )
 
             if is_valid and method == "POST" and not policy.get("read_only"):
                 issues.append(

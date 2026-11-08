@@ -537,11 +537,22 @@ class SecurityReportGenerator:
             for r_name in all_roles:
                 r_info = ep_data.get("roles", {}).get(r_name, {})
                 access = r_info.get("access", "N/A")
-                color = "#16a34a" if access == "ALLOWED" else "#dc2626" if access == "VIOLATION" else "#64748b"
+                if access == "ALLOWED":
+                    color = "#16a34a"
+                elif access == "VIOLATION":
+                    color = "#dc2626"
+                elif access == "DENIED":
+                    color = "#64748b"
+                elif access == "INCONCLUSIVE":
+                    color = "#d97706"
+                elif access == "ERROR":
+                    color = "#991b1b"
+                else:
+                    color = "#475569"
                 status = r_info.get("status", "")
                 badge = f'<span class="pill" style="background:{color}">{cls._escape(access)}</span>'
                 if status:
-                    badge += f" <small>({status})</small>"
+                    badge += f" <small>({cls._escape(str(status))})</small>"
                 cells.append(f"<td>{badge}</td>")
             rows.append(f"<tr><td><code>{cls._escape(ep_key)}</code></td>{''.join(cells)}</tr>")
         return f"""

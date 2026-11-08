@@ -30,6 +30,9 @@ Demo 在 `127.0.0.1` 启动一个临时 API，找出其中的 BOLA 和 Mass Assi
   证据不足时判为 `SUSPICIOUS` 或 `INCONCLUSIVE`，不会算作漏洞。
 - **默认安全。** 扫描只读。路径、operationId 或描述带有副作用语义的 GET 在请求前跳过，
   对外部目标的写入一律拒绝。
+- **支持只读 POST 审计。** 针对明确配置 `read_only: true` 与请求体的查询或 RPC 类 POST 接口执行 BOLA 越权对比审计，未声明只读的状态变更接口保持安全零请求。
+- **BOPLA 敏感属性过度暴露检测。** 挖掘泄露给未授权访客的明文敏感属性（凭据、电话、证件号、薪资等）。
+- **多角色 RBAC 访问权限矩阵。** 在结构化矩阵中跨多个配置角色核验证据边界，精准指出越权违规。
 - **先计划，再发送。** `--init-config` 根据规范生成配置草稿和核对清单，`--validate-config`
   离线校验，`--dry-run` 列出将要发送的请求，但不发送任何请求。
 - **报告可直接用于修复。** 每条结果说明比较了什么；每个确认漏洞附修复方向、复验步骤、
@@ -42,10 +45,12 @@ Demo 在 `127.0.0.1` 启动一个临时 API，找出其中的 BOLA 和 Mass Assi
 | 检查 | CWE | 运行方式 | 需要配置 |
 |---|---|---|---|
 | BOLA / IDOR | CWE-639 | 只读，以 Owner、Visitor、Anonymous 请求 | 两个测试账号及各自拥有的资源 |
+| 只读 POST BOLA | CWE-639 | 只读 POST，需显式声明 `read_only: true` | 请求体 `body` 与测试账号 |
 | Broken Authentication | CWE-306 | 只读，针对规范要求认证的操作 | `private_data_paths`：匿名不应看到的 Owner 数据 |
 | Broken Function Level Authorization | CWE-285 | 只读 | 所需角色及各身份的角色 |
+| 多角色 RBAC 矩阵 | CWE-285 | 只读，按限速策略探针各角色 | `identities.roles` 与 `required_role` |
 | 集合接口私有数据泄露 | CWE-639 | 只读，针对列表接口 | `private_data_paths` |
-| 字段级授权（BOPLA） | CWE-200 | 只读 | `bopla` 中按字段的规则 |
+| 字段级授权（BOPLA） | CWE-200 | 只读 | `bopla` 中按字段的规则或 `detect_sensitive_exposure` |
 | Mass Assignment | CWE-915 | **仅内置 demo** | – |
 
 Mass Assignment 测试需要写入资源，GrantTrace 只在能核验资源实际状态并恢复时才执行。
@@ -53,7 +58,7 @@ Mass Assignment 测试需要写入资源，GrantTrace 只在能核验资源实�
 自己持有数据的内置 demo 展示完整流程，包括独立读回和已核验的恢复。
 
 **暂不支持：** GraphQL 和 gRPC；OAuth、OIDC、mTLS 登录流程（请自行配置 token 或 header）；
-查询字符串中的 API key；POST、DELETE 测试；对外部 API 的写入。
+查询字符串中的 API key；DELETE 测试；对外部 API 的写入。
 
 ## 安装
 

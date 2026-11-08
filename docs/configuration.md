@@ -269,7 +269,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 
 ### 3. 多角色 RBAC 权限矩阵（Role-Based Access Control Matrix）
 
-在 `identities` 节中通过 `roles` 定义多个命名角色（如管理员、审计员、普通访客），工具将自动对端点进行多角色并发审计，并在 HTML 报告与 JSON 结果中生成直观的 RBAC 权限矩阵视图：
+在 `identities` 节中通过 `roles` 定义多个命名角色（如管理员、审计员、普通访客），工具将按既定限速与重试策略对端点进行多角色访问权限矩阵探针，并在 HTML 报告与 JSON 结果中生成清晰的 RBAC 权限矩阵视图：
 
 ```json
 {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from core.config_validation.base import ConfigIssue, ValidationSummary, ValidatorBase
@@ -65,6 +66,8 @@ class IdentityChecks(ValidatorBase):
                                     actual=safe_diagnostic_value(role_info),
                                 )
                             )
+                        else:
+                            cls._validate_single_role(role_name, role_info, issues)
                 continue
             if identity_name not in expected_identities:
                 closest = cls._find_closest_match(str(identity_name), sorted(expected_identities))
@@ -108,6 +111,140 @@ class IdentityChecks(ValidatorBase):
             cls._validate_identity_authentication_integrity(
                 identities, issues, custom_names=all_custom_names, spec_names=spec_auth_names
             )
+
+    @classmethod
+    def _validate_single_role(
+        cls,
+        role_name: str,
+        role_info: Dict[str, Any],
+        issues: List[ConfigIssue],
+    ) -> None:
+        if not isinstance(role_name, str) or not re.match(r"^[a-zA-Z0-9_.-]+$", role_name):
+            issues.append(
+                ConfigIssue(
+                    path=f"identities.roles.{role_name}",
+                    message=f"Role name '{role_name}' must be an alphanumeric identifier",
+                    expected="string matching '^[a-zA-Z0-9_.-]+$'",
+                    actual=safe_diagnostic_value(role_name),
+                )
+            )
+
+        for key in role_info.keys():
+            if key not in cls.KNOWN_ROLE_KEYS:
+                closest = cls._find_closest_match(str(key), sorted(cls.KNOWN_ROLE_KEYS))
+                suggestion = f"Did you mean '{closest}'?" if closest else None
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.{key}",
+                        message=f"Unrecognized field '{key}' in role '{role_name}'",
+                        expected=f"one of {sorted(cls.KNOWN_ROLE_KEYS)}",
+                        actual=safe_diagnostic_value(key),
+                        suggestion=suggestion,
+                    )
+                )
+
+        # token
+        token = role_info.get("token")
+        if token is not None:
+            if not isinstance(token, str):
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.token",
+                        message="Role token must be a string or null",
+                        expected="string or null",
+                        actual=safe_diagnostic_value(token),
+                    )
+                )
+            elif any(c in token for c in "\r\n\t"):
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.token",
+                        message="Role token must not contain line breaks or control characters",
+                        expected="single-line clean string",
+                        actual="<token string with line breaks/control chars>",
+                    )
+                )
+
+        # logical role override
+        logical_role = role_info.get("role")
+        if logical_role is not None:
+            if not isinstance(logical_role, str) or not logical_role.strip():
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.role",
+                        message="Role designation must be a non-empty string or null",
+                        expected="non-empty string or null",
+                        actual=safe_diagnostic_value(logical_role),
+                    )
+                )
+            elif any(c in logical_role for c in "\r\n\t"):
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.role",
+                        message="Role designation must not contain line breaks or control characters",
+                        expected="single-line clean string",
+                        actual=safe_diagnostic_value(logical_role),
+                    )
+                )
+
+        # headers
+        headers = role_info.get("headers")
+        if headers is not None:
+            if not isinstance(headers, dict):
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.headers",
+                        message=f"Headers for role '{role_name}' must be an object",
+                        expected="dict / JSON object",
+                        actual=safe_diagnostic_value(headers),
+                    )
+                )
+            else:
+                seen_headers: Set[str] = set()
+                for h_key, h_val in headers.items():
+                    norm_h = str(h_key).strip().lower()
+                    if norm_h in seen_headers:
+                        issues.append(
+                            ConfigIssue(
+                                path=f"identities.roles.{role_name}.headers.{h_key}",
+                                message=f"Duplicate case-insensitive header '{norm_h}'",
+                                expected="unique case-insensitive header names",
+                                actual=safe_diagnostic_value(h_key),
+                            )
+                        )
+                    seen_headers.add(norm_h)
+
+                    if not isinstance(h_val, str):
+                        issues.append(
+                            ConfigIssue(
+                                path=f"identities.roles.{role_name}.headers.{h_key}",
+                                message=f"Header value for '{h_key}' must be a string",
+                                expected="string",
+                                actual=safe_diagnostic_value(h_val),
+                            )
+                        )
+                    elif any(c in str(h_key) + str(h_val) for c in "\r\n\t"):
+                        issues.append(
+                            ConfigIssue(
+                                path=f"identities.roles.{role_name}.headers.{h_key}",
+                                message="Role header names and values must not contain line breaks or control characters",
+                                expected="single-line header key/value",
+                                actual=f"{safe_diagnostic_value(h_key)}: [VALUE WITH LINEBREAKS REDACTED]",
+                            )
+                        )
+
+        # body
+        if "body" in role_info:
+            body_val = role_info["body"]
+            if not isinstance(body_val, (dict, list, str, int, float, bool)) and body_val is not None:
+                issues.append(
+                    ConfigIssue(
+                        path=f"identities.roles.{role_name}.body",
+                        message=f"Role body for '{role_name}' must be JSON-serializable",
+                        expected="JSON-serializable value",
+                        actual=safe_diagnostic_value(body_val),
+                    )
+                )
 
     @classmethod
     def _validate_single_identity(

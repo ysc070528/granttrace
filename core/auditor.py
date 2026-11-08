@@ -521,17 +521,27 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         r"credit[_-]?card|bank[_-]?card|card[_-]?number|cvv|mobile|phone|telephone)$"
     )
 
+    MASKED_PATTERN = re.compile(r"(?i)(\*+|\[?redacted\]?|\[?masked\]?|\[?hidden\]?|\[?anonymized\]?|x{4,})")
+
+    @classmethod
+    def _is_sensitive_value_masked(cls, val_str: str) -> bool:
+        if not val_str or len(val_str) < 4:
+            return True
+        if val_str.lower() in {"none", "null", "nil", "n/a", "undefined", "true", "false", "empty", "unknown"}:
+            return True
+        return bool(cls.MASKED_PATTERN.search(val_str))
+
     @classmethod
     def _extract_sensitive_values(cls, data: Any, current_path: str = "") -> List[Tuple[str, str, Any]]:
-        findings = []
+        findings: List[Tuple[str, str, Any]] = []
         if isinstance(data, dict):
             for k, v in data.items():
                 p = f"{current_path}.{k}" if current_path else str(k)
                 if cls.SENSITIVE_KEY_PATTERN.match(str(k)):
-                    if isinstance(v, (str, int, float)) and str(v).strip():
+                    # Explicitly ignore booleans (which are int subclasses), None, and non-scalar structures
+                    if not isinstance(v, bool) and isinstance(v, (str, int, float)):
                         s_val = str(v).strip()
-                        # Skip already masked values (e.g. ***, [REDACTED], 138****0000)
-                        if not ("*" in s_val or "[REDACTED]" in s_val.upper() or len(s_val) < 3):
+                        if not cls._is_sensitive_value_masked(s_val):
                             findings.append((p, str(k), v))
                 if isinstance(v, (dict, list)):
                     findings.extend(cls._extract_sensitive_values(v, p))
@@ -545,41 +555,112 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     def _detect_sensitive_property_exposure(
         self, ep: Dict[str, Any], owner: HTTPResult, visitor: HTTPResult, evidence: Dict[str, Any]
     ) -> None:
-        """Heuristic check for sensitive data unmasked to Visitor (OWASP API3: BOPLA / Excessive Exposure)."""
+        """Check for unmasked sensitive property exposure to unauthorized visitor (OWASP API3: BOPLA)."""
+        key = self._operation_key(ep)
+        policy = self.bola_config.get(key, {})
+        if not policy.get("detect_sensitive_exposure"):
+            return
+        # Respect authorization policy: if visitor is expected to have access, or endpoint is public, not a violation
+        if policy.get("expected_visitor_access") == "allow" or policy.get("expected_public") is True:
+            return
+        security = ep.get("security", [])
+        if ep.get("security_declared", False) and (security == [] or {} in security) and not policy.get("expected_visitor_access"):
+            return
         if owner.status != 200 or visitor.status != 200 or not owner.body or not visitor.body:
             return
-        try:
-            owner_doc = strict_json_loads(owner.body)
-            visitor_doc = strict_json_loads(visitor.body)
-        except Exception:
+
+        # Check response validity using ResponseDiffEngine
+        owner_assessment = AuthorizationEvidence.assess(owner)
+        visitor_assessment = AuthorizationEvidence.assess(visitor)
+        if not AuthorizationEvidence.valid(owner_assessment) or not AuthorizationEvidence.valid(visitor_assessment):
             return
+
+        owner_doc = owner_assessment.get("data")
+        visitor_doc = visitor_assessment.get("data")
+        if not owner_doc or not visitor_doc:
+            return
+
         owner_sensitives = self._extract_sensitive_values(owner_doc)
         if not owner_sensitives:
             return
+
+        # Register all discovered sensitive values into secret values for automatic redaction in reports
+        secret_vals = {str(val) for _, _, val in owner_sensitives if val is not None}
+        if secret_vals:
+            self._publish_secret_values(secret_vals)
+
         visitor_sensitives = dict((path, val) for path, _, val in self._extract_sensitive_values(visitor_doc))
+
+        # Strict exact JSON field path matching only:
         exposed_fields = []
-        for path, key, val in owner_sensitives:
-            # Check if exactly matching value leaked in visitor response
+        for path, prop_name, val in owner_sensitives:
             if path in visitor_sensitives and json_values_equal(visitor_sensitives[path], val):
-                exposed_fields.append((path, key))
-            elif isinstance(visitor_doc, dict) and any(json_values_equal(v_val, val) for v_val in visitor_sensitives.values()):
-                exposed_fields.append((path, key))
+                exposed_fields.append((path, prop_name))
+
         if exposed_fields:
             field_names = [f[0] for f in exposed_fields]
+            # Redacted details: never include raw sensitive values in reason, details, or evidence
             reason = f"Sensitive property exposure (BOPLA): unmasked sensitive fields {field_names} returned to unauthorized visitor"
-            finding = {
-                "type": "BOPLA (Excessive Sensitive Data Exposure)",
-                "cwe": "CWE-200",
-                "severity": "High",
-                "endpoint": self._operation_key(ep),
-                "target_url": evidence.get("target_url"),
-                "details": reason,
-                "evidence": {**evidence, "exposed_sensitive_paths": field_names},
-            }
-            with self._result_lock:
-                self.stats["confirmed"] += 1
-            self._record_result(ep, "BOPLA_EXPOSURE", Verdict.CONFIRMED, reason, evidence, finding)
 
+            # Determine verdict:
+            # If clear authorization boundary exists (authenticated endpoint or visitor denied access) -> CONFIRMED
+            # Otherwise -> SUSPICIOUS (heuristic candidate needing verification)
+            requires_auth = bool(security) and {} not in security
+            has_boundary_evidence = requires_auth or (policy.get("expected_visitor_access") == "deny")
+
+            verdict = Verdict.CONFIRMED if has_boundary_evidence else Verdict.SUSPICIOUS
+            finding = None
+            if verdict == Verdict.CONFIRMED:
+                finding = {
+                    "type": "BOPLA (Excessive Sensitive Data Exposure)",
+                    "cwe": "CWE-200",
+                    "severity": "High",
+                    "endpoint": key,
+                    "target_url": evidence.get("target_url"),
+                    "details": reason,
+                    "evidence": {
+                        "exposed_sensitive_paths": field_names,
+                        "observation_group": key + ":bopla_exposure",
+                    },
+                }
+                with self._result_lock:
+                    self.stats["confirmed"] += 1
+
+            self._record_result(ep, "BOPLA_EXPOSURE", verdict, reason, {
+                "exposed_sensitive_paths": field_names,
+                "target_url": evidence.get("target_url"),
+            }, finding)
+
+    @staticmethod
+    def _resolve_request_bodies(body_config: Any) -> Tuple[Any, Any, Any]:
+        """Resolve (owner_body, visitor_cross_body, visitor_self_body).
+
+        Distinguishes explicit per-identity body maps from standard business payloads.
+        """
+        if isinstance(body_config, dict):
+            identity_keys = {"owner", "visitor", "visitor_self", "anonymous", "roles", "common"}
+            if any(k in body_config for k in ("owner", "visitor", "visitor_self")) and all(k in identity_keys for k in body_config):
+                common = body_config.get("common")
+                owner_body = body_config.get("owner", common)
+                visitor_cross_body = body_config.get("visitor", common if common is not None else owner_body)
+                visitor_self_body = body_config.get("visitor_self", common)
+                return owner_body, visitor_cross_body, visitor_self_body
+        return body_config, body_config, body_config
+
+    def _get_role_body(self, policy: Dict[str, Any], role_name: str, role_data: Dict[str, Any]) -> Any:
+        if "body" in role_data:
+            return role_data["body"]
+        body_config = policy.get("body")
+        if isinstance(body_config, dict):
+            if "roles" in body_config and isinstance(body_config["roles"], dict) and role_name in body_config["roles"]:
+                return body_config["roles"][role_name]
+            if role_name in body_config:
+                return body_config[role_name]
+            if "common" in body_config:
+                return body_config["common"]
+            if "owner" in body_config:
+                return body_config["owner"]
+        return body_config
 
     def _execute_rbac_matrix_checks(self, ep: Dict[str, Any]) -> None:
         """Evaluate multi-role RBAC access matrix across configured roles."""
@@ -587,36 +668,83 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         roles = self.identities.get("roles", {})
         if not roles or not isinstance(roles, dict):
             return
+
         matrix_entry: Dict[str, Any] = {"endpoint": key, "method": ep["method"], "roles": {}}
         policy = self.bola_config.get(key, {})
         required_role = policy.get("required_role")
+
+        # First verify privileged baseline if required_role is configured
+        privileged_baseline_valid = False
+        if required_role:
+            priv_role_name = None
+            priv_role_data = None
+            for r_name, r_data in roles.items():
+                if isinstance(r_data, dict) and r_data.get("role", r_name) == required_role:
+                    priv_role_name = r_name
+                    priv_role_data = r_data
+                    break
+
+            if priv_role_name and priv_role_data:
+                try:
+                    p_headers = self.identity_headers(priv_role_name)
+                    p_url = self._build_url(ep, "owner")
+                    p_body = self._get_role_body(policy, priv_role_name, priv_role_data)
+                    p_res = self._http_request(ep["method"], p_url, data=p_body, identity_name=priv_role_name, headers=p_headers)
+                    p_assess = AuthorizationEvidence.assess(p_res)
+                    if AuthorizationEvidence.valid(p_assess):
+                        privileged_baseline_valid = True
+                except Exception:
+                    privileged_baseline_valid = False
+
         for role_name, role_data in roles.items():
             if not isinstance(role_data, dict):
                 continue
-            role_headers = dict(role_data.get("headers", {}))
-            if role_data.get("token"):
-                role_headers["Authorization"] = role_data["token"]
+            user_role = role_data.get("role", role_name)
             try:
+                role_headers = self.identity_headers(role_name)
                 url = self._build_url(ep, "owner")
-                # For read-only POST or GET, send request
-                body_data = policy.get("body")
-                res = self._http_request(ep["method"], url, data=body_data, identity_name=role_name, headers=role_headers)
+                role_body = self._get_role_body(policy, role_name, role_data)
+                res = self._http_request(ep["method"], url, data=role_body, identity_name=role_name, headers=role_headers)
+
+                # Assess response using ResponseDiffEngine
+                assessment = ResponseDiffEngine.assess_response(res.status, res.body)
                 status_code = res.status
-                is_denied = status_code in (401, 403)
-                is_ok = status_code == 200
-                access_verdict = "ALLOWED" if is_ok else "DENIED" if is_denied else f"HTTP_{status_code}"
-                # Check for privilege violation if endpoint requires specific higher role
+                is_denied = (
+                    status_code in (401, 403)
+                    or assessment.get("kind") == ResponseDiffEngine.RESPONSE_AUTH_DENIED
+                    or assessment.get("is_auth_denial") is True
+                )
+                is_valid_data = assessment.get("kind") == ResponseDiffEngine.RESPONSE_VALID
+                is_empty = assessment.get("kind") == ResponseDiffEngine.RESPONSE_EMPTY or status_code == 204
+                is_invalid = assessment.get("kind") == ResponseDiffEngine.RESPONSE_INVALID
+
                 has_violation = False
-                user_role = role_data.get("role", role_name)
-                if required_role and is_ok and user_role != required_role:
-                    has_violation = True
-                    access_verdict = "VIOLATION"
+                if is_denied or is_invalid:
+                    access_verdict = "DENIED"
+                elif is_empty:
+                    access_verdict = "EMPTY" if status_code == 200 else f"HTTP_{status_code}"
+                elif is_valid_data:
+                    # Valid JSON response received
+                    if required_role and user_role != required_role:
+                        # Lower role got valid data on an endpoint requiring a specific higher role!
+                        if privileged_baseline_valid:
+                            has_violation = True
+                            access_verdict = "VIOLATION"
+                        else:
+                            # Missing valid privileged baseline; cannot confirm violation
+                            access_verdict = "INCONCLUSIVE"
+                    else:
+                        access_verdict = "ALLOWED"
+                else:
+                    access_verdict = f"HTTP_{status_code}"
+
                 matrix_entry["roles"][role_name] = {
                     "status": status_code,
                     "access": access_verdict,
                     "role": user_role,
                     "violation": has_violation,
                 }
+
                 if has_violation:
                     reason = f"RBAC Privilege Violation: Role '{role_name}' accessed restricted endpoint requiring '{required_role}'"
                     finding = {
@@ -626,17 +754,33 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                         "endpoint": key,
                         "target_url": url,
                         "details": reason,
-                        "evidence": {"role": role_name, "required_role": required_role, "status": status_code},
+                        "evidence": {
+                            "role": role_name,
+                            "required_role": required_role,
+                            "status": status_code,
+                        },
                     }
                     with self._result_lock:
                         self.stats["confirmed"] += 1
                     self._record_result(ep, "RBAC_VIOLATION", Verdict.CONFIRMED, reason, matrix_entry, finding)
+
             except Exception as exc:
-                matrix_entry["roles"][role_name] = {"error": str(exc), "access": "ERROR"}
+                clean_err = sanitize_error_message(str(exc))
+                for s in self._secret_values:
+                    if s and s in clean_err:
+                        clean_err = clean_err.replace(s, "[REDACTED]")
+                matrix_entry["roles"][role_name] = {"error": clean_err, "access": "ERROR"}
+
         with self._result_lock:
             if not hasattr(self, "rbac_matrix"):
                 self.rbac_matrix = {}
             self.rbac_matrix[key] = matrix_entry
+
+    def rbac_matrix_record(self) -> Dict[str, Any]:
+        """Return a sanitized copy of rbac_matrix for reporting."""
+        with self._result_lock:
+            matrix = getattr(self, "rbac_matrix", {})
+            return sanitize_evidence(matrix, include_sensitive=self.include_sensitive_evidence, secret_values=self._secret_values)
 
     def _audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         method = str(ep.get("method", "")).upper()
@@ -647,12 +791,19 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                                           "requests_sent": 0, "safety_signal": "method"})
             return
         policy = self.bola_config.get(self._operation_key(ep), {})
-        if method == "POST" and not policy.get("read_only"):
-            self._record_result(ep, "BOLA", Verdict.SKIPPED,
-                                "POST operations require explicit 'read_only: true' policy for BOLA auditing; state-changing requests are blocked",
-                                evidence={"reason_category": "safety_policy", "requests_attempted": 0,
-                                          "requests_sent": 0, "safety_signal": "method"})
-            return
+        if method == "POST":
+            if not policy.get("read_only"):
+                self._record_result(ep, "BOLA", Verdict.SKIPPED,
+                                    "POST operations require explicit 'read_only: true' policy for BOLA auditing; state-changing requests are blocked",
+                                    evidence={"reason_category": "safety_policy", "requests_attempted": 0,
+                                              "requests_sent": 0, "safety_signal": "method"})
+                return
+            if policy.get("body") is None:
+                self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
+                                    "Read-only POST operation requires a valid 'body' policy; no request was sent",
+                                    evidence={"reason_category": "missing_body", "requests_attempted": 0,
+                                              "requests_sent": 0})
+                return
         risk = read_only_risk(ep)
         if risk:
             self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
@@ -682,18 +833,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
         body_config = policy.get("body")
-        owner_data = None
-        visitor_cross_data = None
-        visitor_self_data = None
-        if isinstance(body_config, dict):
-            if "owner" in body_config or "visitor" in body_config or "visitor_self" in body_config:
-                owner_data = body_config.get("owner")
-                visitor_cross_data = body_config.get("visitor", owner_data)
-                visitor_self_data = body_config.get("visitor_self")
-            else:
-                owner_data = body_config
-                visitor_cross_data = body_config
-                visitor_self_data = body_config
+        owner_data, visitor_cross_data, visitor_self_data = self._resolve_request_bodies(body_config)
 
         risk = self._read_request_risk(method, owner_url) or self._read_request_risk(method, visitor_self_url)
         if risk:
@@ -878,14 +1018,17 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE, str(exc),
                                 evidence={"reason_category": "invalid_input", "requests_attempted": 0})
             return
-        risk = self._read_request_risk("GET", url)
+        req_method = ep.get("method", "GET").upper()
+        body_config = policy.get("body")
+        owner_data, visitor_data, _ = self._resolve_request_bodies(body_config)
+        risk = self._read_request_risk(req_method, url)
         if risk:
             self._record_result(ep, "BOLA", Verdict.SKIPPED, risk["safety_reason"],
                                 evidence={"reason_category": "safety_policy", "requests_attempted": 0, **risk})
             return
-        owner = self._read_observation("GET", url, identity_name="owner", headers=owner_headers)
-        visitor = self._read_observation("GET", url, identity_name="visitor", headers=visitor_headers)
-        anonymous = self._read_observation("GET", url, identity_name="anonymous", headers=anonymous_headers)
+        owner = self._read_observation(req_method, url, identity_name="owner", headers=owner_headers, data=owner_data)
+        visitor = self._read_observation(req_method, url, identity_name="visitor", headers=visitor_headers, data=visitor_data)
+        anonymous = self._read_observation(req_method, url, identity_name="anonymous", headers=anonymous_headers, data=visitor_data)
         # Capture once before recording resets this worker's accounting.
         attempts = getattr(self._request_accounting, "attempts", None)
         private_values = self._private_evidence_values(owner, policy)

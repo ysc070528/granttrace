@@ -85,6 +85,15 @@ class ValidatorBase:
         "auth_header_names",
     }
 
+    KNOWN_ROLE_KEYS = {
+        "id",
+        "role",
+        "token",
+        "headers",
+        "parameters",
+        "body",
+    }
+
     KNOWN_READBACK_KEYS = {
         "method",
         "path",
