@@ -12,6 +12,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 from api_sentinel import build_argument_parser, main
+from core import __version__
 from core.auditor import APISentinelAuditor
 from core.parser import OpenAPIParser
 from core.remote_refs import (
@@ -520,7 +521,7 @@ class TestAuditorAndCLIRemoteRefsIntegration(unittest.TestCase):
         self.assertIsNotNone(fetcher)
         headers = {
             "Host": "schemas.example.com",
-            "User-Agent": "GrantTrace-Schema-Fetcher/2.5.3",
+            "User-Agent": f"GrantTrace-Schema-Fetcher/{__version__}",
             "Accept": "application/json, application/yaml, text/yaml, */*",
             "Connection": "close",
         }

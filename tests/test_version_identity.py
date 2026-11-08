@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -10,8 +11,11 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from core import __version__
+from core.parser import OpenAPIParser
+from core.remote_refs import PinnedIPHTTPSConnection, RemoteRefConfig, RemoteRefSession
 from core.reporter import SecurityReportGenerator
 from mock_server.server import TargetMockHandler
 
@@ -27,6 +31,28 @@ class ReleaseIdentityTests(unittest.TestCase):
         declared = re.search(r'^version\s*=\s*"([^"]+)"\s*$', project[1], re.MULTILINE)
         self.assertIsNotNone(declared)
         self.assertEqual(declared[1], __version__)
+
+    def test_remote_schema_fetches_identify_the_runtime_version(self):
+        body = json.dumps({"User": {"type": "object"}}).encode()
+        response = MagicMock(status=200)
+        response.getheader.return_value = str(len(body))
+        response.read.side_effect = [body, b""]
+        spec = {"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {"/a": {"post": {
+            "requestBody": {"content": {"application/json": {
+                "schema": {"$ref": "https://schemas.example.com/user.json#/User"}}}},
+            "responses": {"200": {"description": "ok"}}}}}}
+        config = RemoteRefConfig.create(allow_remote_refs=True, remote_ref_hosts=["schemas.example.com"],
+                                        session=RemoteRefSession())
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("socket.getaddrinfo", return_value=[
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]), \
+                patch.object(PinnedIPHTTPSConnection, "request") as request, \
+                patch.object(PinnedIPHTTPSConnection, "getresponse", return_value=response):
+            spec_file = Path(directory) / "spec.json"
+            spec_file.write_text(json.dumps(spec), encoding="utf-8")
+            OpenAPIParser(str(spec_file), remote_ref_config=config).get_endpoints()
+        headers = request.call_args.kwargs["headers"]
+        self.assertEqual(headers["User-Agent"], f"GrantTrace-Schema-Fetcher/{__version__}")
 
     def test_report_api_creates_the_default_report(self):
         with tempfile.TemporaryDirectory(prefix="granttrace-report-default-") as directory:

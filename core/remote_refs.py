@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
+from core import __version__
 from core.yaml_safety import safe_load_yaml
 
 
@@ -718,7 +719,7 @@ class RemoteRefFetcher:
 
             headers = {
                 "Host": hostname,
-                "User-Agent": "GrantTrace-Schema-Fetcher/2.5.3",
+                "User-Agent": f"GrantTrace-Schema-Fetcher/{__version__}",
                 "Accept": "application/json, application/yaml, text/yaml, */*",
                 "Connection": "close",
             }

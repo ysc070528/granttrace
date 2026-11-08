@@ -1,4 +1,4 @@
-GrantTrace v2.5.3
+GrantTrace v2.6.0
 =================
 
 第一次使用：

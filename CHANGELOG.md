@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - 2.5.x maintenance
+## 2.6.0 - Unreleased
 
 ### Added
 
@@ -40,6 +40,11 @@
 
 ### Changed
 
+- Synchronize package, runtime, Windows distribution and release-workflow
+  versions to `2.6.0`, a minor release for the checks and options added since
+  2.5.3. The remote `$ref` fetcher's User-Agent now follows the runtime version
+  instead of a hard-coded `2.5.3`. Refresh release documentation and the example
+  reports.
 - Report BOLA reasons in English, like every other check. The JSON `reason`,
   finding `details` and per-response `reason` evidence of BOLA checks were the
   only Chinese reasons; the HTML report shows the same text. Verdicts,

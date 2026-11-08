@@ -1,9 +1,9 @@
 {
-  "tool_version": "2.5.3",
+  "tool_version": "2.6.0",
   "report_schema_version": 2,
-  "generated_at": "2026-11-07T17:13:36Z",
-  "elapsed_seconds": 0.321,
-  "target": "http://127.0.0.1:34797",
+  "generated_at": "2026-11-08T01:51:14Z",
+  "elapsed_seconds": 0.315,
+  "target": "http://127.0.0.1:46639",
   "stats": {
     "total_endpoints": 5,
     "total_checks": 5,
@@ -41,7 +41,7 @@
       "reason": "The endpoint is explicitly configured as public, and the complete Owner, Visitor and Anonymous JSON responses are identical",
       "evidence": {
         "requests_attempted": 3,
-        "target_url": "http://127.0.0.1:34797/api/public/articles/101",
+        "target_url": "http://127.0.0.1:46639/api/public/articles/101",
         "visitor_self_url": null,
         "owner": {
           "status": 200,
@@ -144,8 +144,8 @@
       "reason": "Both the Visitor cross-resource request and the Anonymous request were explicitly denied without business data in the body: HTTP authentication denial status 403",
       "evidence": {
         "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:34797/api/documents/550e8400-e29b-41d4-a716-446655440000",
-        "visitor_self_url": "http://127.0.0.1:34797/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2",
+        "target_url": "http://127.0.0.1:46639/api/documents/550e8400-e29b-41d4-a716-446655440000",
+        "visitor_self_url": "http://127.0.0.1:46639/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2",
         "owner": {
           "status": 200,
           "body": "{\"content\": \"[REDACTED]\", \"id\": \"550e8400-e29b-41d4-a716-446655440000\", \"owner_id\": \"1001\", \"title\": \"[REDACTED]\"}",
@@ -257,8 +257,8 @@
       "reason": "The Anonymous request was explicitly denied, while the unauthorized Visitor received concrete values or resource identifiers matching the Owner resource",
       "evidence": {
         "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:34797/api/users/1001/profile",
-        "visitor_self_url": "http://127.0.0.1:34797/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:46639/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:46639/api/users/1002/profile",
         "owner": {
           "status": 200,
           "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
@@ -383,8 +383,8 @@
       "evidence": {
         "field": "role",
         "readback_field": "role",
-        "target_url": "http://127.0.0.1:34797/api/users/1002/settings",
-        "readback_url": "http://127.0.0.1:34797/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:46639/api/users/1002/settings",
+        "readback_url": "http://127.0.0.1:46639/api/users/1002/profile",
         "request_content_type": "application/json",
         "snapshot_fields": [
           "role"
@@ -447,7 +447,7 @@
         "configured_fields": [
           "role"
         ],
-        "target_url": "http://127.0.0.1:34797/api/users/1002/nickname",
+        "target_url": "http://127.0.0.1:46639/api/users/1002/nickname",
         "cases": [
           {
             "field": "role",
@@ -471,12 +471,12 @@
       "cwe": "CWE-639",
       "severity": "High",
       "endpoint": "GET /api/users/{user_id}/profile",
-      "target_url": "http://127.0.0.1:34797/api/users/1001/profile",
+      "target_url": "http://127.0.0.1:46639/api/users/1001/profile",
       "details": "The Anonymous request was explicitly denied, while the unauthorized Visitor received concrete values or resource identifiers matching the Owner resource",
       "evidence": {
         "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:34797/api/users/1001/profile",
-        "visitor_self_url": "http://127.0.0.1:34797/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:46639/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:46639/api/users/1002/profile",
         "owner": {
           "status": 200,
           "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
@@ -596,7 +596,7 @@
       "cwe": "CWE-915",
       "severity": "Critical",
       "endpoint": "PATCH /api/users/{user_id}/settings",
-      "target_url": "http://127.0.0.1:34797/api/users/1002/settings",
+      "target_url": "http://127.0.0.1:46639/api/users/1002/settings",
       "details": "Privilege field 'role' persisted after mutation",
       "injected_payload": {
         "role": "admin"
@@ -604,8 +604,8 @@
       "evidence": {
         "field": "role",
         "readback_field": "role",
-        "target_url": "http://127.0.0.1:34797/api/users/1002/settings",
-        "readback_url": "http://127.0.0.1:34797/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:46639/api/users/1002/settings",
+        "readback_url": "http://127.0.0.1:46639/api/users/1002/profile",
         "request_content_type": "application/json",
         "snapshot_fields": [
           "role"
@@ -660,7 +660,7 @@
       "PATCH"
     ],
     "user_agents": [
-      "GrantTrace/2.5.3"
+      "GrantTrace/2.6.0"
     ],
     "server_stopped": true
   }
