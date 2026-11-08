@@ -198,6 +198,10 @@
   per-field branches of the mass-assignment check. The seven hash-pinned write
   methods are untouched, and a new test fails if production code uses another
   module's private member (#60).
+- Split `ConfigValidator.validate` (220 lines) into named steps with one
+  section runner instead of five copies of the same error handling. A
+  differential run over 40,000 mutated configurations gave identical results
+  (#77).
 - Code that imports `core` directly needs these changes; the CLI and
   `granttrace demo` are unaffected:
   - Helpers used across modules lost their leading underscore, and the old
