@@ -1,6 +1,6 @@
 # Case study: GrantTrace against VAmPI
 
-[Back to the README](../../README.md)
+[Back to the README](../../README.md) · [crAPI case study](crapi.md)
 
 [VAmPI](https://github.com/erev0s/VAmPI) is a deliberately vulnerable REST API
 with a switch between a vulnerable and a secure mode, which makes it useful for

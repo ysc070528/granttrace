@@ -55,3 +55,11 @@ coverage, false positives, or false negatives on another API.
 checkout on 127.0.0.1 without the Flask debugger, and `prepare_config.py`
 creates two test accounts in it and fills a configuration drafted with
 `--init-config`. Run them only against a VAmPI instance you started yourself.
+
+## crAPI
+
+`crapi/` holds the helper files for the
+[crAPI case study](../docs/case-studies/crapi.md): `no-chatbot.compose.yml`
+lets crAPI's gateway start without its LLM chatbot, and `prepare_config.py`
+creates the test users and their objects and fills a configuration drafted with
+`--init-config`. Run them only against a crAPI instance you started yourself.

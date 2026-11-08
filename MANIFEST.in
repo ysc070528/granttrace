@@ -7,4 +7,5 @@ include docs/assets/report-preview.png docs/assets/report-finding.png
 include README.zh-CN.md
 include examples/README.md examples/sample_report.html examples/sample_result.json
 recursive-include examples/vampi *.py
+recursive-include examples/crapi *.py *.yml
 global-exclude __pycache__ *.py[cod] *.local.json
