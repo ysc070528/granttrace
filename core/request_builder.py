@@ -315,11 +315,26 @@ class RequestBuilderMixin:
                 # Missing credentials are intentional in an anonymous
                 # probe, including when the spec marks them required.
                 return None
-            if all(self.identity_headers(role).get(normalized_name) for role in ("owner", "visitor")):
-                return None
-            raise ParameterSerializationError(
-                f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
-            )
+            configured = [bool(self.identity_headers(role).get(normalized_name)) for role in ("owner", "visitor")]
+            if all(configured):
+                return None  # Sent from each requester's own identity headers.
+            if name in requester_values:
+                raise ParameterSerializationError(
+                    f"Authentication header '{name}' cannot be supplied via parameter values; no request was sent"
+                )
+            if any(configured):
+                # A visitor missing a credential the owner sends could be
+                # refused as unauthenticated, not as unauthorized.
+                raise ParameterSerializationError(
+                    f"Authentication header '{name}' is configured for only one of owner and visitor; configure "
+                    "it for both under identities.*.headers; no request was sent"
+                )
+            if metadata.get("required") is True:
+                raise ParameterSerializationError(
+                    f"Missing required authentication header '{name}'; configure it for owner and visitor under "
+                    "identities.*.headers; no request was sent"
+                )
+            return None  # Optional and configured for neither identity: not sent.
 
         if normalized_name in emitted_headers:
             raise ParameterSerializationError(

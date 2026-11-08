@@ -80,10 +80,9 @@ def _request_value_review(
     Returns the draft target ("" when nothing is drafted) and the review note.
     Mirrors RequestBuilderMixin: it ignores some header declarations, sends a
     declared authentication header only from both owner's and visitor's
-    identity headers (refusing the check otherwise, even for an optional one),
-    takes an authentication cookie only from the requesting identity, and
-    refuses unsupported cookie forms. Optional business values are left out
-    like optional query parameters.
+    identity headers, takes an authentication cookie only from the requesting
+    identity, and refuses unsupported cookie forms. Optional values, including
+    authentication ones, are left out like optional query parameters.
     """
     if auth is None:
         return "", (
@@ -99,10 +98,15 @@ def _request_value_review(
             "authentication from identities.*.headers. Nothing to configure here."
         )
     if location == "header" and ConfigValidator.is_auth_header(name, spec_auth_names=auth_headers):
+        if parameter.get("required") is not True:
+            return "", (
+                "Optional authentication header: not drafted. When a test needs it, configure it for both owner "
+                "and visitor under identities.*.headers, never in parameter_values; configuring it for only one "
+                "of them refuses the check. Anonymous requests omit it."
+            )
         return "identity_headers", (
             "Authentication header: drafted for owner and visitor under identities.*.headers, which are sent "
-            "with every request; never put it in parameter_values. GrantTrace refuses this check unless both "
-            "identities send it, even when the parameter is optional. Anonymous requests omit it."
+            "with every request; never put it in parameter_values. Anonymous requests omit it."
         )
     if location == "cookie" and (
         lowered in auth_cookies
