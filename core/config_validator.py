@@ -11,7 +11,7 @@ it and its result types from here.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.config_validation.base import ConfigIssue, ConfigValidationResult, ValidationSummary
 from core.config_validation.bola import BolaChecks
@@ -35,34 +35,70 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
         issues: List[ConfigIssue] = []
         summary = ValidationSummary()
 
+        root_issue = cls._root_issue(config)
+        if root_issue is not None:
+            return cls._result([root_issue], summary)
+        cls._check_numbers(config, issues)
+        cls._check_top_level_keys(config, issues)
+
+        spec_auth_names = cls._spec_auth_header_names(
+            raw_spec, issues, spec_path=spec_path, remote_ref_config=remote_ref_config,
+            offline=offline, allow_offline_unresolved=allow_offline_unresolved,
+        )
+        allowlisted_set: Set[str] = set()
+        readbacks_set: Set[str] = set()
+        cls._run_section(config, "identities", "valid identities object", issues, lambda value: (
+            cls._validate_identities_section(value, issues, summary, spec_auth_names=spec_auth_names)))
+        cls._run_section(config, "write_allowlist", "list of strings", issues, lambda value: (
+            cls._validate_write_allowlist_section(value, issues, summary, allowlisted_set)))
+        cls._run_section(
+            config, "readbacks", "dict mapping operation keys to readback configurations", issues,
+            lambda value: cls._validate_readbacks_section(value, issues, summary, readbacks_set))
+        cls._check_allowlisted_readbacks(allowlisted_set, readbacks_set, issues)
+        cls._run_section(config, "parameter_values", "dict indexed by operation keys", issues, lambda value: (
+            cls._validate_parameter_values_section(value, issues, summary)))
+        cls._run_section(config, "bola", "dict indexed by operation keys", issues, lambda value: (
+            cls._validate_bola_section(value, issues, summary)))
+        if "bopla" in config:
+            cls._validate_bopla_section(config["bopla"], issues, summary)
+
+        checked_parameters: Set[Tuple[str, str]] = set()
+        cls._validate_configured_readback_parameters(config, issues, checked_parameters)
+        if raw_spec is not None:
+            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters, remote_ref_config=remote_ref_config, offline=offline, allow_offline_unresolved=allow_offline_unresolved)
+        return cls._result(issues, summary)
+
+    @staticmethod
+    def _result(issues: List[ConfigIssue], summary: ValidationSummary) -> ConfigValidationResult:
+        errors = [issue for issue in issues if not issue.is_warning]
+        summary.total_issues = len(issues)
+        summary.errors_count = len(errors)
+        summary.warnings_count = len(issues) - len(errors)
+        return ConfigValidationResult(is_valid=(len(errors) == 0), issues=issues, summary=summary)
+
+    @classmethod
+    def _root_issue(cls, config: Any) -> Optional[ConfigIssue]:
+        """The issue that stops validation before any section: a non-object or too deep root."""
         if not isinstance(config, dict):
-            issues.append(
-                ConfigIssue(
-                    path="<root>",
-                    message="Configuration root must be a JSON object",
-                    expected="dict / JSON object",
-                    actual=safe_diagnostic_value(config),
-                )
+            return ConfigIssue(
+                path="<root>",
+                message="Configuration root must be a JSON object",
+                expected="dict / JSON object",
+                actual=safe_diagnostic_value(config),
             )
-            summary.total_issues = len(issues)
-            summary.errors_count = len(issues)
-            return ConfigValidationResult(is_valid=False, issues=issues, summary=summary)
-
-        # 0. Check maximum recursion depth to defend against malicious/circular payloads
+        # Defend against malicious or circular payloads before walking them.
         if not cls._check_depth(config, 0, cls.MAX_RECURSION_DEPTH):
-            issues.append(
-                ConfigIssue(
-                    path="<root>",
-                    message=f"Configuration nesting exceeds maximum supported depth of {cls.MAX_RECURSION_DEPTH}",
-                    expected=f"depth <= {cls.MAX_RECURSION_DEPTH}",
-                    actual="excessive nesting",
-                )
+            return ConfigIssue(
+                path="<root>",
+                message=f"Configuration nesting exceeds maximum supported depth of {cls.MAX_RECURSION_DEPTH}",
+                expected=f"depth <= {cls.MAX_RECURSION_DEPTH}",
+                actual="excessive nesting",
             )
-            summary.total_issues = len(issues)
-            summary.errors_count = len(issues)
-            return ConfigValidationResult(is_valid=False, issues=issues, summary=summary)
+        return None
 
-        # Check for NaN / Infinity numbers
+    @classmethod
+    def _check_numbers(cls, config: Dict[str, Any], issues: List[ConfigIssue]) -> None:
+        """Reject NaN and Infinity outside the bopla section."""
         try:
             # BOPLA diagnostics never echo policy keys or binding values. Its
             # dedicated validator checks finite numbers without interpolating input.
@@ -77,7 +113,9 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 )
             )
 
-        # 1. Check top-level unrecognized keys and typos
+    @classmethod
+    def _check_top_level_keys(cls, config: Dict[str, Any], issues: List[ConfigIssue]) -> None:
+        """Unrecognized keys with typo hints, and the $schema and description strings."""
         for key in list(config.keys()):
             if key not in cls.KNOWN_TOP_LEVEL_KEYS:
                 closest = cls._find_closest_match(str(key), sorted(cls.KNOWN_TOP_LEVEL_KEYS))
@@ -91,8 +129,6 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                         suggestion=suggestion,
                     )
                 )
-
-        # Description / $schema
         if "$schema" in config and not isinstance(config["$schema"], str):
             issues.append(
                 ConfigIssue(
@@ -112,9 +148,14 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 )
             )
 
-        # 2. Section: identities
+    @classmethod
+    def _spec_auth_header_names(
+        cls, raw_spec: Optional[Dict[str, Any]], issues: List[ConfigIssue], *, spec_path: Optional[str],
+        remote_ref_config: Optional[RemoteRefConfig], offline: bool, allow_offline_unresolved: bool,
+    ) -> Set[str]:
+        """The specification's authentication header names; an empty set and an issue on failure."""
         try:
-            spec_auth_names = cls._extract_spec_auth_headers(
+            return cls._extract_spec_auth_headers(
                 raw_spec,
                 spec_path=spec_path,
                 remote_ref_config=remote_ref_config,
@@ -129,7 +170,6 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 suggestion="Provide a locally resolvable specification or run an online scan with --allow-remote-refs",
                 is_warning=allow_offline_unresolved,
             ))
-            spec_auth_names = set()
         except (TypeError, ValueError) as exc:
             issues.append(ConfigIssue(
                 path="<spec>.securitySchemes",
@@ -137,114 +177,39 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 expected="object-valued securityDefinitions, components, and securitySchemes",
                 actual="malformed specification structure",
             ))
-            spec_auth_names = set()
-        if "identities" in config:
-            try:
-                cls._validate_identities_section(
-                    config["identities"], issues, summary, spec_auth_names=spec_auth_names
-                )
-            except Exception as exc:
-                issues.append(
-                    ConfigIssue(
-                        path="identities",
-                        message=f"Validation failed on identities section: {exc}",
-                        expected="valid identities object",
-                        actual=safe_diagnostic_value(type(exc).__name__),
-                    )
-                )
+        return set()
 
-        # 3. Section: write_allowlist
-        allowlisted_set: Set[str] = set()
-        if "write_allowlist" in config:
-            try:
-                cls._validate_write_allowlist_section(
-                    config["write_allowlist"], issues, summary, allowlisted_set
+    @staticmethod
+    def _run_section(
+        config: Dict[str, Any], key: str, expected: str, issues: List[ConfigIssue], check: Callable[[Any], None],
+    ) -> None:
+        """Run one section's checks when present; an unexpected failure becomes an issue."""
+        if key not in config:
+            return
+        try:
+            check(config[key])
+        except Exception as exc:
+            issues.append(
+                ConfigIssue(
+                    path=key,
+                    message=f"Validation failed on {key} section: {exc}",
+                    expected=expected,
+                    actual=safe_diagnostic_value(type(exc).__name__),
                 )
-            except Exception as exc:
-                issues.append(
-                    ConfigIssue(
-                        path="write_allowlist",
-                        message=f"Validation failed on write_allowlist section: {exc}",
-                        expected="list of strings",
-                        actual=safe_diagnostic_value(type(exc).__name__),
-                    )
+            )
+
+    @staticmethod
+    def _check_allowlisted_readbacks(
+        allowlisted: Set[str], readbacks: Set[str], issues: List[ConfigIssue],
+    ) -> None:
+        """Every write_allowlist operation needs a readback, even when 'readbacks' is absent."""
+        for missing_op in sorted(allowlisted - readbacks):
+            issues.append(
+                ConfigIssue(
+                    path=f"readbacks.{missing_op}",
+                    message=f"Operation '{missing_op}' is in write_allowlist but missing an independent GET readback mapping",
+                    expected=f"an entry in 'readbacks' for '{missing_op}'",
+                    actual="missing",
+                    suggestion=f"Define readback mapping under 'readbacks' for '{missing_op}' with method 'GET' and field_map",
                 )
-
-        # 4. Section: readbacks
-        readbacks_set: Set[str] = set()
-        if "readbacks" in config:
-            try:
-                cls._validate_readbacks_section(
-                    config["readbacks"], issues, summary, readbacks_set
-                )
-            except Exception as exc:
-                issues.append(
-                    ConfigIssue(
-                        path="readbacks",
-                        message=f"Validation failed on readbacks section: {exc}",
-                        expected="dict mapping operation keys to readback configurations",
-                        actual=safe_diagnostic_value(type(exc).__name__),
-                    )
-                )
-
-        # Cross-check: write_allowlist endpoints MUST have a valid readback mapping!
-        # Must execute even if 'readbacks' section is omitted or empty.
-        if allowlisted_set:
-            missing_readbacks = sorted(allowlisted_set - readbacks_set)
-            for missing_op in missing_readbacks:
-                issues.append(
-                    ConfigIssue(
-                        path=f"readbacks.{missing_op}",
-                        message=f"Operation '{missing_op}' is in write_allowlist but missing an independent GET readback mapping",
-                        expected=f"an entry in 'readbacks' for '{missing_op}'",
-                        actual="missing",
-                        suggestion=f"Define readback mapping under 'readbacks' for '{missing_op}' with method 'GET' and field_map",
-                    )
-                )
-
-        # 5. Section: parameter_values
-        if "parameter_values" in config:
-            try:
-                cls._validate_parameter_values_section(config["parameter_values"], issues, summary)
-            except Exception as exc:
-                issues.append(
-                    ConfigIssue(
-                        path="parameter_values",
-                        message=f"Validation failed on parameter_values section: {exc}",
-                        expected="dict indexed by operation keys",
-                        actual=safe_diagnostic_value(type(exc).__name__),
-                    )
-                )
-
-        # 6. Section: bola
-        if "bola" in config:
-            try:
-                cls._validate_bola_section(config["bola"], issues, summary)
-            except Exception as exc:
-                issues.append(
-                    ConfigIssue(
-                        path="bola",
-                        message=f"Validation failed on bola section: {exc}",
-                        expected="dict indexed by operation keys",
-                        actual=safe_diagnostic_value(type(exc).__name__),
-                    )
-                )
-
-        if "bopla" in config:
-            cls._validate_bopla_section(config["bopla"], issues, summary)
-
-        checked_parameters: Set[Tuple[str, str]] = set()
-        cls._validate_configured_readback_parameters(config, issues, checked_parameters)
-        if raw_spec is not None:
-            cls._validate_spec_cross_checks(config, raw_spec, issues, spec_path=spec_path, seen=checked_parameters, remote_ref_config=remote_ref_config, offline=offline, allow_offline_unresolved=allow_offline_unresolved)
-
-        errors = [issue for issue in issues if not issue.is_warning]
-        summary.total_issues = len(issues)
-        summary.errors_count = len(errors)
-        summary.warnings_count = len(issues) - len(errors)
-
-        return ConfigValidationResult(
-            is_valid=(len(errors) == 0),
-            issues=issues,
-            summary=summary,
-        )
+            )
