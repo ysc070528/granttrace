@@ -45,6 +45,13 @@
   2.5.3. The remote `$ref` fetcher's User-Agent now follows the runtime version
   instead of a hard-coded `2.5.3`. Refresh release documentation and the example
   reports.
+- Rewrite the README as an English project page, with a Chinese translation in
+  `README.zh-CN.md`: what GrantTrace does and a quick start first, a table of the
+  checks with what each needs, and a plain list of what is not supported. Mass
+  assignment is described as demo-only, as it is for external APIs. The report
+  screenshot is retaken from the 2.6.0 demo, a confirmed-finding screenshot is
+  added, and the README no longer states a release status that each release had
+  to update. Chinese documentation links back to the Chinese README (#79).
 - Report BOLA reasons in English, like every other check. The JSON `reason`,
   finding `details` and per-response `reason` evidence of BOLA checks were the
   only Chinese reasons; the HTML report shows the same text. Verdicts,
