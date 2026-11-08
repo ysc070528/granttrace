@@ -47,7 +47,11 @@ Release's Windows ZIP and `SHA256SUMS.txt` come from the Windows workflow run on
 the release commit itself; their hashes differ from the candidate above because
 the build records its source commit.
 
-Still to do: CI on the merge commit, then the tag, the GitHub Release with the
+PR #87 merged as `4a37525`, identical to `c110ac4`. A later PR changed only the
+Code of Conduct's reporting contact and this paragraph; no code, test or
+package metadata changed after the acceptance.
+
+Still to do: CI on the release commit, then the tag, the GitHub Release with the
 Windows assets, PyPI publishing and the post-release checks in the
 [release checklist](docs/release-checklist.md), including a clean Windows machine.
 
