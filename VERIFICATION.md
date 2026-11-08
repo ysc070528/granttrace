@@ -3,6 +3,51 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
+## v2.6.0 release preparation - 2026-11-08
+
+Status: **local validation passed; v2.6.0 is not published.** On 2026-11-08 the
+latest [GitHub Release](https://github.com/ysc070528/granttrace/releases/latest)
+and the latest [PyPI](https://pypi.org/project/granttrace/) version were both
+2.5.3. The checks below ran on release commit `c359eb1` (branch
+`release/v2.6.0`, based on main `8090cc7`, which includes PRs #55 to #77); the
+commit after it adds only this record. The release preparation changes versions,
+documentation and the example reports, and makes the remote `$ref` fetcher's
+User-Agent follow the runtime version instead of a hard-coded 2.5.3.
+
+Local environment: Linux x86_64 container; CPython **3.13.18** for coverage,
+linting, acceptance scripts and the build, plus CPython **3.9.25** and
+**3.14.6**; PyYAML **6.0.3**, pytest **9.2.0**, coverage **7.17.2**, Ruff
+**0.17.4**, Mypy **2.4.1**, build **1.6.1**, Twine **7.0.0**, setuptools
+**84.2.1**, wheel **0.48.0**. No Windows host was used.
+
+| Check | This preparation |
+|---|---|
+| Full regression suite | 1228 passed and 2294 subtests passed on CPython 3.13.18 and 3.14.6; 1228 passed on 3.9.25; full unittest passed |
+| Branch-aware coverage | 89.66% combined (statements 91.66%, branches 3172 / 3702 = 85.68%) on CPython 3.13.18; required minimum 80% |
+| Mypy / Ruff | Passed; no Mypy issues in 32 source files |
+| Acceptance scripts | PR42 adversarial, PR43 integration (pinned method hashes) and authorization coverage (authoritative and generic HTTP) passed |
+| Business scenarios | 6/6 matched; zero fixture false positives, false negatives or inconclusive results |
+| JSON / YAML examples | Read-only JSON (exit 0) and active JSON/YAML (exit 2: external PATCH checks stay `INCONCLUSIVE` before any write) passed; full mock database restored; conclusive coverage 60% |
+| Generated examples | Regenerated from the built-in demo with CPython 3.14.6; declare 2.6.0; 2 confirmed, 100% conclusive coverage, rollback verified |
+| Wheel / sdist | `python -m build --no-isolation` and `twine check --strict` passed for both; the wheel has 43 files including the three demo assets and the `core/config_validation` package, and no caches, tests or `dist` files; metadata `Version: 2.6.0`, `Requires-Python: >=3.9`, `Requires-Dist: PyYAML>=6.0`; the sdist has 176 files including `examples/` |
+| Fresh wheel installation | `scripts/verify_install.py --wheel` passed outside the checkout: package, runtime, CLI, HTML, JSON and User-Agent versions agree at 2.6.0; the installed demo confirmed BOLA and mass assignment with verified rollback and full restoration; read-only scans sent 0 PATCH; the external active scan was blocked without state authority |
+| README public links | GitHub and PyPI links returned HTTP 200; the shields.io badges and the Actions badge could not be reached from this environment's network and were not checked |
+| Windows x64 portable | Pending: built and smoke-tested by the release PR's Windows workflow; a manual double-click on a clean Windows machine is still needed |
+| Release-commit CI / CodeQL | Pending on the release PR |
+| Tag, GitHub Release, PyPI 2.6.0 installation | Pending after merge; maintainers create the tag and the Release, and publishing runs from it |
+
+Local candidate hashes, built from `c359eb1` in the container:
+
+```text
+2ab9c9e2f9bae91afcdec858d3b753285a44d49f5447d9b89c465d8a72c18b07  granttrace-2.6.0-py3-none-any.whl
+ee7393cc2c8eb445200b8c3471baaadf93b847400e3306633fae8139a4a8f885  granttrace-2.6.0.tar.gz
+```
+
+The publishing workflow builds the uploaded distributions from the tag, so
+public PyPI files are verified against PyPI metadata and a fresh
+`pip install granttrace==2.6.0` after publication, not against these local
+candidates.
+
 ## v2.5.3 post-release verification
 
 Evidence checked on **2026-10-22**. Current status: **v2.5.3 is published;
