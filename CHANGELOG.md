@@ -89,6 +89,22 @@
 
 ### Fixed
 
+- Recognize RFC 9457 (RFC 7807) Problem Details bodies as clean 401/403 denials.
+  connexion sends them as `application/problem+json`, for example `{"type":
+  "about:blank", "title": "Unauthorized", "status": 401, "detail": "No
+  authorization token provided"}`, and ASP.NET Core and Spring can be configured
+  to. GrantTrace treated these members as possible business data, so a scan of
+  VAmPI, a deliberately vulnerable API, reported its book BOLA as `SUSPICIOUS`
+  instead of `CONFIRMED`, and Broken Authentication on its protected reads as
+  `INCONCLUSIVE` instead of `SECURE`: the anonymous denial could not serve as a
+  clean baseline. A problem body now counts as a denial only when every member
+  is `type`, `title`, `status`, `detail` or a tracing ID, `status` is 401 or
+  403, `type` is `about:blank` or an HTTP RFC status link, and `title` and
+  `detail` are denial messages. Any other member or text keeps it suspicious,
+  including `instance`: the check does not know the request path, so it cannot
+  tell whether the URI names the requested resource or another user's. Ordinary
+  JSON envelopes also accept a numeric `status` of 401 or 403 and messages such
+  as "No authorization token provided" (#80).
 - Refuse checks of operations that send a credential in the query string, before
   any request. Each URL is built from the resource owner's parameter values and
   sent by every identity, so an `apiKey` scheme `in: query` (or the RFC 6750
