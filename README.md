@@ -187,6 +187,6 @@ python scripts/verify_install.py
 
 测试直接使用仓库中的 `config.example.json`，无需创建本地凭据文件。[业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md) 单独记录团队共享、管理员读取、跨租户拒绝和故意越权的真值、误报与漏报；[验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md) 标明实际测试环境和范围。
 
-“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。当前普通外部 PATCH / PUT 主动测试保持阻断，内部夹具的权威观察能力不能泛化到外部 API。GraphQL、gRPC、自动 OAuth / mTLS 登录和 POST 主动测试尚未实现。远程 `$ref` 默认关闭：须同时传入 `--allow-remote-refs` 与 `--remote-ref-host`，才按主机白名单经 HTTPS 抓取，见 [远程引用说明](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)；缺少明确私有值或角色边界的匿名 / BFLA 确认、无充分 Owner 基线的集合隔离结论也不支持。更多规则与迁移说明见 [操作指南](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。
+“没有确认漏洞”不等于系统安全。检查覆盖率、错误、可疑和不确定项；显式授权预期只适用于本次身份与资源组合。当前普通外部 PATCH / PUT 主动测试保持阻断，内部夹具的权威观察能力不能泛化到外部 API。GraphQL、gRPC、自动 OAuth / mTLS 登录、查询字符串中的 API key 和 POST 主动测试尚未实现；声明查询字符串凭据的操作在任何请求前记录为不确定。远程 `$ref` 默认关闭：须同时传入 `--allow-remote-refs` 与 `--remote-ref-host`，才按主机白名单经 HTTPS 抓取，见 [远程引用说明](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)；缺少明确私有值或角色边界的匿名 / BFLA 确认、无充分 Owner 基线的集合隔离结论也不支持。更多规则与迁移说明见 [操作指南](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)。
 
 Apache License 2.0。

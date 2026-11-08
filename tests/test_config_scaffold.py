@@ -310,6 +310,26 @@ class HeaderCookieAndPutDraftTests(unittest.TestCase):
                 self.assertIn("identities.*." + section, item["needs_review"])
         self.assertIn("differ between owner and visitor", self.parameter(self.GET, "app_session")["needs_review"])
 
+    def test_query_string_credentials_are_not_drafted_and_say_why(self):
+        self.spec_data["components"]["securitySchemes"]["queryKey"] = {
+            "type": "apiKey", "in": "query", "name": "api_key"}
+        self.spec_data["paths"]["/exports/{export_id}"] = {"get": {"parameters": [
+            {"name": "export_id", "in": "path", "required": True, "schema": {"type": "integer"}},
+            {"name": "API_KEY", "in": "query", "required": True, "schema": {"type": "string"}},
+            {"name": "access_token", "in": "query", "required": True, "schema": {"type": "string"}},
+            {"name": "page_token", "in": "query", "required": True, "schema": {"type": "string"}},
+        ]}}
+        self.spec.write_text(json.dumps(self.spec_data), encoding="utf-8")
+        draft, checklist = build_config_scaffold(str(self.spec))
+        values = draft["parameter_values"]["GET /exports/{export_id}"]
+        self.assertEqual(set(values["owner"]), {"export_id", "page_token"})
+        operation = next(item for item in checklist["operations"] if item["operation"] == "GET /exports/{export_id}")
+        for name in ("API_KEY", "access_token"):
+            item = next(item for item in operation["parameters"] if item["name"] == name)
+            self.assertFalse(item["included_in_config"])
+            self.assertIn("query string", item["needs_review"])
+            self.assertIn("not supported", item["needs_review"])
+
     def test_identity_values_shared_by_operations_are_drafted_once(self):
         self.spec_data["paths"]["/invoices"] = {"get": {"parameters": [
             {"name": "x-api-key", "in": "header", "required": True, "schema": {"type": "string"}},

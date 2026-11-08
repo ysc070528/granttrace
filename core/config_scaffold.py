@@ -26,10 +26,10 @@ REQUESTERS = ("owner", "visitor", "anonymous")
 # The scanner ignores these header declarations (RequestBuilderMixin._header_parameter).
 IGNORED_HEADERS = frozenset({"authorization", "accept", "content-type"})
 
-# Lower-case header and cookie names of the specification's API-key schemes;
-# None when the security schemes cannot be resolved.
-AuthNames = Optional[Tuple[AbstractSet[str], AbstractSet[str]]]
-NO_SPEC_AUTH: AuthNames = (frozenset(), frozenset())
+# Lower-case header, cookie and query names of the specification's API-key
+# schemes; None when the security schemes cannot be resolved.
+AuthNames = Optional[Tuple[AbstractSet[str], AbstractSet[str], AbstractSet[str]]]
+NO_SPEC_AUTH: AuthNames = (frozenset(), frozenset(), frozenset())
 
 
 def _input(label: str) -> str:
@@ -59,16 +59,22 @@ def config_needs_input(config: Any) -> bool:
 
 
 def _spec_auth_names(parser: OpenAPIParser) -> AuthNames:
-    """Return the header and cookie names of the specification's API-key schemes."""
+    """Return the header, cookie and query names of the specification's API-key schemes."""
     try:
         schemes = parser.get_security_schemes()
     except (TypeError, ValueError, RuntimeError):
         return None
-    names: Dict[str, set] = {"header": set(), "cookie": set()}
+    names: Dict[str, set] = {"header": set(), "cookie": set(), "query": set()}
     for scheme in schemes.values():
         if isinstance(scheme, dict) and scheme.get("in") in names and isinstance(scheme.get("name"), str):
             names[scheme["in"]].add(scheme["name"].lower())
-    return frozenset(names["header"]), frozenset(names["cookie"])
+    return frozenset(names["header"]), frozenset(names["cookie"]), frozenset(names["query"])
+
+
+def _is_query_credential(name: str, auth: AuthNames) -> bool:
+    """Mirror RequestBuilderMixin._is_auth_query_parameter."""
+    lowered = name.lower()
+    return lowered in ConfigValidator.STANDARD_AUTH_QUERY_PARAMETERS or (auth is not None and lowered in auth[2])
 
 
 def _request_value_review(
@@ -90,7 +96,7 @@ def _request_value_review(
             "cookies cannot be told apart from business ones; nothing was drafted. Fix the security schemes, "
             "or add business values under parameter_values and authentication under identities.*.headers."
         )
-    auth_headers, auth_cookies = auth
+    auth_headers, auth_cookies, _ = auth
     lowered = name.lower()
     if location == "header" and lowered in IGNORED_HEADERS:
         return "", (
@@ -184,6 +190,13 @@ def _parameter_notes(endpoint: Dict[str, Any], auth: AuthNames = NO_SPEC_AUTH,
                 parameter, name, location, schema, operation, auth, swagger2,
             )
             item["included_in_config"] = bool(item["_draft"])
+        elif location == "query" and _is_query_credential(name, auth):
+            item["included_in_config"], item["_draft"] = False, ""
+            item["needs_review"] = (
+                "Carries authentication in the query string (an apiKey scheme or access_token). Query-string "
+                "credentials are not supported: each URL is built from the resource owner's values and sent by "
+                "every identity, so checks of this operation are INCONCLUSIVE before any request."
+            )
         elif location not in {"path", "query", "body"}:
             item["needs_review"] = (
                 "Header and cookie parameters are sent only for GET operations, and form parameters are "
