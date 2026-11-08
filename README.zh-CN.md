@@ -117,6 +117,7 @@ GrantTrace 自身的漏洞请按 [SECURITY.md](https://github.com/ysc070528/gran
 - [远程 `$ref` 解析](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)（英文）
 - [授权证据与覆盖率](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md)（英文）
 - [业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md)
+- [实测案例：VAmPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/vampi.md)（英文）：扫描一个故意含漏洞的 API，发现了什么、漏掉了什么
 - [验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md)（英文）
 
 ## 开发

@@ -37,6 +37,11 @@
   headers and cookies were missing. The checklist no longer marks parameters of
   operations GrantTrace does not test, such as DELETE, as included in the
   draft (#73).
+- A case study of a scan of VAmPI, a deliberately vulnerable API, in its
+  vulnerable and secure modes: which of its vulnerabilities GrantTrace confirms,
+  which it misses and why, and the request log of the read-only scan. Helper
+  scripts in `examples/vampi/` reproduce it. See
+  [docs/case-studies/vampi.md](docs/case-studies/vampi.md) (#81).
 
 ### Changed
 
