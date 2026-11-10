@@ -112,6 +112,8 @@ class IdentityChecks(ValidatorBase):
                 identities, issues, custom_names=all_custom_names, spec_names=spec_auth_names
             )
 
+    RESERVED_ROLE_NAMES = frozenset({"owner", "visitor", "anonymous", "roles"})
+
     @classmethod
     def _validate_single_role(
         cls,
@@ -119,12 +121,23 @@ class IdentityChecks(ValidatorBase):
         role_info: Dict[str, Any],
         issues: List[ConfigIssue],
     ) -> None:
-        if not isinstance(role_name, str) or not re.match(r"^[a-zA-Z0-9_.-]+$", role_name):
+        if not isinstance(role_name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", role_name):
             issues.append(
                 ConfigIssue(
                     path=f"identities.roles.{role_name}",
                     message=f"Role name '{role_name}' must be an alphanumeric identifier",
                     expected="string matching '^[a-zA-Z0-9_.-]+$'",
+                    actual=safe_diagnostic_value(role_name),
+                )
+            )
+        elif role_name.lower() in cls.RESERVED_ROLE_NAMES:
+            # identity_headers() resolves built-in identities first, so a role
+            # with one of these names would silently send another identity's credentials.
+            issues.append(
+                ConfigIssue(
+                    path=f"identities.roles.{role_name}",
+                    message=f"Role name '{role_name}' collides with a built-in identity name",
+                    expected=f"a name other than {sorted(cls.RESERVED_ROLE_NAMES)}",
                     actual=safe_diagnostic_value(role_name),
                 )
             )

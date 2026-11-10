@@ -4,24 +4,33 @@
 
 ### Added
 
-- Read-only POST BOLA auditing: operations configured with explicit `read_only: true`
-  and a request `body` now execute cross-identity BOLA comparison using POST transport.
-  Supports both shared JSON payloads and explicit identity-mapped request bodies (`owner`,
-  `visitor`, `visitor_self`, `roles`). Unconfigured or state-modifying POST operations
-  remain safely skipped without sending write requests.
-- Heuristic BOPLA sensitive property exposure detection (OWASP API3:2023): detects
-  unmasked sensitive properties (such as credentials, phone numbers, ID cards, salaries)
-  exposed to unauthorized visitors when `detect_sensitive_exposure: true` is configured.
-  Enforces strict exact-path matching, ignores booleans, masked strings, and null/empty
-  scalars, respects authorization policies, and suppresses false positives on legitimate access.
-- Multi-role RBAC access matrix: supports optional `identities.roles` definitions to
-  probe access permissions across multiple user roles under global rate-limiting and throttling,
-  evaluating privileged role baselines and detecting privilege violations against `required_role`.
-  Renders a structured RBAC matrix table in the HTML report and sanitized JSON output.
+- BOLA on query-style POST operations. A POST is sent only when its `bola`
+  policy declares `read_only: true` and gives the request body; its path,
+  operationId or summary must name a read action (search, query, lookup...)
+  and none of its metadata or concrete path may name a mutation. `body` is
+  sent unchanged by every identity; `identity_bodies` gives the Owner body
+  (repeated by the Visitor's cross request and Anonymous) and an optional
+  `visitor_self` body. Anything else is skipped or inconclusive with zero
+  requests, and a rate-limited POST is never retried.
+- Sensitive-field leads (`detect_sensitive_exposure`, OWASP API3): unmasked
+  sensitive-named Owner values that reach the Visitor at the same JSON path.
+  `CONFIRMED` only with an explicit `deny` policy, a confirmed object-level
+  decision on the same observations and a value that differs from the
+  Visitor's own record; otherwise `SUSPICIOUS`. Values are never reported,
+  and the analysis is bounded on untrusted responses.
+- Role matrix (`identities.roles`): for operations with a `required_role`,
+  one request per configured role, decided with the BFLA evidence standard
+  (valid privileged baseline, clean Anonymous denial, configured protected
+  data in the role's valid response). Shown in the HTML report and the JSON
+  `rbac_matrix`; confirmed violations are exported to SARIF as `GT-BFLA-001`,
+  confirmed sensitive-field findings as `GT-BOPLA-001`.
 
 ### Changed
 
-- Synchronize package, runtime, Windows distribution and release-workflow versions to `2.7.0`.
+- The Windows portable build, its verifier, its workflow and the packaged
+  README and launcher read the version from `pyproject.toml` and
+  `core/__init__.py` (checked to agree) instead of repeating it. A test fails
+  on any drift.
 
 ## 2.6.0 - 2026-11-09
 

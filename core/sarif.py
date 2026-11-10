@@ -90,7 +90,12 @@ _CHECK_RULES = {
     "BROKEN_AUTH": (2, "GT-AUTH-001", "CWE-306", "Confirmed broken authentication"),
     "BFLA": (3, "GT-BFLA-001", "CWE-285", "Confirmed broken function level authorization"),
     "BOPLA": (4, "GT-BOPLA-001", "CWE-200", "Confirmed broken object property level authorization"),
+    # A role matrix violation is function-level authorization with an explicit role.
+    "RBAC": (3, "GT-BFLA-001", "CWE-285", "Confirmed role-based function level authorization violation"),
+    # Confirmed only on top of a confirmed object-level decision; see the auditor.
+    "BOPLA_EXPOSURE": (4, "GT-BOPLA-001", "CWE-200", "Confirmed sensitive property exposure"),
 }
+_PROPERTY_CHECKS = frozenset({"BOPLA", "BOPLA_EXPOSURE"})
 
 
 def _safe_endpoint(value: object, secret_values: tuple[str, ...]) -> Optional[str]:
@@ -188,7 +193,8 @@ class SarifReportGenerator:
     ) -> None:
         results = list(results)
         secrets = tuple(secret_values)
-        rules = (*_RULES, _BOPLA_RULE) if any(item.get("check") == "BOPLA" for item in results) else _RULES
+        rules = (*_RULES, _BOPLA_RULE) if any(
+            isinstance(item.get("check"), str) and item.get("check") in _PROPERTY_CHECKS for item in results) else _RULES
         target = _safe_origin(target_url, secrets)
         spec_uri = _safe_spec_uri(spec_path, secrets)
         sarif_results: list[dict[str, object]] = []

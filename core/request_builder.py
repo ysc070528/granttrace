@@ -49,7 +49,9 @@ class RequestBuilderMixin:
     def _is_auth_header(self, name: str) -> bool:
         spec_headers = self._spec_auth_header_names()
         custom_headers = []
-        for identity in self.identities.values():
+        for identity_name, identity in self.identities.items():
+            if identity_name == "roles":
+                continue  # A role map, not an identity; roles have no auth_header_names.
             extra = identity.get("auth_header_names", [])
             if not isinstance(extra, list) or any(not isinstance(key, str) for key in extra):
                 raise ValueError("auth_header_names must be a list of header names")
@@ -88,8 +90,12 @@ class RequestBuilderMixin:
         if norm_name in self._spec_auth_cookie_names():
             return True
 
-        for identity in self.identities.values():
-            for k, v in identity.get("headers", {}).items():
+        for identity_name, identity in self.identities.items():
+            entries = (list(identity.values()) if identity_name == "roles" and isinstance(identity, dict)
+                       else [identity])
+            cookie_headers = [(k, v) for item in entries if isinstance(item, dict)
+                              and isinstance(item.get("headers", {}), dict) for k, v in item.get("headers", {}).items()]
+            for k, v in cookie_headers:
                 if str(k).strip().lower() == "cookie":
                     for part in str(v).split(";"):
                         if "=" in part:
@@ -107,6 +113,11 @@ class RequestBuilderMixin:
         for name, identity in self.identities.items():
             if not isinstance(identity, dict):
                 raise ValueError(f"identity '{name}' must be an object")
+            if name == "roles":
+                for role_name, role in identity.items():
+                    if not isinstance(role, dict) or not isinstance(role.get("headers", {}), dict):
+                        raise ValueError(f"role '{role_name}' must be an object with object headers")
+                continue
             if not isinstance(identity.get("headers", {}), dict):
                 raise ValueError(f"identity '{name}' headers must be an object")
         fingerprints = {}
@@ -161,7 +172,9 @@ class RequestBuilderMixin:
                 for role_name, role_data in identity.items():
                     if isinstance(role_data, dict):
                         for key, value in self.identity_headers(role_name).items():
-                            if self._is_auth_header(key):
+                            # Roles cannot declare auth_header_names: every role
+                            # header is identity material and is redacted.
+                            if value:
                                 secrets.add(value)
                                 if key.lower() == "authorization" and " " in value:
                                     secrets.add(value.split(" ", 1)[1])

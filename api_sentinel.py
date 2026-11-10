@@ -671,7 +671,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
     )
     report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
                      sanitize_url(args.target, secret_values=auditor.secret_values()))
-    report_rbac = auditor.rbac_matrix_record() if hasattr(auditor, "rbac_matrix_record") else getattr(auditor, "rbac_matrix", None)
+    report_rbac = auditor.rbac_matrix_record()
     SecurityReportGenerator.generate(
         stats=report_stats,
         findings=report_findings,

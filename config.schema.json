@@ -31,7 +31,11 @@
         },
         "roles": {
           "type": "object",
-          "description": "Additional named roles for RBAC matrix testing",
+          "description": "Additional named roles for the RBAC matrix. Names must not reuse owner, visitor, anonymous or roles; probes run only for operations with an explicit required_role.",
+          "propertyNames": {
+            "pattern": "^[a-zA-Z0-9_.-]+$",
+            "not": {"enum": ["owner", "visitor", "anonymous", "roles"]}
+          },
           "additionalProperties": {
             "$ref": "#/definitions/role_identity"
           }
@@ -89,7 +93,7 @@
         },
         "role": {
           "type": ["string", "null"],
-          "description": "Logical role name designation (defaults to identity key)"
+          "description": "Role compared with required_role (defaults to the role's key)"
         },
         "token": {
           "type": ["string", "null"],
@@ -107,8 +111,8 @@
           "description": "Role-bound parameters"
         },
         "body": {
-          "description": "Request body override for this role",
-          "type": ["object", "array", "string", "number", "boolean", "null"]
+          "description": "Request body this role sends to a read-only POST instead of the Owner body; ignored for GET",
+          "type": ["object", "array", "string", "number", "null"]
         }
       }
     },
@@ -422,15 +426,25 @@
         },
         "read_only": {
           "type": "boolean",
-          "description": "Explicitly marks an idempotent or read-only POST operation safe to audit for BOLA"
+          "description": "POST only: declares the operation side-effect free so the BOLA audit may send it. Its path, operationId or summary must also name a read action (search, query, lookup...) and must not name a mutation."
         },
         "body": {
-          "description": "Request body or per-identity body map for read-only POST operations",
-          "type": ["object", "array", "string", "number", "boolean", "null"]
+          "description": "POST only: literal JSON request body sent unchanged by Owner, Visitor and Anonymous. It is never reinterpreted as a per-identity map.",
+          "type": ["object", "array", "string", "number"]
+        },
+        "identity_bodies": {
+          "type": "object",
+          "description": "POST only, instead of body: 'owner' selects the Owner's object and is also sent by the Visitor's cross request and Anonymous; optional 'visitor_self' selects the Visitor's own object.",
+          "additionalProperties": false,
+          "required": ["owner"],
+          "properties": {
+            "owner": {"type": ["object", "array", "string", "number"]},
+            "visitor_self": {"type": ["object", "array", "string", "number"]}
+          }
         },
         "detect_sensitive_exposure": {
           "type": "boolean",
-          "description": "Enable unmasked sensitive property exposure detection (OWASP API3: BOPLA)"
+          "description": "Heuristic lead for unmasked sensitive-named Owner fields returned to the Visitor (OWASP API3). CONFIRMED only with expected_visitor_access 'deny', a confirmed object-level decision and a value that differs from the Visitor's own record; otherwise SUSPICIOUS."
         }
       }
     }

@@ -120,6 +120,7 @@ class ValidatorBase:
         "not_found_is_denial",
         "read_only",
         "body",
+        "identity_bodies",
         "detect_sensitive_exposure",
     }
 

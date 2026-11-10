@@ -80,6 +80,21 @@ class TestV27ExtendedFeatures(unittest.TestCase):
                         },
                     }
                 },
+                "/api/admin/audit-log/search": {
+                    "post": {
+                        "summary": "Search the admin audit log",
+                        "security": [{"BearerAuth": []}],
+                        "responses": {"200": {"description": "Matching audit entries"}},
+                    }
+                },
+                "/api/users/{id}": {
+                    "get": {
+                        "summary": "Get a user",
+                        "security": [{"BearerAuth": []}],
+                        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                        "responses": {"200": {"description": "User"}},
+                    }
+                },
             },
         }
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -94,7 +109,12 @@ class TestV27ExtendedFeatures(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_bopla_same_path_leak(self):
-        """Owner and visitor responses share unmasked sensitive field on identical path -> CONFIRMED."""
+        """Same unmasked sensitive values on an endpoint without an object selector -> SUSPICIOUS lead.
+
+        Both identities called the same URL and got identical documents, so the
+        data may be shared rather than the Owner's; confirmation needs an
+        object-level decision and a Visitor own-resource baseline.
+        """
         identities = {
             "owner": {"token": "Bearer owner_token"},
             "visitor": {"token": "Bearer visitor_token"},
@@ -127,8 +147,10 @@ class TestV27ExtendedFeatures(unittest.TestCase):
 
         exposure_results = [r for r in auditor.results if r["check"] == "BOPLA_EXPOSURE"]
         self.assertEqual(len(exposure_results), 1)
-        self.assertEqual(exposure_results[0]["verdict"], Verdict.CONFIRMED.value)
+        self.assertEqual(exposure_results[0]["verdict"], Verdict.SUSPICIOUS.value)
         self.assertIn("phone", exposure_results[0]["reason"])
+        self.assertIn("confirmed_object_level_access", exposure_results[0]["evidence"]["missing_evidence"])
+        self.assertFalse([f for f in auditor.findings if f.get("check") == "BOPLA_EXPOSURE"])
 
     def test_bopla_cross_field_same_value_not_flagged(self):
         """Identical value appearing under different field path must NOT be falsely flagged."""
@@ -331,6 +353,8 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         bola = {
             "GET /api/admin/settings": {
                 "required_role": "administrator",
+                # The operator's assertion that this value is protected admin data.
+                "private_data_paths": ["setting"],
             }
         }
         auditor = APISentinelAuditor(
@@ -357,9 +381,11 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         self.assertEqual(matrix["roles"]["admin"]["access"], "ALLOWED")
         self.assertEqual(matrix["roles"]["auditor"]["access"], "DENIED")
         self.assertEqual(matrix["roles"]["viewer"]["access"], "VIOLATION")
+        violations = [r for r in auditor.results if r["check"] == "RBAC" and r["verdict"] == Verdict.CONFIRMED.value]
+        self.assertEqual([r["evidence"]["rbac_role"] for r in violations], ["viewer"])
 
     def test_rbac_soft_denial_login_page_200(self):
-        """HTTP 200 containing HTML login page must be classified as DENIED, not VIOLATION."""
+        """HTTP 200 containing an HTML login page is UNREADABLE (no data), never a VIOLATION."""
         identities = {
             "owner": {"token": "Bearer admin_tok"},
             "visitor": {"token": "Bearer viewer_tok"},
@@ -393,7 +419,9 @@ class TestV27ExtendedFeatures(unittest.TestCase):
 
         matrix = auditor.rbac_matrix.get("GET /api/admin/settings")
         self.assertIsNotNone(matrix)
-        self.assertEqual(matrix["roles"]["viewer"]["access"], "DENIED")
+        # An HTML page is not JSON data; it does not prove a denial either.
+        self.assertEqual(matrix["roles"]["viewer"]["access"], "UNREADABLE")
+        self.assertEqual(matrix["roles"]["viewer"]["verdict"], Verdict.INCONCLUSIVE.value)
         self.assertFalse(matrix["roles"]["viewer"]["violation"])
 
     def test_rbac_soft_denial_business_error_200(self):
@@ -672,9 +700,8 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         bola = {
             "POST /api/documents/query": {
                 "read_only": True,
-                "body": {
+                "identity_bodies": {
                     "owner": {"id": "owner_res"},
-                    "visitor": {"id": "owner_res"},
                     "visitor_self": {"id": "visitor_self_res"},
                 },
             }
@@ -700,9 +727,10 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         auditor._http_request = mock_http
         auditor._audit_endpoint_bola(ep)
 
-        self.assertIn({"id": "owner_res"}, requests_by_identity["owner"])
-        self.assertIn({"id": "owner_res"}, requests_by_identity["visitor"])
-        self.assertIn({"id": "visitor_self_res"}, requests_by_identity["visitor"])
+        self.assertEqual(requests_by_identity["owner"], [{"id": "owner_res"}])
+        # Cross request repeats the Owner body; the self baseline uses the Visitor's own.
+        self.assertEqual(requests_by_identity["visitor"], [{"id": "owner_res"}, {"id": "visitor_self_res"}])
+        self.assertEqual(requests_by_identity["anonymous"], [{"id": "owner_res"}])
 
     def test_post_bola_never_replaced_with_get(self):
         """Under no circumstances should a POST operation be sent as GET."""
@@ -781,7 +809,7 @@ class TestV27ExtendedFeatures(unittest.TestCase):
             },
         }
         bola = {
-            "POST /api/admin/post-action": {
+            "POST /api/admin/audit-log/search": {
                 "read_only": True,
                 "body": {"default_cmd": "noop"},
                 "required_role": "administrator",
@@ -791,7 +819,7 @@ class TestV27ExtendedFeatures(unittest.TestCase):
             str(self.spec_file), target_base_url="http://127.0.0.1:8080",
             identities_config=identities, bola_config=bola, request_delay=0
         )
-        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/post-action"][0]
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/audit-log/search"][0]
 
         bodies_by_role: Dict[str, Any] = {}
 
@@ -850,7 +878,8 @@ class TestV27ExtendedFeatures(unittest.TestCase):
 
         exposure_results = [r for r in auditor.results if r["check"] == "BOPLA_EXPOSURE"]
         self.assertEqual(len(exposure_results), 1)
-        self.assertEqual(exposure_results[0]["verdict"], Verdict.CONFIRMED.value)
+        # No object selector: a lead, not a confirmation (see test_bopla_same_path_leak).
+        self.assertEqual(exposure_results[0]["verdict"], Verdict.SUSPICIOUS.value)
         paths = exposure_results[0]["evidence"]["exposed_sensitive_paths"]
         self.assertIn("cvv", paths)
         self.assertIn("email_address", paths)
@@ -996,7 +1025,7 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         auditor._audit_endpoint_bola(ep)
 
         self.assertEqual(len(role_probes), 0, "No role probes should be sent when required_role is missing")
-        rbac_res = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION"]
+        rbac_res = [r for r in auditor.results if r["check"] == "RBAC"]
         self.assertEqual(len(rbac_res), 1)
         self.assertEqual(rbac_res[0]["verdict"], Verdict.INCONCLUSIVE.value)
 
@@ -1038,7 +1067,7 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         auditor._audit_endpoint_bola(ep)
 
         self.assertEqual(len(comparison_probes), 0, "No lower role comparison probes must be sent if privileged baseline fails")
-        rbac_res = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION"]
+        rbac_res = [r for r in auditor.results if r["check"] == "RBAC"]
         self.assertEqual(len(rbac_res), 1)
         self.assertEqual(rbac_res[0]["verdict"], Verdict.INCONCLUSIVE.value)
 
@@ -1056,6 +1085,7 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         bola = {
             "GET /api/admin/settings": {
                 "required_role": "administrator",
+                "private_data_paths": ["admin_data"],
             }
         }
         auditor = APISentinelAuditor(
@@ -1069,13 +1099,14 @@ class TestV27ExtendedFeatures(unittest.TestCase):
                 return HTTPResult(status=200, body=json.dumps({"admin_data": "secret"}))
             elif identity_name == "viewer":
                 return HTTPResult(status=200, body=json.dumps({"admin_data": "secret"}))
-            return HTTPResult(status=401, body=json.dumps({"error": "Auth required"}))
+            # A clean Anonymous denial isolates the function-level boundary (as for BFLA).
+            return HTTPResult(status=401, body=json.dumps({"error": "Unauthorized"}))
 
         auditor._http_request = mock_http
         auditor._audit_endpoint_bola(ep)
 
         # Check confirmed count: should only have RBAC confirmed
-        rbac_violations = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION" and r["verdict"] == Verdict.CONFIRMED.value]
+        rbac_violations = [r for r in auditor.results if r["check"] == "RBAC" and r["verdict"] == Verdict.CONFIRMED.value]
         self.assertEqual(len(rbac_violations), 1)
         # Total confirmed results matches stats['confirmed'] without double-counting
         total_confirmed_results = len([r for r in auditor.results if r["verdict"] == Verdict.CONFIRMED.value])

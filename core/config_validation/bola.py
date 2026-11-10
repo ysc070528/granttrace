@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+import json
+from typing import Any, Dict, List, Optional
 
 from core.bopla import validate_bopla_policy
 from core.config_validation.base import ConfigIssue, ValidationSummary, ValidatorBase
@@ -198,15 +199,7 @@ class BolaChecks(ValidatorBase):
                         )
                     )
 
-            if "read_only" in policy and not isinstance(policy["read_only"], bool):
-                issues.append(
-                    ConfigIssue(
-                        path=f"bola.{ep_key}.read_only",
-                        message="'read_only' must be a boolean",
-                        expected="boolean",
-                        actual=safe_diagnostic_value(policy["read_only"]),
-                    )
-                )
+            cls._validate_read_only_post(ep_key, is_valid, method, policy, issues)
 
             if "detect_sensitive_exposure" in policy and not isinstance(policy["detect_sensitive_exposure"], bool):
                 issues.append(
@@ -218,40 +211,126 @@ class BolaChecks(ValidatorBase):
                     )
                 )
 
-            if "body" in policy:
-                body_val = policy["body"]
-                if not isinstance(body_val, (dict, list, str, int, float, bool)):
-                    issues.append(
-                        ConfigIssue(
-                            path=f"bola.{ep_key}.body",
-                            message="'body' must be a JSON-serializable object or value",
-                            expected="JSON-serializable object / dict",
-                            actual=safe_diagnostic_value(body_val),
-                        )
-                    )
-                elif isinstance(body_val, dict):
-                    # If identity-mapped body, validate sub-bodies
-                    identity_keys = {"owner", "visitor", "visitor_self", "anonymous", "roles", "common"}
-                    if any(k in body_val for k in ("owner", "visitor", "visitor_self")):
-                        for sub_k, sub_v in body_val.items():
-                            if sub_k in identity_keys and not isinstance(sub_v, (dict, list, str, int, float, bool)) and sub_v is not None:
-                                issues.append(
-                                    ConfigIssue(
-                                        path=f"bola.{ep_key}.body.{sub_k}",
-                                        message=f"Body for identity '{sub_k}' must be JSON-serializable",
-                                        expected="JSON-serializable value",
-                                        actual=safe_diagnostic_value(sub_v),
-                                    )
-                                )
+    # Request bodies are operator selectors sent to a live target: keep them
+    # small, finite JSON. Diagnostics never echo a body value.
+    MAX_POST_BODY_BYTES = 65536
+    MAX_POST_BODY_DEPTH = 32
+    POST_BODY_KEYS = ("body", "identity_bodies")
+    IDENTITY_BODY_KEYS = ("owner", "visitor_self")
 
-            if is_valid and method == "POST" and not policy.get("read_only"):
-                issues.append(
-                    ConfigIssue(
-                        path=f"bola.{ep_key}.read_only",
-                        message="POST operation in BOLA policy should declare 'read_only: true' to be audited; otherwise it will be skipped for safety",
-                        expected="read_only: true",
-                        actual=safe_diagnostic_value(policy.get("read_only")),
-                        suggestion="Add '\"read_only\": true' to this BOLA policy",
-                        is_warning=True,
-                    )
-                )
+    @classmethod
+    def _payload_problem(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return "null is not a request body"
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            return "not finite, JSON-serializable data"
+        if len(encoded.encode("utf-8")) > cls.MAX_POST_BODY_BYTES:
+            return f"larger than {cls.MAX_POST_BODY_BYTES} bytes"
+        stack = [(value, 1)]
+        while stack:
+            item, depth = stack.pop()
+            if depth > cls.MAX_POST_BODY_DEPTH:
+                return f"nested deeper than {cls.MAX_POST_BODY_DEPTH} levels"
+            children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
+            stack.extend((child, depth + 1) for child in children)
+        return None
+
+    @classmethod
+    def _validate_read_only_post(
+        cls, ep_key: Any, is_valid: bool, method: str, policy: Dict[str, Any], issues: List[ConfigIssue],
+    ) -> None:
+        """A POST is audited only when declared read-only with an explicit body.
+
+        Bodies apply to POST alone: a GET never carries one. ``body`` is sent
+        verbatim by every identity; ``identity_bodies`` names the Owner's
+        object (``owner``) and optionally the Visitor's own (``visitor_self``).
+        """
+        configured = [key for key in ("read_only", *cls.POST_BODY_KEYS) if key in policy]
+        if is_valid and method != "POST":
+            for key in configured:
+                issues.append(ConfigIssue(
+                    path=f"bola.{ep_key}.{key}",
+                    message=f"'{key}' applies to read-only POST operations only; no request body is ever sent with {method}",
+                    expected="remove this setting, or use it on a POST operation",
+                    actual=f"'{key}' on a {method} operation",
+                ))
+            return
+        if "read_only" in policy and not isinstance(policy["read_only"], bool):
+            issues.append(ConfigIssue(
+                path=f"bola.{ep_key}.read_only",
+                message="'read_only' must be a boolean",
+                expected="true to allow the read-only POST audit",
+                actual=safe_diagnostic_value(policy["read_only"]),
+            ))
+        if "body" in policy and "identity_bodies" in policy:
+            issues.append(ConfigIssue(
+                path=f"bola.{ep_key}",
+                message="Use either 'body' or 'identity_bodies', not both",
+                expected="one request body source",
+                actual="both 'body' and 'identity_bodies'",
+            ))
+        if "body" in policy:
+            problem = cls._payload_problem(policy["body"])
+            if problem:
+                issues.append(ConfigIssue(
+                    path=f"bola.{ep_key}.body",
+                    message=f"'body' must be the literal JSON request payload; it is {problem}",
+                    expected="JSON object, array, string or number sent unchanged by every identity",
+                    actual="invalid request body (value not shown)",
+                ))
+        if "identity_bodies" in policy:
+            bodies = policy["identity_bodies"]
+            if not isinstance(bodies, dict):
+                issues.append(ConfigIssue(
+                    path=f"bola.{ep_key}.identity_bodies",
+                    message="'identity_bodies' must be an object with 'owner' and optional 'visitor_self'",
+                    expected="{\"owner\": <body>, \"visitor_self\": <body>}",
+                    actual=safe_diagnostic_value(type(bodies).__name__),
+                ))
+            else:
+                for key in bodies:
+                    if key not in cls.IDENTITY_BODY_KEYS:
+                        issues.append(ConfigIssue(
+                            path=f"bola.{ep_key}.identity_bodies.{key}",
+                            message=("Unsupported identity body: the Visitor's cross request and Anonymous always "
+                                     "repeat the Owner body, so only 'owner' and 'visitor_self' are accepted"),
+                            expected="owner or visitor_self",
+                            actual=safe_diagnostic_value(key),
+                        ))
+                if "owner" not in bodies:
+                    issues.append(ConfigIssue(
+                        path=f"bola.{ep_key}.identity_bodies.owner",
+                        message="'identity_bodies' must include the Owner body that selects the Owner's object",
+                        expected="owner request body",
+                        actual="missing",
+                    ))
+                for key in cls.IDENTITY_BODY_KEYS:
+                    if key in bodies:
+                        problem = cls._payload_problem(bodies[key])
+                        if problem:
+                            issues.append(ConfigIssue(
+                                path=f"bola.{ep_key}.identity_bodies.{key}",
+                                message=f"Identity body '{key}' must be a JSON request payload; it is {problem}",
+                                expected="JSON object, array, string or number",
+                                actual="invalid request body (value not shown)",
+                            ))
+        if not is_valid or method != "POST":
+            return
+        if policy.get("read_only") is True and not any(key in policy for key in cls.POST_BODY_KEYS):
+            issues.append(ConfigIssue(
+                path=f"bola.{ep_key}.body",
+                message="A read-only POST needs the request body to send; no request is sent without one",
+                expected="'body' or 'identity_bodies'",
+                actual="missing",
+            ))
+        if policy.get("read_only") is not True:
+            issues.append(ConfigIssue(
+                path=f"bola.{ep_key}.read_only",
+                message="POST operation in BOLA policy is skipped unless it declares 'read_only: true'; declare it only for operations without side effects",
+                expected="read_only: true",
+                actual=safe_diagnostic_value(policy.get("read_only")),
+                suggestion="Add '\"read_only\": true' only after confirming this POST changes no state",
+                is_warning=True,
+            ))

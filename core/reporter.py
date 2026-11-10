@@ -519,53 +519,54 @@ class SecurityReportGenerator:
             )
         return findings_html
 
+    # Matrix cells describe the observed response; VIOLATION is shown only for a
+    # CONFIRMED decision, so the table never claims more than the results do.
+    _RBAC_COLORS = {
+        "VIOLATION": "#dc2626", "ALLOWED": "#16a34a", "DENIED": "#475569", "UNPROVEN": "#d97706",
+        "EMPTY": "#64748b", "UNREADABLE": "#64748b", "ERROR": "#991b1b",
+    }
+
     @classmethod
     def _rbac_matrix_html(cls, rbac_matrix: Optional[Dict[str, Any]]) -> str:
         if not rbac_matrix or not isinstance(rbac_matrix, dict):
             return ""
-        all_roles = []
+        all_roles: List[str] = []
         for ep_data in rbac_matrix.values():
-            for r_name in ep_data.get("roles", {}):
+            for r_name in (ep_data.get("roles", {}) if isinstance(ep_data, dict) else {}):
                 if r_name not in all_roles:
                     all_roles.append(r_name)
         if not all_roles:
             return ""
-        role_headers = "".join(f"<th>{cls._escape(r.upper())}</th>" for r in all_roles)
+        role_headers = "".join(f"<th>{cls._escape(str(r).upper())}</th>" for r in all_roles)
         rows = []
         for ep_key, ep_data in sorted(rbac_matrix.items()):
             cells = []
             for r_name in all_roles:
-                r_info = ep_data.get("roles", {}).get(r_name, {})
-                access = r_info.get("access", "N/A")
-                if access == "ALLOWED":
-                    color = "#16a34a"
-                elif access == "VIOLATION":
-                    color = "#dc2626"
-                elif access == "DENIED":
-                    color = "#64748b"
-                elif access == "INCONCLUSIVE":
-                    color = "#d97706"
-                elif access == "ERROR":
-                    color = "#991b1b"
-                else:
-                    color = "#475569"
-                status = r_info.get("status", "")
+                r_info = ep_data.get("roles", {}).get(r_name)
+                if not isinstance(r_info, dict):
+                    cells.append("<td>–</td>")
+                    continue
+                access = str(r_info.get("access", "N/A"))
+                color = cls._RBAC_COLORS.get(access, "#475569")
                 badge = f'<span class="pill" style="background:{color}">{cls._escape(access)}</span>'
+                status = r_info.get("status")
                 if status:
-                    badge += f" <small>({cls._escape(str(status))})</small>"
+                    badge += f" <small>(HTTP {cls._escape(str(status))})</small>"
+                verdict = r_info.get("verdict")
+                if r_info.get("baseline"):
+                    badge += " <small>特权基线</small>"
+                elif verdict:
+                    badge += f" <small>{cls._escape(str(verdict))}</small>"
                 cells.append(f"<td>{badge}</td>")
             rows.append(f"<tr><td><code>{cls._escape(ep_key)}</code></td>{''.join(cells)}</tr>")
         return f"""
-        <section class="card" style="margin-top: 24px;">
-            <h2>Role-Based Access Control (RBAC) Matrix</h2>
-            <div style="overflow-x: auto;">
-                <table>
-                    <thead><tr><th>Endpoint</th>{role_headers}</tr></thead>
-                    <tbody>{"".join(rows)}</tbody>
-                </table>
-            </div>
-        </section>
-        """
+  <h2 id="rbac-matrix">角色权限矩阵（RBAC）</h2>
+  <p class="meta">每格为该角色对同一请求得到的响应与结论。VIOLATION 仅在特权角色基线有效、匿名请求被干净拒绝、
+  且低权限角色的有效响应包含配置的 private_data_paths 受保护数据时出现；UNPROVEN 表示返回了数据但缺少受保护数据证据，不计为漏洞。</p>
+  <div style="overflow:auto" role="region" aria-label="角色权限矩阵，可横向滚动" tabindex="0"><table>
+    <thead><tr><th>端点</th>{role_headers}</tr></thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table></div>"""
 
     @classmethod
     def _render_document(
@@ -665,7 +666,7 @@ class SecurityReportGenerator:
   <p id="no-matching-results" class="empty" hidden>没有匹配的端点结果。</p>
   <h2>确认的漏洞</h2>
   {findings_html}
-  <p id="no-matching-findings" class="empty" hidden>没有匹配的确认漏洞。</p>
+  <p id="no-matching-findings" class="empty" hidden>没有匹配的确认漏洞。</p>{rbac_html}
 </main>
 <script>
   (() => {{

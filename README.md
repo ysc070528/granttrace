@@ -37,13 +37,18 @@ is in the repository.
 - **Safe by default.** Scans are read-only. GET operations whose paths,
   identifiers or descriptions suggest side effects are skipped before any
   request, and writes against external targets are refused.
-- **Support for read-only POST.** Audits RPC and query POST operations for BOLA
-  when explicitly configured with `read_only: true` and a request body, while
-  keeping unconfigured state-modifying operations safe and zero-request.
-- **Sensitive property exposure (BOPLA).** Detects unmasked sensitive properties
-  (credentials, phone numbers, identity numbers, salary) returned to unauthorized visitors.
-- **Multi-role RBAC access matrix.** Evaluates access boundaries across multiple
-  configured roles in a structured matrix, pinpointing role privilege violations.
+- **Read-only POST, only when you vouch for it.** A query-style POST (search,
+  lookup, query...) is compared across identities only after you declare
+  `read_only: true` and give the request body. Its path, operationId or summary
+  must name a read action and must not name a mutation; otherwise nothing is
+  sent. These checks reduce risk but cannot prove a POST has no side effects.
+- **Sensitive-field leads.** With `detect_sensitive_exposure`, unmasked
+  sensitive-looking Owner fields (phone, salary, credentials...) that reach the
+  Visitor are reported as leads. They are confirmed only on top of a confirmed
+  object-level finding and never from a field name alone.
+- **Role matrix.** Optional `identities.roles` are probed on operations with a
+  `required_role`. A lower role is a violation only when it receives the
+  privileged baseline's configured protected data, not merely an HTTP 200.
 - **Plan before you send.** `--init-config` drafts a configuration and a review
   checklist from the specification, `--validate-config` checks it offline, and
   `--dry-run` shows what would be requested while sending nothing.
@@ -62,8 +67,10 @@ is in the repository.
 | BOLA / IDOR | CWE-639 | Read-only, as Owner, Visitor and Anonymous | Two test accounts and a resource each of them owns |
 | Broken Authentication | CWE-306 | Read-only, on operations the specification protects | `private_data_paths`: Owner values Anonymous must not see |
 | Broken Function Level Authorization | CWE-285 | Read-only | The required role and each identity's role |
+| Role matrix (RBAC) | CWE-285 | Read-only, one request per configured role | `identities.roles`, `required_role` and `private_data_paths` |
+| BOLA on query-style POST | CWE-639 | Declared `read_only: true` POST with a read action in its name | The request `body` (or `identity_bodies`) |
 | Private data in collections | CWE-639 | Read-only, on list endpoints | `private_data_paths` |
-| Property-level authorization (BOPLA) | CWE-200 | Read-only | Per-field rules in `bopla` |
+| Property-level authorization (BOPLA) | CWE-200 | Read-only | Per-field rules in `bopla`; `detect_sensitive_exposure` adds heuristic leads |
 | Mass Assignment | CWE-915 | **Built-in demo only** | – |
 
 Mass assignment testing writes to a resource, so GrantTrace only does it when it
@@ -73,8 +80,8 @@ before any write; the built-in demo, which owns its data, shows the complete
 flow with independent readback and verified rollback.
 
 **Not supported yet:** GraphQL and gRPC; OAuth, OIDC or mTLS login flows
-(configure tokens or headers yourself); API keys in the query string; POST and
-DELETE tests; writes against external APIs.
+(configure tokens or headers yourself); API keys in the query string; POST
+other than declared read-only queries; DELETE tests; writes against external APIs.
 
 ## Install
 
