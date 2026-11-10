@@ -9,8 +9,14 @@ cannot independently verify an external API's authoritative resource state, so
 even with `--allow-write-tests`, an explicit write allowlist, readback mappings
 and `consistency: "strong"`, allowlisted PATCH and PUT checks are reported as
 `INCONCLUSIVE` (`unverified_state_authority`) and send nothing. The built-in demo,
-which owns its data, is the only place the full flow runs. POST and DELETE are
-never sent as tests.
+which owns its data, is the only place the full flow runs. DELETE is never sent.
+A POST is sent only for the read-only BOLA comparison, and only when the
+operation's policy declares `read_only: true` with an explicit request body, its
+path, operationId or summary names a read action, and neither its metadata nor
+its concrete path names a mutation. These checks refuse obviously
+state-changing operations but cannot prove that a POST has no side effects:
+declare `read_only` only for operations you have confirmed change nothing. A
+POST is never retried.
 
 Where the flow does run, every operation must be in the explicit write
 allowlist, and active checks require a JSON request schema plus a configured GET
