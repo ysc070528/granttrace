@@ -301,6 +301,7 @@ class SecurityReportGenerator:
         results: Optional[List[Dict[str, Any]]] = None,
         reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
         secret_values: Iterable[str] = (),
+        rbac_matrix: Optional[Dict[str, Any]] = None,
     ) -> None:
         with PROPERTY_EVIDENCE_LOCK:
             stats = dict(stats)
@@ -329,10 +330,11 @@ class SecurityReportGenerator:
         warning_html = cls._scope_warnings_html(stats)
         results_html = cls._results_html(results)
         findings_html = cls._findings_html(findings, reproduction_templates)
+        rbac_html = cls._rbac_matrix_html(rbac_matrix)
         document = cls._render_document(
             target_url=target_url, generated_at=generated_at, results=results, findings=findings,
             cards_html=cards_html, accounting_html=accounting_html, warning_html=warning_html,
-            results_html=results_html, findings_html=findings_html,
+            results_html=results_html, findings_html=findings_html, rbac_html=rbac_html,
         )
         with open(output_path, "w", encoding="utf-8", newline="") as handle:
             handle.write(document)
@@ -517,6 +519,55 @@ class SecurityReportGenerator:
             )
         return findings_html
 
+    # Matrix cells describe the observed response; VIOLATION is shown only for a
+    # CONFIRMED decision, so the table never claims more than the results do.
+    _RBAC_COLORS = {
+        "VIOLATION": "#dc2626", "ALLOWED": "#16a34a", "DENIED": "#475569", "UNPROVEN": "#d97706",
+        "EMPTY": "#64748b", "UNREADABLE": "#64748b", "ERROR": "#991b1b",
+    }
+
+    @classmethod
+    def _rbac_matrix_html(cls, rbac_matrix: Optional[Dict[str, Any]]) -> str:
+        if not rbac_matrix or not isinstance(rbac_matrix, dict):
+            return ""
+        all_roles: List[str] = []
+        for ep_data in rbac_matrix.values():
+            for r_name in (ep_data.get("roles", {}) if isinstance(ep_data, dict) else {}):
+                if r_name not in all_roles:
+                    all_roles.append(r_name)
+        if not all_roles:
+            return ""
+        role_headers = "".join(f"<th>{cls._escape(str(r).upper())}</th>" for r in all_roles)
+        rows = []
+        for ep_key, ep_data in sorted(rbac_matrix.items()):
+            cells = []
+            for r_name in all_roles:
+                r_info = ep_data.get("roles", {}).get(r_name)
+                if not isinstance(r_info, dict):
+                    cells.append("<td>–</td>")
+                    continue
+                access = str(r_info.get("access", "N/A"))
+                color = cls._RBAC_COLORS.get(access, "#475569")
+                badge = f'<span class="pill" style="background:{color}">{cls._escape(access)}</span>'
+                status = r_info.get("status")
+                if status:
+                    badge += f" <small>(HTTP {cls._escape(str(status))})</small>"
+                verdict = r_info.get("verdict")
+                if r_info.get("baseline"):
+                    badge += " <small>特权基线</small>"
+                elif verdict:
+                    badge += f" <small>{cls._escape(str(verdict))}</small>"
+                cells.append(f"<td>{badge}</td>")
+            rows.append(f"<tr><td><code>{cls._escape(ep_key)}</code></td>{''.join(cells)}</tr>")
+        return f"""
+  <h2 id="rbac-matrix">角色权限矩阵（RBAC）</h2>
+  <p class="meta">每格为该角色对同一请求得到的响应与结论。VIOLATION 仅在特权角色基线有效、匿名请求被干净拒绝、
+  且低权限角色的有效响应包含配置的 private_data_paths 受保护数据时出现；UNPROVEN 表示返回了数据但缺少受保护数据证据，不计为漏洞。</p>
+  <div style="overflow:auto" role="region" aria-label="角色权限矩阵，可横向滚动" tabindex="0"><table>
+    <thead><tr><th>端点</th>{role_headers}</tr></thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table></div>"""
+
     @classmethod
     def _render_document(
         cls,
@@ -530,6 +581,7 @@ class SecurityReportGenerator:
         warning_html: str,
         results_html: str,
         findings_html: str,
+        rbac_html: str = "",
     ) -> str:
         """The complete HTML page around the rendered sections."""
         status_options = "".join(
@@ -614,7 +666,7 @@ class SecurityReportGenerator:
   <p id="no-matching-results" class="empty" hidden>没有匹配的端点结果。</p>
   <h2>确认的漏洞</h2>
   {findings_html}
-  <p id="no-matching-findings" class="empty" hidden>没有匹配的确认漏洞。</p>
+  <p id="no-matching-findings" class="empty" hidden>没有匹配的确认漏洞。</p>{rbac_html}
 </main>
 <script>
   (() => {{

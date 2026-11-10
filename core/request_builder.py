@@ -49,7 +49,9 @@ class RequestBuilderMixin:
     def _is_auth_header(self, name: str) -> bool:
         spec_headers = self._spec_auth_header_names()
         custom_headers = []
-        for identity in self.identities.values():
+        for identity_name, identity in self.identities.items():
+            if identity_name == "roles":
+                continue  # A role map, not an identity; roles have no auth_header_names.
             extra = identity.get("auth_header_names", [])
             if not isinstance(extra, list) or any(not isinstance(key, str) for key in extra):
                 raise ValueError("auth_header_names must be a list of header names")
@@ -88,8 +90,12 @@ class RequestBuilderMixin:
         if norm_name in self._spec_auth_cookie_names():
             return True
 
-        for identity in self.identities.values():
-            for k, v in identity.get("headers", {}).items():
+        for identity_name, identity in self.identities.items():
+            entries = (list(identity.values()) if identity_name == "roles" and isinstance(identity, dict)
+                       else [identity])
+            cookie_headers = [(k, v) for item in entries if isinstance(item, dict)
+                              and isinstance(item.get("headers", {}), dict) for k, v in item.get("headers", {}).items()]
+            for k, v in cookie_headers:
                 if str(k).strip().lower() == "cookie":
                     for part in str(v).split(";"):
                         if "=" in part:
@@ -107,6 +113,11 @@ class RequestBuilderMixin:
         for name, identity in self.identities.items():
             if not isinstance(identity, dict):
                 raise ValueError(f"identity '{name}' must be an object")
+            if name == "roles":
+                for role_name, role in identity.items():
+                    if not isinstance(role, dict) or not isinstance(role.get("headers", {}), dict):
+                        raise ValueError(f"role '{role_name}' must be an object with object headers")
+                continue
             if not isinstance(identity.get("headers", {}), dict):
                 raise ValueError(f"identity '{name}' headers must be an object")
         fingerprints = {}
@@ -157,6 +168,25 @@ class RequestBuilderMixin:
                                     secrets.add(str(item))
 
         for identity_name, identity in self.identities.items():
+            if identity_name == "roles" and isinstance(identity, dict):
+                for role_name, role_data in identity.items():
+                    if isinstance(role_data, dict):
+                        for key, value in self.identity_headers(role_name).items():
+                            # Roles cannot declare auth_header_names: every role
+                            # header is identity material and is redacted.
+                            if value:
+                                secrets.add(value)
+                                if key.lower() == "authorization" and " " in value:
+                                    secrets.add(value.split(" ", 1)[1])
+                                if key.lower() == "cookie":
+                                    for part in value.split(";"):
+                                        if "=" in part:
+                                            c_val = part.split("=", 1)[1].strip().strip('"')
+                                            if c_val:
+                                                secrets.add(c_val)
+                        for p_name, p_val in role_data.get("parameters", {}).items():
+                            _collect_from_param(p_name, p_val)
+                continue
             for key, value in self.identity_headers(identity_name).items():
                 if self._is_auth_header(key):
                     secrets.add(value)
@@ -184,7 +214,12 @@ class RequestBuilderMixin:
         return secrets
 
     def identity_headers(self, identity_name: str) -> Dict[str, str]:
-        identity = self.identities[identity_name]
+        if identity_name in self.identities:
+            identity = self.identities[identity_name]
+        elif isinstance(self.identities.get("roles"), dict) and identity_name in self.identities["roles"]:
+            identity = self.identities["roles"][identity_name]
+        else:
+            raise KeyError(f"Unknown identity: {identity_name}")
         headers = {}
         for key, value in identity.get("headers", {}).items():
             normalized = str(key).strip().lower()
@@ -217,7 +252,13 @@ class RequestBuilderMixin:
             for key, value in configured.items():
                 if key not in {"common", "owner", "visitor", "anonymous"}:
                     values[key] = value
-        identity_values = self.identities[identity_name].get("parameters", {})
+        identity_obj = (
+            self.identities.get(identity_name)
+            if identity_name in self.identities
+            else (self.identities.get("roles", {}).get(identity_name)
+                  if isinstance(self.identities.get("roles"), dict) else None)
+        )
+        identity_values = identity_obj.get("parameters", {}) if isinstance(identity_obj, dict) else {}
         if isinstance(identity_values, dict):
             values.update(identity_values)
         return values
@@ -565,7 +606,13 @@ class RequestBuilderMixin:
         values = self._operation_parameter_values(ep, resource_identity)
         if extra_values:
             values.update(extra_values)
-        candidate_id = self.identities[resource_identity].get("id")
+        ident_entry = (
+            self.identities.get(resource_identity)
+            if resource_identity in self.identities
+            else (self.identities.get("roles", {}).get(resource_identity)
+                  if isinstance(self.identities.get("roles"), dict) else None)
+        )
+        candidate_id = ident_entry.get("id") if isinstance(ident_entry, dict) else None
         test_path = raw_path
 
         for param_name in re.findall(r"\{([^}]+)\}", raw_path):

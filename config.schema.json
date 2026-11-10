@@ -28,6 +28,17 @@
         },
         "anonymous": {
           "$ref": "#/definitions/anonymous_identity"
+        },
+        "roles": {
+          "type": "object",
+          "description": "Additional named roles for the RBAC matrix. Names must not reuse owner, visitor, anonymous or roles; probes run only for operations with an explicit required_role.",
+          "propertyNames": {
+            "pattern": "^[a-zA-Z0-9_.-]+$",
+            "not": {"enum": ["owner", "visitor", "anonymous", "roles"]}
+          },
+          "additionalProperties": {
+            "$ref": "#/definitions/role_identity"
+          }
         }
       }
     },
@@ -72,6 +83,39 @@
     }
   },
   "definitions": {
+    "role_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": ["string", "integer", "null"],
+          "description": "Resource identifier associated with this role identity"
+        },
+        "role": {
+          "type": ["string", "null"],
+          "description": "Role compared with required_role (defaults to the role's key)"
+        },
+        "token": {
+          "type": ["string", "null"],
+          "description": "Bearer token or Authorization header value for this role"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Arbitrary authentication or session headers for this role",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Role-bound parameters"
+        },
+        "body": {
+          "description": "Request body this role sends to a read-only POST instead of the Owner body; ignored for GET",
+          "type": ["object", "array", "string", "number", "null"]
+        }
+      }
+    },
     "authenticated_identity": {
       "type": "object",
       "additionalProperties": false,
@@ -379,6 +423,28 @@
           "type": "string",
           "minLength": 1,
           "description": "Operator-verified role of the configured Visitor identity. Role comparison is exact, without inferring a role hierarchy."
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "POST only: declares the operation side-effect free so the BOLA audit may send it. Its path, operationId or summary must also name a read action (search, query, lookup...) and must not name a mutation."
+        },
+        "body": {
+          "description": "POST only: literal JSON request body sent unchanged by Owner, Visitor and Anonymous. It is never reinterpreted as a per-identity map.",
+          "type": ["object", "array", "string", "number"]
+        },
+        "identity_bodies": {
+          "type": "object",
+          "description": "POST only, instead of body: 'owner' selects the Owner's object and is also sent by the Visitor's cross request and Anonymous; optional 'visitor_self' selects the Visitor's own object.",
+          "additionalProperties": false,
+          "required": ["owner"],
+          "properties": {
+            "owner": {"type": ["object", "array", "string", "number"]},
+            "visitor_self": {"type": ["object", "array", "string", "number"]}
+          }
+        },
+        "detect_sensitive_exposure": {
+          "type": "boolean",
+          "description": "Heuristic lead for unmasked sensitive-named Owner fields returned to the Visitor (OWASP API3). CONFIRMED only with expected_visitor_access 'deny', a confirmed object-level decision and a value that differs from the Visitor's own record; otherwise SUSPICIOUS."
         }
       }
     }

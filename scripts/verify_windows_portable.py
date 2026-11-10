@@ -19,10 +19,13 @@ import time
 from urllib.parse import urlsplit
 from zipfile import ZipFile
 
+from source_version import VERSION_PLACEHOLDER, source_version, windows_package_name
 
-VERSION = "2.6.0"
-PACKAGE = f"GrantTrace-v{VERSION}-Windows-x64"
+
 ROOT = Path(__file__).resolve().parents[1]
+# The ZIP must match the checked-out source version, never a copied literal.
+VERSION = source_version(ROOT)
+PACKAGE = windows_package_name(VERSION)
 
 
 def require(condition, message):
@@ -77,6 +80,10 @@ def extract_package(archive_path, destination):
     package = destination / PACKAGE
     for name in ("granttrace.exe", "Start-Demo.bat", "README.txt", "LICENSE"):
         require((package / name).is_file(), f"Portable ZIP is missing {name}")
+    for name in ("Start-Demo.bat", "README.txt"):
+        text = (package / name).read_text(encoding="utf-8")
+        require(f"GrantTrace v{VERSION}" in text and VERSION_PLACEHOLDER not in text,
+                f"Portable {name} does not show version {VERSION}")
     return package
 
 
@@ -226,6 +233,8 @@ def main():
     arguments = parser.parse_args()
     require(os.name == "nt" and platform.machine().lower() in {"amd64", "x86_64"}, "Use Windows x64")
     archive_path = arguments.zip.resolve()
+    require(archive_path.name == f"{PACKAGE}.zip",
+            f"ZIP name {archive_path.name!r} does not match source version {VERSION} ({PACKAGE}.zip)")
     environment = isolated_environment()
     cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
     started = time.monotonic()
@@ -234,7 +243,7 @@ def main():
         outside = Path(temporary).resolve()
         require(not outside.is_relative_to(ROOT), "Portable verification must run outside the source checkout")
         for label, suffix in (
-            ("spaces", Path("Test User") / "Desktop" / "GrantTrace v2.6.0"),
+            ("spaces", Path("Test User") / "Desktop" / f"GrantTrace v{VERSION}"),
             ("chinese_and_spaces", Path("安全工具") / "GrantTrace 测试"),
         ):
             destination = outside / suffix

@@ -271,8 +271,9 @@ class ResultRecorderMixin:
             states = item_states.setdefault(item["endpoint"], {})
             conclusive_item = item.get("evidence", {}).get("requests_attempted", 0) > 0 and item["verdict"] in {
                 Verdict.CONFIRMED.value, Verdict.SECURE.value, Verdict.PUBLIC.value, Verdict.AUTHORIZED.value}
-            if item["check"] == "BOPLA":
-                states["BOPLA"] = states.get("BOPLA", True) and conclusive_item
+            if item["check"] in {"BOPLA", "RBAC"}:
+                # One result per field / per probed role: every one must be conclusive.
+                states[item["check"]] = states.get(item["check"], True) and conclusive_item
             else:
                 states[item["check"]] = states.get(item["check"], False) or conclusive_item
         conclusive_keys = {endpoint for endpoint, states in item_states.items() if all(states.values())}

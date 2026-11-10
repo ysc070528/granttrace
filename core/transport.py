@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Mapping, Optional, Tuple
 
 from core import __version__
 from core.models import HTTPResult
@@ -118,7 +118,7 @@ class HttpTransport:
         method: str,
         url: str,
         headers: Mapping[str, str],
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
         content_type: str = "application/json",
         *,
         on_attempt: Callable[[], None] = _nothing,

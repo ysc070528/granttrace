@@ -85,6 +85,15 @@ class ValidatorBase:
         "auth_header_names",
     }
 
+    KNOWN_ROLE_KEYS = {
+        "id",
+        "role",
+        "token",
+        "headers",
+        "parameters",
+        "body",
+    }
+
     KNOWN_READBACK_KEYS = {
         "method",
         "path",
@@ -109,6 +118,10 @@ class ValidatorBase:
         "owner_role",
         "visitor_role",
         "not_found_is_denial",
+        "read_only",
+        "body",
+        "identity_bodies",
+        "detect_sensitive_exposure",
     }
 
     VALID_CONSISTENCY_VALUES = ("strong", "weak", "eventual")

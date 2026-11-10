@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.7.0 - Unreleased
+
+### Added
+
+- BOLA on query-style POST operations. A POST is sent only when its `bola`
+  policy declares `read_only: true` and gives the request body; its path,
+  operationId or summary must name a read action (search, query, lookup...)
+  and none of its metadata or concrete path may name a mutation. `body` is
+  sent unchanged by every identity; `identity_bodies` gives the Owner body
+  (repeated by the Visitor's cross request and Anonymous) and an optional
+  `visitor_self` body. Anything else is skipped or inconclusive with zero
+  requests, and a rate-limited POST is never retried.
+- Sensitive-field leads (`detect_sensitive_exposure`, OWASP API3): unmasked
+  sensitive-named Owner values that reach the Visitor at the same JSON path.
+  `CONFIRMED` only with an explicit `deny` policy, a confirmed object-level
+  decision on the same observations and a value that differs from the
+  Visitor's own record; otherwise `SUSPICIOUS`. Values are never reported,
+  and the analysis is bounded on untrusted responses.
+- Role matrix (`identities.roles`): for operations with a `required_role`,
+  one request per configured role, decided with the BFLA evidence standard
+  (valid privileged baseline, clean Anonymous denial, configured protected
+  data in the role's valid response). Shown in the HTML report and the JSON
+  `rbac_matrix`; confirmed violations are exported to SARIF as `GT-BFLA-001`,
+  confirmed sensitive-field findings as `GT-BOPLA-001`.
+
+### Changed
+
+- The Windows portable build, its verifier, its workflow and the packaged
+  README and launcher read the version from `pyproject.toml` and
+  `core/__init__.py` (checked to agree) instead of repeating it. A test fails
+  on any drift.
+
 ## 2.6.0 - 2026-11-09
 
 ### Added

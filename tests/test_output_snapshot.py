@@ -81,6 +81,7 @@ def _scan(*, write_tests: bool, workers: int) -> Dict[str, Any]:
 def _replace(text: str, replacements: List[tuple]) -> str:
     for old, new in replacements:
         text = text.replace(old, new)
+    text = text.replace("<tmp>\\", "<tmp>/")
     return VERSION.sub("<version>", text)
 
 

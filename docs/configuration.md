@@ -230,3 +230,103 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
    - **退出码 0**：当前配置检查通过；有 warning 也保留此成功退出码，应人工阅读警告；
    - **退出码 2**：配置存在非法字段或语义冲突，一次性输出所有违规字段路径、预期值与实际值。
    > **注意**：正常扫描加载配置时，CLI 也会在初始化阶段调用同款校验逻辑；配置非法则拒绝启动（退出码 2）。离线检查成功不能证明业务授权策略正确，也不授权写测试。原有字段含义、草稿阻断和验证判定保持不变。
+
+## v2.7.0 扩展检测能力配置
+
+以下三项均为显式启用；未配置时不发送任何额外请求。
+
+### 1. 查询类 POST 的 BOLA 审计
+
+POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantTrace 才会发送 POST：
+
+1. `bola` 中该 POST 操作声明 `"read_only": true`（必须是布尔值 `true`）；
+2. 提供请求体：`body`（每个身份原样发送的字面请求体），或 `identity_bodies`（见下）；
+3. 操作的路径、operationId 或 summary 以读取动作开头（如 search、query、lookup、find、get、list），
+   且路径、operationId、summary、description 都不表明修改（create、update、delete、add、register、
+   login、send、approve 等），具体路径值（如 `{id}` 填入的值）同样不得表明修改。
+
+任一条件不满足即记录 `SKIPPED` 或 `INCONCLUSIVE`，请求数为 0。这些规则只能拦截明显的写操作，
+**不能证明** POST 没有副作用；只为确认无副作用的操作声明 `read_only`。POST 遇到 429/503 不会重试。
+
+```json
+{
+  "bola": {
+    "POST /api/documents/search": {
+      "read_only": true,
+      "identity_bodies": {
+        "owner": {"doc_id": "doc_owner_1001"},
+        "visitor_self": {"doc_id": "doc_visitor_2002"}
+      }
+    }
+  }
+}
+```
+
+- `identity_bodies.owner` 选择 Owner 的对象；Visitor 的越权请求和 Anonymous 请求**原样重复 Owner 的请求体**，
+  只更换凭据。`visitor_self`（可选）选择 Visitor 自己的对象，作为自身基线。
+- `body` 永远按字面发送，不会被解释为身份映射：`{"owner": "alice"}` 就是发送给服务器的请求体。
+- `body` 与 `identity_bodies` 只能二选一；请求体必须是有限的 JSON（不含 NaN/Infinity），不超过 64 KiB、
+  嵌套不超过 32 层。GET 操作配置 `read_only`、`body` 或 `identity_bodies` 会被拒绝，GET 从不携带请求体。
+- 非空对象、数组、字符串或数字（包括 `0`）视为选择了某个对象，按对象级 BOLA 比较；`{}`、`[]`、`""`、
+  `false` 按集合接口比较，需要 `private_data_paths` 才能确认。
+
+### 2. 敏感字段线索（BOPLA 启发式）
+
+在操作配置中添加 `"detect_sensitive_exposure": true`。GrantTrace 比较同一 JSON 路径上 Owner 与 Visitor
+的值，找出名称敏感（如 `phone`、`salary`、`password`、`id_card`）且未脱敏、Visitor 拿到与 Owner 相同的值：
+
+- 只有同时满足以下条件才判为 `CONFIRMED`：`expected_visitor_access` 显式为 `"deny"`；同一组观测的
+  对象级 BOLA 已判为 `CONFIRMED`；该值与 Visitor 自身基线在同一路径的值不同。其余情况为 `SUSPICIOUS`
+  （线索），并在 `missing_evidence` 中列出缺少的证据。字段名本身从不构成确认。
+- 与 Visitor 自身记录相同的值（如共享的总机号码）不报告；`expected_visitor_access: "allow"` 或公开接口不检查。
+- 报告只包含字段路径，不包含值；Owner 的敏感值会加入脱敏列表。非标识符形式的键（如以邮箱为键）
+  在路径中显示为 `*`。响应超过深度或节点上限时记为 `INCONCLUSIVE`，不做部分分析。
+
+```json
+{
+  "bola": {
+    "GET /api/users/{id}": {
+      "expected_visitor_access": "deny",
+      "detect_sensitive_exposure": true
+    }
+  }
+}
+```
+
+需要对单个字段作出确定结论时，使用 `bopla` 中按字段的规则（见[字段级授权检查](bopla-readonly.md)）。
+
+### 3. 角色矩阵（RBAC）
+
+在 `identities.roles` 中定义命名角色，并在操作上设置 `required_role`：
+
+```json
+{
+  "identities": {
+    "owner": {"id": "1001", "token": "Bearer owner_tok"},
+    "visitor": {"id": "1002", "token": "Bearer viewer_tok"},
+    "anonymous": {},
+    "roles": {
+      "admin": {"token": "Bearer admin_tok", "role": "administrator"},
+      "operator": {"token": "Bearer op_tok", "role": "operator"},
+      "viewer": {"token": "Bearer view_tok", "role": "viewer"}
+    }
+  },
+  "bola": {
+    "GET /api/admin/settings": {
+      "required_role": "administrator",
+      "private_data_paths": ["signing_key"]
+    }
+  }
+}
+```
+
+- 没有 `required_role` 的操作不探测角色。第一个 `role` 等于 `required_role` 的角色作为特权基线；
+  基线无效时不再探测其他角色，记为 `INCONCLUSIVE`。每个其他角色发送一次同样的请求（同一 URL；POST 使用
+  Owner 请求体，角色可用自己的 `body` 覆盖）。
+- 判定沿用 BFLA 的证据标准：特权基线有效、Anonymous 被干净拒绝、低权限角色的有效响应包含基线中
+  `private_data_paths` 的值，才为 `CONFIRMED`（矩阵中显示 `VIOLATION`）。返回数据但缺少这些证据显示为
+  `UNPROVEN`（结论 `INCONCLUSIVE`）；HTML 登录页显示为 `UNREADABLE`；401/403 等拒绝显示为 `DENIED`；
+  204 显示为 `EMPTY`；404 只有在开启 `not_found_is_denial` 时才视为拒绝。
+- 每个被探测的角色在结果中各有一条 `RBAC` 记录，确定性覆盖率要求所有角色均有确定结论。
+  矩阵出现在 HTML 报告和 JSON 的 `rbac_matrix` 中；确认的违规导出为 SARIF 规则 `GT-BFLA-001`。
+- 角色名不能使用 `owner`、`visitor`、`anonymous`、`roles`；所有角色请求头的值都会脱敏。

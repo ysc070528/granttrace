@@ -333,7 +333,8 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
         identities = {"owner", "visitor", "visitor_cross", "visitor_self", "anonymous"}
         observations = identities | {"before", "after", "mutation", "rollback", "restored"}
         enums = {
-            "check": {"BOLA", "BOPLA", "BFLA", "BROKEN_AUTH", "MASS_ASSIGNMENT", "ROLLBACK", "UNSUPPORTED"},
+            "check": {"BOLA", "BOPLA", "BFLA", "BROKEN_AUTH", "MASS_ASSIGNMENT", "ROLLBACK", "UNSUPPORTED",
+                      "RBAC", "BOPLA_EXPOSURE"},
             "verdict": {"CONFIRMED", "SECURE", "PUBLIC", "AUTHORIZED", "SUSPICIOUS", "INCONCLUSIVE", "SKIPPED", "ERROR"},
             "subject_identity": {"visitor", "anonymous"},
             "field_access": {"allow", "deny"},
