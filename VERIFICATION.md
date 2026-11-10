@@ -3,6 +3,51 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
+## v2.7.0 pre-release acceptance - 2026-11-11
+
+Status: **accepted for release; v2.7.0 is not published.** Release candidate:
+commit `750a801` (head of PR #90: main `9fc560c`, the merge of #84, plus the
+release date, the publishing workflow's manual choice and release-specific
+documentation); the commit after it adds only this record. PyPI's latest is
+2.6.0; there is no `v2.7.0` tag or Release.
+
+Environment: Linux x86_64 container; CPython **3.13.18** for coverage, linting,
+acceptance scripts and the build, plus CPython **3.9.25** and **3.14.6**; PyYAML
+**6.0.3**, pytest **9.2.0** (**8.4.2** on 3.9), coverage **7.17.2**, Ruff
+**0.17.4**, Mypy **2.4.1**, build **1.6.1**, Twine **7.0.0**, setuptools
+**84.2.1**, wheel **0.48.0**. The Windows package was built and checked by the
+GitHub-hosted `windows-2025` runner; no Windows host was used locally.
+
+| Check | Result |
+|---|---|
+| CI on main after #84 (`9fc560c`) | GrantTrace CI [run 42918318210](https://github.com/ysc070528/granttrace/actions/runs/42918318210) (Ruff, Mypy, tests on 3.9 / 3.12 / 3.14, runtime dependency audit), Windows x64 portable [run 42918318200](https://github.com/ysc070528/granttrace/actions/runs/42918318200) and CodeQL [run 42918318197](https://github.com/ysc070528/granttrace/actions/runs/42918318197): all passed |
+| Full regression suite | 1322 passed and 2402 subtests passed on CPython 3.13.18 and 3.14.6; 1322 passed on 3.9.25; full unittest passed |
+| Branch-aware coverage | 89.95% combined (statements 7281 / 7922, branches 3474 / 4034 = 86.12%); required minimum 80% |
+| Acceptance scripts | PR42 adversarial; PR43 integration (89 tests, source `750a801`, clean tree); authorization coverage, authoritative and generic HTTP; business scenarios 6 / 6; JSON / YAML examples; installation |
+| Wheel / sdist | Isolated `python -m build` from `git archive`; `twine check --strict` passed for both. Wheel: 43 files; sdist: 195 files; no caches, local configurations or build output. Metadata: `Version: 2.7.0`, the unchanged `Summary`, `Requires-Python: >=3.9`, `Requires-Dist: PyYAML>=6.0` |
+| Clean installations | The wheel in new virtual environments on CPython 3.9.25, 3.13.18 and 3.14.6, and the sdist on 3.13.18, each outside the checkout: `granttrace --version` prints `GrantTrace 2.7.0` and `core` loads from `site-packages`; `granttrace demo` exits 0 with BOLA and mass assignment confirmed, rollback verified, the database restored and the server stopped. `scripts/verify_install.py --wheel` passed on the built wheel: versions consistent, 0 PATCH in read-only and external active scans (the external active scan is blocked without state authority), 0 requests for the offline plan |
+| Version consistency | `pyproject.toml`, `core.__version__`, CLI, HTML and JSON reports and the HTTP User-Agent say 2.7.0. The Windows build and verification scripts, the Windows workflow's ZIP and artifact names and the packaged README and launcher derive it through `scripts/source_version.py`; the publishing workflow's manual choices include v2.7.0 |
+| Windows x64 portable | Built from `9fc560c` (clean tree) in run 42918318200 on Windows Server 2025 with Python 3.14.5 and PyInstaller 6.22.3: `GrantTrace-v2.7.0-Windows-x64.zip`, 10,747,513 bytes, SHA256 `a05d6288b85577e6e4bee1a12c9910c8922e564cfa0cf475f96e180832bc1a90`. `scripts/verify_windows_portable.py` passed: extraction to paths with spaces and Chinese characters outside the checkout, no Python on the child PATH, `--version` and `--help`, active and read-only demos, an offline YAML plan with 0 requests, `Start-Demo.bat`, the loopback port closed and no package process left. The artifact host was not reachable from this environment, so the ZIP was not downloaded and rehashed here, and no one double-clicked it on a clean Windows machine |
+| 2.7.0 detectors | Read-only POST, role matrix and sensitive-field checks are covered by `tests/test_v27_hardening.py`, including real HTTP to a loopback server. VAmPI and crAPI were not re-run for this candidate; the read-only GET/HEAD decisions are unchanged (a 200,000-endpoint differential against 2.6.0 found no difference) |
+| Secrets | A pattern scan of all 194 tracked files found no keys, tokens or JWTs; the only match is a dummy private-key marker in a redaction test. GitHub secret scanning is not enabled for the repository |
+| Documentation | Relative links, anchors and links to this repository: 0 problems. `SECURITY.md` describes when a read-only POST is sent; release-specific pages updated in #90 |
+
+Local candidate hashes, built from `750a801` in the container:
+
+```text
+8efe69a82a953310156424bfb2451f6bee842d2e4655445f25daacddba9fe303  granttrace-2.7.0-py3-none-any.whl
+2c72b227652da135275c17036f58232e051efa53f325aa24ca7ea60c7f183b92  granttrace-2.7.0.tar.gz
+```
+
+The publishing workflow builds the uploaded distributions from the tag. The
+Release's Windows ZIP and `SHA256SUMS.txt` come from the Windows workflow run on
+the release commit itself; their hashes differ from the build above because the
+build records its source commit.
+
+Still to do: CI on the release commit, then the tag, the GitHub Release with the
+Windows assets, PyPI publishing and the post-release checks in the
+[release checklist](docs/release-checklist.md), including a clean Windows machine.
+
 ## v2.6.0 pre-release acceptance - 2026-11-08
 
 Status: **accepted for release; v2.6.0 is not published.** Release candidate:
