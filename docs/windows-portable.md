@@ -26,12 +26,17 @@ py -3.14 -m venv dist/windows-build-env
 .\dist\windows-build-env\Scripts\python.exe -m pip install -r packaging/windows/requirements-build.txt
 .\dist\windows-build-env\Scripts\python.exe -m pip install --no-build-isolation --no-deps .
 .\dist\windows-build-env\Scripts\python.exe scripts/build_windows_portable.py
-.\dist\windows-build-env\Scripts\python.exe scripts/verify_windows_portable.py --zip dist/GrantTrace-v2.6.0-Windows-x64.zip --output dist/windows-portable-verification.json
+$version = .\dist\windows-build-env\Scripts\python.exe scripts/source_version.py
+.\dist\windows-build-env\Scripts\python.exe scripts/verify_windows_portable.py --zip "dist/GrantTrace-v$version-Windows-x64.zip" --output dist/windows-portable-verification.json
 ```
+
+版本号只在 `pyproject.toml` 和 `core/__init__.py` 中声明，两者必须一致。
+`scripts/source_version.py` 读取并核对这两处；构建脚本、验证脚本、CI 工作流的 ZIP 与 artifact 名称，
+以及包内 `README.txt` 和 `Start-Demo.bat` 显示的版本都由它得出，升级版本时无需逐处修改。
 
 最终交付文件为：
 
-- `dist/GrantTrace-v2.6.0-Windows-x64.zip`
+- `dist/GrantTrace-v<版本>-Windows-x64.zip`
 - `dist/SHA256SUMS.txt`：记录 ZIP 的 SHA-256。
 - `dist/windows-portable-build.json`：记录源码 commit、工具版本、EXE / ZIP 大小与哈希。
 - `dist/windows-portable-verification.json`：记录实际验证结果，供维护者复核。
@@ -50,8 +55,8 @@ CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍�
 1. 在 PR 的 Checks 或仓库 Actions 中打开 **GrantTrace Windows portable**
    工作流（`windows-package.yml`），
    核对运行对应的 commit SHA，等待该次运行成功。
-2. 下载 **GrantTrace-v2.6.0-Windows-x64** artifact，解开外层 artifact ZIP，取出内部的
-   `GrantTrace-v2.6.0-Windows-x64.zip`、`SHA256SUMS.txt` 和验证 JSON。
+2. 下载 **GrantTrace-v<版本>-Windows-x64** artifact，解开外层 artifact ZIP，取出内部的
+   `GrantTrace-v<版本>-Windows-x64.zip`、`SHA256SUMS.txt` 和验证 JSON。
 3. 用 `Get-FileHash -Algorithm SHA256` 核对分发 ZIP 与 `SHA256SUMS.txt`，
    阅读验证 JSON，再将分发 ZIP 完整解压到新的测试目录。
 4. 在没有安装 Python 的 Windows x64 环境双击 `Start-Demo.bat`，

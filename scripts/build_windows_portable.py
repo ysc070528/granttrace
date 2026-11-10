@@ -1,4 +1,4 @@
-"""Build the v2.6.0 Windows x64 folder bundle and ZIP; never publish it."""
+"""Build the Windows x64 folder bundle and ZIP for the source version; never publish it."""
 
 from __future__ import annotations
 
@@ -17,10 +17,13 @@ import tempfile
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from source_version import render_versioned_text, source_version, windows_package_name
+
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "2.6.0"
-PACKAGE_NAME = f"GrantTrace-v{VERSION}-Windows-x64"
+# One source of truth: pyproject.toml and core/__init__.py, checked to agree.
+VERSION = source_version(ROOT)
+PACKAGE_NAME = windows_package_name(VERSION)
 
 
 def check_build_environment() -> None:
@@ -31,8 +34,11 @@ def check_build_environment() -> None:
     sys.path.insert(0, str(ROOT))
     from core import __version__
 
-    if __version__ != VERSION or importlib.metadata.version("granttrace") != VERSION:
-        raise RuntimeError("Source and installed GrantTrace must both be version 2.6.0")
+    installed = importlib.metadata.version("granttrace")
+    if __version__ != VERSION or installed != VERSION:
+        raise RuntimeError(
+            f"Source, runtime and installed GrantTrace versions must all be {VERSION}: "
+            f"core.__version__={__version__!r}, installed distribution={installed!r}")
     if importlib.metadata.version("pyinstaller") != "6.22.3":
         raise RuntimeError("Install packaging/windows/requirements-build.txt before building")
 
@@ -83,6 +89,7 @@ def main() -> int:
         for name in ("Start-Demo.bat", "README.txt"):
             # Produce Windows text consistently even when checkout uses LF.
             text = (ROOT / "packaging" / "windows" / name).read_text(encoding="utf-8")
+            text = render_versioned_text(text, VERSION, name)
             (bundle / name).write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
         shutil.copyfile(ROOT / "LICENSE", bundle / "LICENSE")
         licenses = bundle / "LICENSES"
