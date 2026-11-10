@@ -28,6 +28,13 @@
         },
         "anonymous": {
           "$ref": "#/definitions/anonymous_identity"
+        },
+        "roles": {
+          "type": "object",
+          "description": "Additional named roles for RBAC matrix testing",
+          "additionalProperties": {
+            "$ref": "#/definitions/role_identity"
+          }
         }
       }
     },
@@ -72,6 +79,39 @@
     }
   },
   "definitions": {
+    "role_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": ["string", "integer", "null"],
+          "description": "Resource identifier associated with this role identity"
+        },
+        "role": {
+          "type": ["string", "null"],
+          "description": "Logical role name designation (defaults to identity key)"
+        },
+        "token": {
+          "type": ["string", "null"],
+          "description": "Bearer token or Authorization header value for this role"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Arbitrary authentication or session headers for this role",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Role-bound parameters"
+        },
+        "body": {
+          "description": "Request body override for this role",
+          "type": ["object", "array", "string", "number", "boolean", "null"]
+        }
+      }
+    },
     "authenticated_identity": {
       "type": "object",
       "additionalProperties": false,
@@ -379,6 +419,18 @@
           "type": "string",
           "minLength": 1,
           "description": "Operator-verified role of the configured Visitor identity. Role comparison is exact, without inferring a role hierarchy."
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "Explicitly marks an idempotent or read-only POST operation safe to audit for BOLA"
+        },
+        "body": {
+          "description": "Request body or per-identity body map for read-only POST operations",
+          "type": ["object", "array", "string", "number", "boolean", "null"]
+        },
+        "detect_sensitive_exposure": {
+          "type": "boolean",
+          "description": "Enable unmasked sensitive property exposure detection (OWASP API3: BOPLA)"
         }
       }
     }

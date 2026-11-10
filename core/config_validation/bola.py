@@ -208,6 +208,16 @@ class BolaChecks(ValidatorBase):
                     )
                 )
 
+            if "detect_sensitive_exposure" in policy and not isinstance(policy["detect_sensitive_exposure"], bool):
+                issues.append(
+                    ConfigIssue(
+                        path=f"bola.{ep_key}.detect_sensitive_exposure",
+                        message="'detect_sensitive_exposure' must be a boolean",
+                        expected="boolean",
+                        actual=safe_diagnostic_value(policy["detect_sensitive_exposure"]),
+                    )
+                )
+
             if "body" in policy:
                 body_val = policy["body"]
                 if not isinstance(body_val, (dict, list, str, int, float, bool)):

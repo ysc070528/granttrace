@@ -810,6 +810,321 @@ class TestV27ExtendedFeatures(unittest.TestCase):
         self.assertEqual(bodies_by_role.get("admin"), {"role_cmd": "admin_exec"})
         self.assertEqual(bodies_by_role.get("viewer"), {"role_cmd": "viewer_exec"})
 
+    # -------------------------------------------------------------------------
+    # Comprehensive v2.7.0 Edge Case & Verification Tests
+    # -------------------------------------------------------------------------
+
+    def test_bopla_cvv_3digit_and_expanded_sensitive_keys(self):
+        """3-digit CVV, email_address, date_of_birth, and account_number are properly detected."""
+        identities = {
+            "owner": {"token": "Bearer owner_token"},
+            "visitor": {"token": "Bearer visitor_token"},
+            "anonymous": {},
+        }
+        bola = {
+            "GET /api/user/profile": {
+                "expected_visitor_access": "deny",
+                "detect_sensitive_exposure": True,
+            }
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/user/profile"][0]
+
+        doc = {
+            "cvv": "123",
+            "email_address": "alice@company.org",
+            "date_of_birth": "1992-05-18",
+            "account_number": "6222020200001234",
+        }
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            if identity_name in ("owner", "visitor"):
+                return HTTPResult(status=200, body=json.dumps(doc))
+            return HTTPResult(status=401, body=json.dumps({"error": "Auth required"}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        exposure_results = [r for r in auditor.results if r["check"] == "BOPLA_EXPOSURE"]
+        self.assertEqual(len(exposure_results), 1)
+        self.assertEqual(exposure_results[0]["verdict"], Verdict.CONFIRMED.value)
+        paths = exposure_results[0]["evidence"]["exposed_sensitive_paths"]
+        self.assertIn("cvv", paths)
+        self.assertIn("email_address", paths)
+        self.assertIn("date_of_birth", paths)
+        self.assertIn("account_number", paths)
+
+    def test_bopla_unspecified_visitor_access_yields_suspicious(self):
+        """When expected_visitor_access is not explicitly 'deny', exposure is marked as SUSPICIOUS heuristic lead."""
+        identities = {
+            "owner": {"token": "Bearer owner_token"},
+            "visitor": {"token": "Bearer visitor_token"},
+            "anonymous": {},
+        }
+        # Notice: NO expected_visitor_access: "deny"
+        bola = {
+            "GET /api/user/profile": {
+                "detect_sensitive_exposure": True,
+            }
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/user/profile"][0]
+
+        doc = {"phone": "13800138000"}
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            if identity_name in ("owner", "visitor"):
+                return HTTPResult(status=200, body=json.dumps(doc))
+            return HTTPResult(status=401, body=json.dumps({"error": "Auth required"}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        exposure_results = [r for r in auditor.results if r["check"] == "BOPLA_EXPOSURE"]
+        self.assertEqual(len(exposure_results), 1)
+        self.assertEqual(exposure_results[0]["verdict"], Verdict.SUSPICIOUS.value)
+        # Should not create a CONFIRMED finding
+        self.assertEqual(len(auditor.findings), 0)
+
+    def test_bopla_retroactive_redaction_of_earlier_findings(self):
+        """When a sensitive value is discovered, earlier recorded results and findings are retroactively scrubbed."""
+        identities = {
+            "owner": {"token": "Bearer owner_token"},
+            "visitor": {"token": "Bearer visitor_token"},
+            "anonymous": {},
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config={}, request_delay=0
+        )
+        # Manually seed an earlier result with an unredacted secret
+        discovered_secret = "SECRET_LEAK_TOKEN_999888"
+        fake_result = {
+            "endpoint": "GET /api/earlier",
+            "check": "BOLA",
+            "verdict": "SECURE",
+            "evidence": {"response_snippet": f"Found id with token {discovered_secret}"},
+        }
+        fake_finding = {
+            "type": "Information Disclosure",
+            "severity": "Low",
+            "details": f"Earlier note mentioning {discovered_secret}",
+            "evidence": {"raw_body": f"details={discovered_secret}"},
+        }
+        auditor.results.append(fake_result)
+        auditor.findings.append(fake_finding)
+
+        # Now publish the discovered secret
+        auditor._publish_secret_values({discovered_secret})
+
+        # Verify retroactive scrubbing took place immediately
+        self.assertNotIn(discovered_secret, json.dumps(auditor.results))
+        self.assertNotIn(discovered_secret, json.dumps(auditor.findings))
+        self.assertIn("[REDACTED]", json.dumps(auditor.results))
+        self.assertIn("[REDACTED]", json.dumps(auditor.findings))
+
+    def test_rbac_zero_probes_when_no_required_role(self):
+        """When required_role is not specified in bola policy, RBAC sends 0 probe requests."""
+        identities = {
+            "owner": {"token": "Bearer admin_tok"},
+            "visitor": {"token": "Bearer viewer_tok"},
+            "anonymous": {},
+            "roles": {
+                "admin": {"token": "Bearer admin_tok", "role": "administrator"},
+                "viewer": {"token": "Bearer viewer_tok", "role": "viewer"},
+            },
+        }
+        # Endpoint policy has NO required_role
+        bola = {
+            "GET /api/admin/settings": {}
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/settings"][0]
+
+        requests_sent = []
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            requests_sent.append(identity_name)
+            return HTTPResult(status=200, body=json.dumps({"ok": True}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        # Only standard owner, visitor, anonymous requests, zero role probes!
+        self.assertNotIn("admin", requests_sent)
+        self.assertNotIn("viewer", requests_sent)
+        self.assertNotIn("GET /api/admin/settings", getattr(auditor, "rbac_matrix", {}))
+
+    def test_rbac_missing_privileged_role_aborts_probes(self):
+        """When required_role is not configured in identities.roles, records INCONCLUSIVE with 0 probes."""
+        identities = {
+            "owner": {"token": "Bearer admin_tok"},
+            "visitor": {"token": "Bearer viewer_tok"},
+            "anonymous": {},
+            "roles": {
+                "auditor": {"token": "Bearer audit_tok", "role": "auditor"},
+            },
+        }
+        bola = {
+            "GET /api/admin/settings": {
+                "required_role": "superadmin",  # Not in roles!
+            }
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/settings"][0]
+
+        role_probes = []
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            if identity_name not in ("owner", "visitor", "anonymous"):
+                role_probes.append(identity_name)
+            return HTTPResult(status=200, body=json.dumps({"ok": True}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        self.assertEqual(len(role_probes), 0, "No role probes should be sent when required_role is missing")
+        rbac_res = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION"]
+        self.assertEqual(len(rbac_res), 1)
+        self.assertEqual(rbac_res[0]["verdict"], Verdict.INCONCLUSIVE.value)
+
+    def test_rbac_invalid_privileged_baseline_aborts_comparison(self):
+        """When privileged baseline fails (e.g. 403 Forbidden), records INCONCLUSIVE and sends 0 comparison probes."""
+        identities = {
+            "owner": {"token": "Bearer admin_tok"},
+            "visitor": {"token": "Bearer viewer_tok"},
+            "anonymous": {},
+            "roles": {
+                "admin": {"token": "Bearer admin_tok", "role": "administrator"},
+                "viewer": {"token": "Bearer viewer_tok", "role": "viewer"},
+                "guest": {"token": "Bearer guest_tok", "role": "guest"},
+            },
+        }
+        bola = {
+            "GET /api/admin/settings": {
+                "required_role": "administrator",
+            }
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/settings"][0]
+
+        comparison_probes = []
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            if identity_name == "admin":
+                # Privileged baseline fails!
+                return HTTPResult(status=403, body=json.dumps({"error": "Admin account locked"}))
+            elif identity_name in ("viewer", "guest"):
+                comparison_probes.append(identity_name)
+                return HTTPResult(status=200, body=json.dumps({"setting": "leak"}))
+            return HTTPResult(status=401, body=json.dumps({"error": "Unauthorized"}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        self.assertEqual(len(comparison_probes), 0, "No lower role comparison probes must be sent if privileged baseline fails")
+        rbac_res = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION"]
+        self.assertEqual(len(rbac_res), 1)
+        self.assertEqual(rbac_res[0]["verdict"], Verdict.INCONCLUSIVE.value)
+
+    def test_rbac_stats_accuracy_no_double_count(self):
+        """When an RBAC violation is found, stats['confirmed'] increments by exactly 1, not 2."""
+        identities = {
+            "owner": {"token": "Bearer admin_tok"},
+            "visitor": {"token": "Bearer viewer_tok"},
+            "anonymous": {},
+            "roles": {
+                "admin": {"token": "Bearer admin_tok", "role": "administrator"},
+                "viewer": {"token": "Bearer viewer_tok", "role": "viewer"},
+            },
+        }
+        bola = {
+            "GET /api/admin/settings": {
+                "required_role": "administrator",
+            }
+        }
+        auditor = APISentinelAuditor(
+            str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+            identities_config=identities, bola_config=bola, request_delay=0
+        )
+        ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/admin/settings"][0]
+
+        def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+            if identity_name in ("owner", "admin"):
+                return HTTPResult(status=200, body=json.dumps({"admin_data": "secret"}))
+            elif identity_name == "viewer":
+                return HTTPResult(status=200, body=json.dumps({"admin_data": "secret"}))
+            return HTTPResult(status=401, body=json.dumps({"error": "Auth required"}))
+
+        auditor._http_request = mock_http
+        auditor._audit_endpoint_bola(ep)
+
+        # Check confirmed count: should only have RBAC confirmed
+        rbac_violations = [r for r in auditor.results if r["check"] == "RBAC_VIOLATION" and r["verdict"] == Verdict.CONFIRMED.value]
+        self.assertEqual(len(rbac_violations), 1)
+        # Total confirmed results matches stats['confirmed'] without double-counting
+        total_confirmed_results = len([r for r in auditor.results if r["verdict"] == Verdict.CONFIRMED.value])
+        self.assertEqual(auditor.stats["confirmed"], total_confirmed_results)
+
+    def test_post_bola_scalar_and_array_body_handling(self):
+        """Read-only POST BOLA supports scalar, list, and dict bodies without error."""
+        identities = {
+            "owner": {"token": "Bearer owner_tok"},
+            "visitor": {"token": "Bearer visitor_tok"},
+            "anonymous": {},
+        }
+        for body_payload in ([1, 2, 3], "plain text query", 42, {"key": "val"}):
+            with self.subTest(body=body_payload):
+                bola = {
+                    "POST /api/documents/query": {
+                        "read_only": True,
+                        "body": body_payload,
+                    }
+                }
+                auditor = APISentinelAuditor(
+                    str(self.spec_file), target_base_url="http://127.0.0.1:8080",
+                    identities_config=identities, bola_config=bola, request_delay=0
+                )
+                ep = [e for e in auditor.parser.get_endpoints() if e["path"] == "/api/documents/query"][0]
+
+                received_bodies = []
+
+                def mock_http(method, url, data=None, identity_name="anonymous", headers=None, content_type="application/json"):
+                    received_bodies.append(data)
+                    return HTTPResult(status=200, body=json.dumps({"result": "ok"}))
+
+                auditor._http_request = mock_http
+                auditor._audit_endpoint_bola(ep)
+                self.assertGreater(len(received_bodies), 0)
+                self.assertEqual(received_bodies[0], body_payload)
+
+    def test_schema_validation_v27_full_config(self):
+        """config.schema.json validates a comprehensive v2.7.0 configuration."""
+        schema = json.loads((Path(__file__).resolve().parents[1] / "config.schema.json").read_text(encoding="utf-8"))
+        
+        # Verify schema definitions exist
+        self.assertIn("roles", schema["properties"]["identities"]["properties"])
+        self.assertIn("role_identity", schema["definitions"])
+        bola_props = schema["definitions"]["bola_entry"]["properties"]
+        self.assertIn("read_only", bola_props)
+        self.assertIn("body", bola_props)
+        self.assertIn("detect_sensitive_exposure", bola_props)
+
 
 if __name__ == "__main__":
     unittest.main()

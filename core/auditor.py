@@ -232,6 +232,13 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             return
         with self._result_lock:
             self._secret_values = self._secret_values | values
+            if self.bopla_config:
+                self._redact_property_history()
+            else:
+                for collection in (self.results, self.findings):
+                    for record in collection:
+                        safe = sanitize_evidence(record, self.include_sensitive_evidence, self._secret_values)
+                        self._replace_evidence_in_place(record, safe)
 
     def _ensure_parser_auth(self) -> None:
         # Replacing the parser is supported only between scans. Publish its
@@ -327,7 +334,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         self,
         method: str,
         url: str,
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
         identity_name: str = "anonymous",
         content_type: str = "application/json",
         headers: Optional[Dict[str, str]] = None,
@@ -358,7 +365,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             attempt += 1
 
     def _send_http_request(
-        self, method: str, url: str, data: Optional[Dict[str, Any]], identity_name: str,
+        self, method: str, url: str, data: Optional[Any], identity_name: str,
         content_type: str, headers: Optional[Dict[str, str]],
     ) -> HTTPResult:
         self._transport.throttle()
@@ -413,7 +420,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
 
     def _read_observation(
         self, method: str, url: str, identity_name: str, headers: Optional[Dict[str, str]] = None,
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
     ) -> HTTPResult:
         result = self._http_request(method, url, data=data, identity_name=identity_name, headers=headers)
         observations = getattr(self._bopla_local, "observations", None)
@@ -517,19 +524,30 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
 
     SENSITIVE_KEY_PATTERN = re.compile(
         r"(?i)^(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|"
-        r"private[_-]?key|ssn|social[_-]?security|id[_-]?card|national[_-]?id|salary|income|"
-        r"credit[_-]?card|bank[_-]?card|card[_-]?number|cvv|mobile|phone|telephone)$"
+        r"private[_-]?key|ssn|social[_-]?security(?:[_-]?number)?|national[_-]?id|id[_-]?card|"
+        r"passport(?:[_-]?(?:number|no))?|phone|mobile|phone[_-]?number|telephone|"
+        r"email|email[_-]?address|date[_-]?of[_-]?birth|dob|salary|income|"
+        r"credit[_-]?card(?:[_-]?number)?|bank[_-]?(?:account|card)(?:[_-]?number)?|"
+        r"account[_-]?number|card[_-]?number|cvv|cvc|pin)$"
     )
 
-    MASKED_PATTERN = re.compile(r"(?i)(\*+|\[?redacted\]?|\[?masked\]?|\[?hidden\]?|\[?anonymized\]?|x{4,})")
+    MASKED_PATTERN = re.compile(
+        r"(?i)(^\*+$|^#+$|^x+$|\[?(?:redacted|masked|hidden|anonymized)\]?|\*{2,}|#{3,}|x{3,}|[•●]{2,})"
+    )
+    PLACEHOLDER_WORDS = frozenset({
+        "none", "null", "nil", "n/a", "na", "undefined", "true", "false", "empty", "unknown", "nan"
+    })
 
     @classmethod
     def _is_sensitive_value_masked(cls, val_str: str) -> bool:
-        if not val_str or len(val_str) < 4:
+        if not val_str:
             return True
-        if val_str.lower() in {"none", "null", "nil", "n/a", "undefined", "true", "false", "empty", "unknown"}:
+        cleaned = val_str.strip()
+        if len(cleaned) < 3:
             return True
-        return bool(cls.MASKED_PATTERN.search(val_str))
+        if cleaned.lower() in cls.PLACEHOLDER_WORDS:
+            return True
+        return bool(cls.MASKED_PATTERN.search(cleaned))
 
     @classmethod
     def _extract_sensitive_values(cls, data: Any, current_path: str = "") -> List[Tuple[str, str, Any]]:
@@ -603,10 +621,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             reason = f"Sensitive property exposure (BOPLA): unmasked sensitive fields {field_names} returned to unauthorized visitor"
 
             # Determine verdict:
-            # If clear authorization boundary exists (authenticated endpoint or visitor denied access) -> CONFIRMED
-            # Otherwise -> SUSPICIOUS (heuristic candidate needing verification)
-            requires_auth = bool(security) and {} not in security
-            has_boundary_evidence = requires_auth or (policy.get("expected_visitor_access") == "deny")
+            # Without explicit authorization boundary proof (policy explicitly denying visitor access: expected_visitor_access == 'deny'),
+            # we do NOT confirm directly; we mark as SUSPICIOUS (heuristic candidate needing verification).
+            has_boundary_evidence = policy.get("expected_visitor_access") == "deny"
 
             verdict = Verdict.CONFIRMED if has_boundary_evidence else Verdict.SUSPICIOUS
             finding = None
@@ -623,8 +640,6 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                         "observation_group": key + ":bopla_exposure",
                     },
                 }
-                with self._result_lock:
-                    self.stats["confirmed"] += 1
 
             self._record_result(ep, "BOPLA_EXPOSURE", verdict, reason, {
                 "exposed_sensitive_paths": field_names,
@@ -669,35 +684,61 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         if not roles or not isinstance(roles, dict):
             return
 
-        matrix_entry: Dict[str, Any] = {"endpoint": key, "method": ep["method"], "roles": {}}
         policy = self.bola_config.get(key, {})
         required_role = policy.get("required_role")
+        if not required_role:
+            # RBAC probes require explicit required_role on the endpoint to avoid unintended probes
+            return
 
-        # First verify privileged baseline if required_role is configured
-        privileged_baseline_valid = False
-        if required_role:
-            priv_role_name = None
-            priv_role_data = None
-            for r_name, r_data in roles.items():
-                if isinstance(r_data, dict) and r_data.get("role", r_name) == required_role:
-                    priv_role_name = r_name
-                    priv_role_data = r_data
-                    break
+        # Check if privileged role exists in configured roles
+        priv_role_name = None
+        priv_role_data = None
+        for r_name, r_data in roles.items():
+            if isinstance(r_data, dict) and r_data.get("role", r_name) == required_role:
+                priv_role_name = r_name
+                priv_role_data = r_data
+                break
 
-            if priv_role_name and priv_role_data:
-                try:
-                    p_headers = self.identity_headers(priv_role_name)
-                    p_url = self._build_url(ep, "owner")
-                    p_body = self._get_role_body(policy, priv_role_name, priv_role_data)
-                    p_res = self._http_request(ep["method"], p_url, data=p_body, identity_name=priv_role_name, headers=p_headers)
-                    p_assess = AuthorizationEvidence.assess(p_res)
-                    if AuthorizationEvidence.valid(p_assess):
-                        privileged_baseline_valid = True
-                except Exception:
-                    privileged_baseline_valid = False
+        if not priv_role_name or not priv_role_data:
+            reason = f"RBAC required_role '{required_role}' is not configured in identities.roles; skipping RBAC probe"
+            self._record_result(ep, "RBAC_VIOLATION", Verdict.INCONCLUSIVE, reason, {
+                "requests_attempted": 0, "requests_sent": 0, "reason_category": "missing_privileged_role"
+            })
+            return
+
+        # First verify privileged baseline
+        try:
+            p_headers = self.identity_headers(priv_role_name)
+            p_url = self._build_url(ep, "owner")
+            p_body = self._get_role_body(policy, priv_role_name, priv_role_data)
+            p_res = self._http_request(ep["method"], p_url, data=p_body, identity_name=priv_role_name, headers=p_headers)
+            p_assess = AuthorizationEvidence.assess(p_res)
+            if not AuthorizationEvidence.valid(p_assess):
+                reason = f"Privileged baseline for role '{priv_role_name}' ({required_role}) is invalid or inaccessible; cannot establish authorization baseline"
+                self._record_result(ep, "RBAC_VIOLATION", Verdict.INCONCLUSIVE, reason, {
+                    "requests_attempted": 1, "status": p_res.status, "reason_category": "invalid_privileged_baseline"
+                })
+                return
+        except Exception as exc:
+            clean_err = sanitize_error_message(str(exc))
+            for s in self._secret_values:
+                if s and s in clean_err:
+                    clean_err = clean_err.replace(s, "[REDACTED]")
+            self._record_result(ep, "RBAC_VIOLATION", Verdict.INCONCLUSIVE, f"Privileged baseline probe failed: {clean_err}", {
+                "requests_attempted": 1, "reason_category": "privileged_probe_error"
+            })
+            return
+
+        matrix_entry: Dict[str, Any] = {"endpoint": key, "method": ep["method"], "roles": {}}
+        matrix_entry["roles"][priv_role_name] = {
+            "status": p_res.status,
+            "access": "ALLOWED",
+            "role": required_role,
+            "violation": False,
+        }
 
         for role_name, role_data in roles.items():
-            if not isinstance(role_data, dict):
+            if not isinstance(role_data, dict) or role_name == priv_role_name:
                 continue
             user_role = role_data.get("role", role_name)
             try:
@@ -725,14 +766,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                     access_verdict = "EMPTY" if status_code == 200 else f"HTTP_{status_code}"
                 elif is_valid_data:
                     # Valid JSON response received
-                    if required_role and user_role != required_role:
-                        # Lower role got valid data on an endpoint requiring a specific higher role!
-                        if privileged_baseline_valid:
-                            has_violation = True
-                            access_verdict = "VIOLATION"
-                        else:
-                            # Missing valid privileged baseline; cannot confirm violation
-                            access_verdict = "INCONCLUSIVE"
+                    if user_role != required_role:
+                        has_violation = True
+                        access_verdict = "VIOLATION"
                     else:
                         access_verdict = "ALLOWED"
                 else:
@@ -760,8 +796,6 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                             "status": status_code,
                         },
                     }
-                    with self._result_lock:
-                        self.stats["confirmed"] += 1
                     self._record_result(ep, "RBAC_VIOLATION", Verdict.CONFIRMED, reason, matrix_entry, finding)
 
             except Exception as exc:

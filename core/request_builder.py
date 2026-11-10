@@ -239,7 +239,13 @@ class RequestBuilderMixin:
             for key, value in configured.items():
                 if key not in {"common", "owner", "visitor", "anonymous"}:
                     values[key] = value
-        identity_values = self.identities[identity_name].get("parameters", {})
+        identity_obj = (
+            self.identities.get(identity_name)
+            if identity_name in self.identities
+            else (self.identities.get("roles", {}).get(identity_name)
+                  if isinstance(self.identities.get("roles"), dict) else None)
+        )
+        identity_values = identity_obj.get("parameters", {}) if isinstance(identity_obj, dict) else {}
         if isinstance(identity_values, dict):
             values.update(identity_values)
         return values
@@ -587,7 +593,13 @@ class RequestBuilderMixin:
         values = self._operation_parameter_values(ep, resource_identity)
         if extra_values:
             values.update(extra_values)
-        candidate_id = self.identities[resource_identity].get("id")
+        ident_entry = (
+            self.identities.get(resource_identity)
+            if resource_identity in self.identities
+            else (self.identities.get("roles", {}).get(resource_identity)
+                  if isinstance(self.identities.get("roles"), dict) else None)
+        )
+        candidate_id = ident_entry.get("id") if isinstance(ident_entry, dict) else None
         test_path = raw_path
 
         for param_name in re.findall(r"\{([^}]+)\}", raw_path):
