@@ -120,9 +120,11 @@ GrantTrace 自身的漏洞请按 [SECURITY.md](https://github.com/ysc070528/gran
 - [参数序列化规则](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md)
 - [字段级授权检查（BOPLA）](https://github.com/ysc070528/granttrace/blob/main/docs/bopla-readonly.md)
 - [远程 `$ref` 解析](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)（英文）
-- [授权证据与覆盖率](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md)（英文）
+- [授权证据加固](https://github.com/ysc070528/granttrace/blob/main/docs/authorization-audit-hardening.md)（英文，v2.5.2 审计记录）
 - [业务场景验收](https://github.com/ysc070528/granttrace/blob/main/docs/business-scenarios.md)
 - [实测案例：VAmPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/vampi.md)（英文）：扫描一个故意含漏洞的 API，发现了什么、漏掉了什么
+- [实测案例：crAPI](https://github.com/ysc070528/granttrace/blob/main/docs/case-studies/crapi.md)（英文）：OWASP 的微服务靶场 API
+- [与同类工具的对比](https://github.com/ysc070528/granttrace/blob/main/docs/comparison.md)（英文）：Autorize、AuthMatrix、ZAP、Akto
 - [验收记录](https://github.com/ysc070528/granttrace/blob/main/VERIFICATION.md)（英文）
 
 ## 开发
@@ -136,7 +138,7 @@ python -m pytest
 
 扫描仓库自带的 mock 靶场：运行 `python mock_server/server.py`，在另一个终端执行
 `granttrace --spec openapi.json --config config.example.json --target http://127.0.0.1:8080`。
-CI 运行的全部检查见 [CONTRIBUTING.md](https://github.com/ysc070528/granttrace/blob/main/CONTRIBUTING.md)。
+CI 运行的全部检查见 [CONTRIBUTING.md](https://github.com/ysc070528/granttrace/blob/main/CONTRIBUTING.md)；参与贡献请遵守[行为准则](https://github.com/ysc070528/granttrace/blob/main/CODE_OF_CONDUCT.md)（英文）。
 
 ## 许可证
 

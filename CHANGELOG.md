@@ -23,7 +23,10 @@
 
 - Synchronize package, runtime, Windows distribution and release-workflow versions to `2.7.0`.
 
-## 2.6.0
+## 2.6.0 - 2026-11-09
+
+### Added
+
 - Read-only Broken Authentication (CWE-306, SARIF `GT-AUTH-001`) and Broken
   Function Level Authorization (CWE-285, `GT-BFLA-001`) checks, and private-data
   checks for collection endpoints (CWE-639). Confirmation requires explicitly
@@ -83,6 +86,20 @@
   details from the whole report. The configuration guide now points to field
   rules for private fields on operations without an authentication
   requirement (#83).
+- A case study of a read-only scan of OWASP crAPI 1.1.6: GrantTrace confirms
+  another user's mechanic report (challenge 2), the order lookup without
+  authentication (challenge 14), an administrator user list any user can read,
+  and, with BOPLA field rules, post authors' email addresses and vehicle IDs
+  (challenge 4). Challenge 1 stays `SUSPICIOUS` because crAPI's identity service
+  answers requests without a token with a Java `toString()` instead of JSON.
+  `examples/crapi/` holds the setup script and a Compose override that runs
+  crAPI without its chatbot. See
+  [docs/case-studies/crapi.md](docs/case-studies/crapi.md) (#85).
+- A comparison of GrantTrace's approach with Autorize, AuthMatrix, ZAP's Access
+  Control Testing add-on and Akto, from their documentation: where requests come
+  from, what is expected, how a result is decided, and when another tool fits
+  better. It compares approaches, not detection rates. See
+  [docs/comparison.md](docs/comparison.md) (#86).
 
 ### Changed
 
@@ -296,6 +313,15 @@
     them afterwards raises `AttributeError` (#61).
   - `_http_request` and `_authoritative_patch_state` are documented extension
     points and keep their names and signatures (#60).
+- Documentation: the v2.5.3 post-release acceptance records (#36 to #41), user
+  documentation synced with merged behavior (#54), the contributing guide's
+  output checks (#72) and the first release-preparation record (#78). Before
+  release, SECURITY.md, the command-line reference and the configuration guide
+  now state that write checks against an external target stop before any write;
+  the package description no longer lists mass assignment, which only the
+  built-in demo performs; the command-line reference documents `--workers` and
+  `--timeout`; a Code of Conduct (Contributor Covenant 2.1) is added; and the
+  Windows guide describes the released state (#87).
 
 ## 2.5.3 - 2026-10-15
 

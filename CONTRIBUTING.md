@@ -1,5 +1,13 @@
 # Contributing to GrantTrace
 
+Everyone taking part in this project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report security problems in GrantTrace
+privately, as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+The command-line module is still `api_sentinel.py` and the auditor class
+`APISentinelAuditor`, names from the project's earlier days. They stay as they
+are: the `granttrace` command and existing imports depend on them.
+
 Use Python 3.9 or newer. Create a branch from the latest `main`, then install
 the development dependencies:
 
