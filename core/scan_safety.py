@@ -14,9 +14,44 @@ read-only.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlsplit
+
+
+def is_loopback_target(url: str) -> bool:
+    """Return True only when a target URL unambiguously names this machine.
+
+    Accepted hosts are the exact name ``localhost`` and IP literals in a
+    loopback range (127.0.0.0/8, ::1 and IPv4-mapped loopback). Everything else
+    counts as remote, including look-alike names (``localhost.example.com``,
+    ``127.0.0.1.nip.io``), a trailing-dot ``localhost.``, shortened, integer or
+    non-ASCII IPv4 spellings, IPv6 zone indexes, user information, and any URL
+    with whitespace, control characters or backslashes that parsers may read
+    differently. A wrong "remote" answer only makes the caller stricter.
+    """
+    if not isinstance(url, str) or any(ord(character) <= 32 or ord(character) == 127 for character in url):
+        return False
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+        _ = parts.port  # an invalid port raises ValueError here
+    except ValueError:
+        return False
+    if (parts.scheme not in {"http", "https"} or not hostname or not hostname.isascii()
+            or "\\" in parts.netloc or "%" in hostname
+            or parts.username is not None or parts.password is not None):
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped.is_loopback
+    return address.is_loopback
 
 
 _PATH_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\\]")

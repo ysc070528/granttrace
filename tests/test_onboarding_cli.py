@@ -616,12 +616,23 @@ class OnboardingCLITests(unittest.TestCase):
         self.assert_read_only_next_scan(stderr)
         self.assertNotIn("https://real-target.example", stderr)
 
-    def test_dry_run_without_config_keeps_optional_config_absent_from_next_scan(self):
+    def test_dry_run_without_config_points_next_scan_at_a_drafted_config(self):
+        # A real scan of a non-loopback target without identities is refused, so a
+        # dry run without --config must not recommend a config-less scan. It names
+        # a config only after the --init-config step that creates that file.
         code, _, stderr = self.call_cli(["--spec", str(self.spec), "--dry-run"])
         self.assertEqual(code, 0, stderr)
         self.assert_read_only_next_scan(stderr)
-        scan = next(line for line in stderr.splitlines() if "granttrace" in line and "--target" in line)
-        self.assertNotIn("--config", scan)
+        self.assertNotIn("Recommended first real scan", stderr)
+        lines = stderr.splitlines()
+        init = next(index for index, line in enumerate(lines) if "--init-config" in line)
+        self.assertIn("config.local.json", lines[init])
+        scans = [index for index, line in enumerate(lines) if "granttrace" in line and "--target" in line]
+        self.assertTrue(scans, stderr)
+        for index in scans:
+            self.assertGreater(index, init)
+            self.assertIn("--config", lines[index])
+            self.assertIn("config.local.json", lines[index])
 
     def test_sarif_remains_rejected_for_all_offline_modes_without_creating_output(self):
         output = self.folder / "should-not-exist.sarif"

@@ -66,6 +66,43 @@ def _first_scan(spec_path: Optional[str], config_path: Optional[str]) -> list[st
     ]
 
 
+def _configure_identities(spec_path: Optional[str]) -> list[str]:
+    draft = "config.local.json"
+    return [
+        "[NEXT] 1. Draft a configuration offline (no requests are sent):",
+        _command([*_arguments(spec_path, None), "--init-config", draft]),
+        "[NEXT] 2. Fill in the Owner / Visitor test identities and resources, then validate offline:",
+        _command([*_arguments(spec_path, draft), "--validate-config"]),
+        "[NEXT] 3. Review the request plan offline:",
+        _command([*_arguments(spec_path, draft), "--dry-run", "--export-json", "plan.local.json"]),
+        "[NEXT] 4. Run the read-only scan with that configuration:",
+        _command([*_arguments(spec_path, draft), "--target", "<AUTHORIZED_TARGET_URL>",
+                  "--export-json", "result.local.json"]),
+    ]
+
+
+def missing_identities_refusal(spec_path: Optional[str]) -> list[str]:
+    """Explain why a scan of a non-loopback target without identities was refused."""
+    return [
+        "[ERROR] Refusing to scan a non-loopback target without configured identities. No requests were sent.",
+        "[REASON] No identities were configured (no --config, or a configuration without an \"identities\" "
+        "section). GrantTrace would otherwise use its built-in mock identities, which exist only for the bundled "
+        "local mock server.",
+        *_configure_identities(spec_path),
+    ]
+
+
+def builtin_identities_warning(spec_path: Optional[str]) -> list[str]:
+    """Warn that the built-in mock identities, not the user's accounts, are in use."""
+    return [
+        "[WARNING] No identities configured: using GrantTrace's built-in MOCK identities (placeholder Owner and "
+        "Visitor credentials and resource IDs).",
+        "[WARNING] They exist only for the bundled local mock server. Results for any other API are not meaningful, "
+        "and a scan of a non-loopback target without configured identities is refused.",
+        *_configure_identities(spec_path),
+    ]
+
+
 def init_guidance(spec_path: str, config_path: str, checklist_path: str) -> list[str]:
     return [
         "[REVIEW] This is intentionally incomplete. No credentials, resource ownership, authorization policy, "
@@ -141,6 +178,7 @@ def validation_guidance(
 
 def plan_guidance(
     spec_path: str, config_path: Optional[str], plan: Mapping[str, object],
+    builtin_identities: bool = False,
 ) -> list[str]:
     raw_operations = plan.get("operations")
     operations = [item for item in raw_operations if isinstance(item, Mapping)] if isinstance(raw_operations, list) else []
@@ -165,5 +203,9 @@ def plan_guidance(
     else:
         lines.append("[MODE] Read-only plan: no active PATCH testing is enabled.")
     lines.append("[NOTE] This local plan does not prove business authorization, readback reliability or rollback safety.")
-    lines.extend(_first_scan(spec_path, config_path))
+    if builtin_identities:
+        # The plan used the built-in mock identities; a real scan needs the user's own.
+        lines.extend(builtin_identities_warning(spec_path))
+    else:
+        lines.extend(_first_scan(spec_path, config_path))
     return lines

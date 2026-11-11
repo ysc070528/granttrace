@@ -6,6 +6,7 @@
 
 | 参数 | 含义 |
 |---|---|
+| `--target URL` | 目标 API 基础地址，默认 `http://127.0.0.1:8080`（仓库自带的 mock）。真实扫描回环地址（`localhost`、`127.0.0.0/8`、`::1`）以外的目标时，必须由 `--config` 提供 identities；否则拒绝运行、返回 2，且不发送任何请求，而不是改用只适用于自带 mock 的内置 Mock 身份。`--init-config`、`--validate-config`、`--dry-run` 不受影响 |
 | `--init-config FILE` | 离线生成待填写配置和相邻 checklist；未完成草稿不能扫描 |
 | `--validate-config` | 离线检查配置并退出（检查通过含 warning 返回 0，错误返回 2），不发送网络请求 |
 | `--allow-write-tests` | 允许执行允许清单内的 PATCH 写入、读回和回滚检查。对命令行指定的外部目标，工具无法核验权威资源状态，这些检查在任何写入前停止并记为 `INCONCLUSIVE`（`unverified_state_authority`）；完整写入流程只在内置 demo 中运行 |

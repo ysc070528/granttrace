@@ -3,6 +3,11 @@
 GrantTrace sends requests to the target named on the command line. Use it
 only against systems for which you have explicit authorization.
 
+A scan of a target other than a loopback address (`localhost`, `127.0.0.0/8`,
+`::1`) needs identities from `--config`. Without them the CLI refuses before
+sending any request, instead of falling back to the built-in mock identities,
+which exist only for the bundled mock server.
+
 The default mode does not execute mutation checks. Since 2.6.0, write checks
 against a target named on the command line also stop before any write: GrantTrace
 cannot independently verify an external API's authoritative resource state, so

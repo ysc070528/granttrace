@@ -10,8 +10,8 @@
 **证据驱动、默认只读的 OpenAPI 授权测试工具。**
 
 GrantTrace 读取 OpenAPI 规范，分别以 **Owner**、**Visitor** 和 **Anonymous** 三种身份请求同一资源，
-比较各自拿到的结果。只有响应本身能证明问题时才报告 BOLA / IDOR 等授权缺陷；所有请求先离线生成计划，
-扫描过程中不会对你的 API 写入。
+比较各自拿到的结果。只有响应本身能证明问题时才报告 BOLA / IDOR 等授权缺陷；所有请求先离线生成计划。
+对你的 API 只发送 GET 请求，以及你声明为只读的查询类 POST；从不发送 PATCH、PUT 或 DELETE。
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-preview.png" alt="GrantTrace HTML 报告：汇总、覆盖率和逐个端点的结果" width="900">
 
@@ -20,8 +20,10 @@ python -m pip install granttrace
 granttrace demo     # 内置可丢弃的本机 API，无需配置或凭据
 ```
 
-Demo 在 `127.0.0.1` 启动一个临时 API，找出其中的 BOLA 和 Mass Assignment 缺陷，恢复数据后关闭，
-并生成 HTML 和 JSON 报告。仓库中有一份[示例报告](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html)。
+Demo 在 `127.0.0.1` 启动一个使用虚构数据的临时 API，找出其中预置的 BOLA 和 Mass Assignment 缺陷，
+恢复数据后关闭，并生成 HTML 和 JSON 报告。这些是 Demo 自带的测试缺陷，不是真实 API 的检测结果。
+仓库中有一份 Demo 生成的[示例报告](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html)；
+GitHub 只显示其 HTML 源码，请下载原始文件后用浏览器打开。
 
 ## 为什么用 GrantTrace
 
@@ -77,6 +79,8 @@ Mass Assignment 测试需要写入资源，GrantTrace 只在能核验资源实�
 ## 审计自己的 API
 
 请使用获得授权的测试环境、两个测试账号，以及它们各自拥有的资源。第 1 到 4 步只处理本地文件。
+第 5 步需要配置中的 identities：没有时，GrantTrace 拒绝扫描回环地址（`localhost`、`127.0.0.1`、`::1`）
+以外的任何目标，且不发送任何请求。
 
 ```bash
 # 1. 根据规范生成配置草稿和核对清单
@@ -113,8 +117,8 @@ HTML 报告的界面文字目前为中文，检查理由和证据为英文。
 
 ## 安全
 
-只测试明确获得授权的系统。GrantTrace 对你的 API 保持只读，并拒绝对外部目标写入；
-但静态规则无法证明每个 GET 都没有副作用，扫描前请核对 dry-run 计划。
+只测试明确获得授权的系统。GrantTrace 不会向你的 API 发送 PATCH、PUT 或 DELETE，并拒绝对外部目标写入；
+但静态规则无法证明 GET 或你声明为只读的 POST 没有副作用，扫描前请核对 dry-run 计划。
 GrantTrace 自身的漏洞请按 [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md) 私下报告。
 
 ## 文档

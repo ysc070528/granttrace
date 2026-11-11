@@ -21,13 +21,15 @@ from core.evidence import (
 )
 from core.models import parse_operation_key
 from core.onboarding import (
-    display_path, init_guidance, plan_guidance, validation_failure_guidance, validation_guidance,
+    builtin_identities_warning, display_path, init_guidance, missing_identities_refusal, plan_guidance,
+    validation_failure_guidance, validation_guidance,
 )
 from core.parser import OpenAPIParser
 from core.remote_refs import InvalidRemoteRefHostError, RemoteRefConfig, normalize_remote_ref_host
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
+from core.scan_safety import is_loopback_target
 
 
 BANNER = rf"""
@@ -42,22 +44,29 @@ BANNER = rf"""
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Safety-first OpenAPI authorization and mass-assignment auditor",
+        description=("Evidence-driven, read-only authorization auditing for OpenAPI APIs: compares what "
+                     "Owner, Visitor and Anonymous identities receive (BOLA/IDOR, broken authentication, "
+                     "BFLA and property-level checks)"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=("Built-in local demo: granttrace demo (no spec, config or credentials needed)\n\n"
+        epilog=("Built-in local demo: granttrace demo (no spec, config or credentials needed; the only place\n"
+                "where active mass-assignment checks with verified rollback run)\n\n"
                 "Recommended onboarding (local preparation before any target requests):\n"
                 "  1. granttrace --spec API.yaml --init-config config.local.json\n"
                 "  2. Review and fill the config + checklist manually.\n"
                 "  3. granttrace --spec API.yaml --config config.local.json --validate-config\n"
                 "  4. granttrace --spec API.yaml --config config.local.json --dry-run\n"
-                "  5. Start with a read-only real scan; active PATCH is a separate explicit decision."),
+                "  5. Run the read-only scan with --config and --target. A scan of a non-loopback\n"
+                "     target is refused unless the configuration defines identities."),
     )
     parser.add_argument("--spec", "-s", default=None,
                         help="OpenAPI/Swagger JSON or YAML (default: openapi.json)")
     parser.add_argument(
-        "--target", "-t", default="http://127.0.0.1:8080", help="Target API base URL"
+        "--target", "-t", default="http://127.0.0.1:8080",
+        help="Target API base URL (default: http://127.0.0.1:8080, the bundled mock server)",
     )
-    parser.add_argument("--config", "-c", default=None, help="Identity and readback JSON config")
+    parser.add_argument("--config", "-c", default=None,
+                        help="Identity, parameter and policy JSON config; its identities are required to "
+                             "scan a non-loopback target")
     parser.add_argument(
         "--init-config", metavar="CONFIG.json", default=None,
         help="Create an incomplete offline config and companion checklist from --spec; never overwrite files",
@@ -98,14 +107,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-write-tests",
         action="store_true",
-        help="Enable allowlisted PATCH mass-assignment checks with readback and rollback",
+        help=("Request allowlisted PATCH/PUT mass-assignment checks. Only the built-in demo can verify "
+              "state and rollback; against --target these checks stop before any write (INCONCLUSIVE)"),
     )
     parser.add_argument(
         "--write-endpoint",
         action="append",
         default=[],
         metavar="'PATCH /path'",
-        help="Allow one PATCH operation for active testing; repeat as needed",
+        help=("Select one PATCH operation for --allow-write-tests, replacing the configured allowlist; "
+              "repeat as needed. No write is sent to --target"),
     )
     parser.add_argument(
         "--include-sensitive-evidence",
@@ -494,6 +505,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _validate_report_paths(args, auditor.parser.source_files)
         if args.dry_run:
             return _print_dry_run(args, auditor, spec_path, config)
+        print("Scan target: " + sanitize_log_text(_display_target(args, auditor)))
         started = time.time()
         auditor.run()
         elapsed = time.time() - started
@@ -589,6 +601,16 @@ def _load_scan_configuration(
         print(f"[ERROR] {safe_err}", file=sys.stderr)
         return 2, {}
 
+    # Without configured identities the auditor falls back to the built-in mock
+    # identities. Refuse a real scan of anything but this machine before any
+    # validation that could reach the network; offline dry runs stay available.
+    if not args.dry_run and not config.get("identities"):
+        safe_spec = _next_path(spec_path, _onboarding_private_values(config))
+        if not is_loopback_target(args.target):
+            _print_onboarding(missing_identities_refusal(safe_spec))
+            return 2, {}
+        _print_onboarding(builtin_identities_warning(safe_spec))
+
     # Validate write_endpoint options if provided on CLI
     if args.write_endpoint:
         for item in args.write_endpoint:
@@ -647,8 +669,16 @@ def _print_dry_run(args: argparse.Namespace, auditor: APISentinelAuditor, spec_p
     _print_onboarding(plan_guidance(
         _next_path(spec_path, private_values) or "<OPENAPI_FILE>",
         _next_path(args.config, private_values), plan,
+        builtin_identities=not config.get("identities"),
     ))
     return 0
+
+
+def _display_target(args: argparse.Namespace, auditor: APISentinelAuditor) -> str:
+    """The target as reports and the console show it: sanitized, or omitted for BOPLA scans."""
+    if auditor.bopla_config:
+        return "[BOPLA TARGET OMITTED]"
+    return sanitize_url(args.target, secret_values=auditor.secret_values())
 
 
 def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
@@ -669,8 +699,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
     reproduction_templates = build_reproduction_templates(
         report_findings, auditor.identity_headers("visitor"), reproduction_secrets,
     )
-    report_target = ("[BOPLA TARGET OMITTED]" if auditor.bopla_config else
-                     sanitize_url(args.target, secret_values=auditor.secret_values()))
+    report_target = _display_target(args, auditor)
     report_rbac = auditor.rbac_matrix_record()
     SecurityReportGenerator.generate(
         stats=report_stats,
