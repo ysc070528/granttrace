@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "granttrace"
-version = "2.7.0"
+version = "2.7.1"
 description = "Evidence-driven, read-only authorization testing for OpenAPI APIs: BOLA/IDOR, broken authentication, BFLA and property-level checks"
 readme = "README.md"
 requires-python = ">=3.9"

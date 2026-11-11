@@ -1,9 +1,9 @@
 {
-  "tool_version": "2.7.0",
+  "tool_version": "2.7.1",
   "report_schema_version": 2,
-  "generated_at": "2026-11-08T09:38:31Z",
-  "elapsed_seconds": 0.349,
-  "target": "http://127.0.0.1:57212",
+  "generated_at": "2026-11-11T07:17:31Z",
+  "elapsed_seconds": 0.316,
+  "target": "http://127.0.0.1:43961",
   "stats": {
     "total_endpoints": 5,
     "total_checks": 5,
@@ -41,7 +41,7 @@
       "reason": "The endpoint is explicitly configured as public, and the complete Owner, Visitor and Anonymous JSON responses are identical",
       "evidence": {
         "requests_attempted": 3,
-        "target_url": "http://127.0.0.1:57212/api/public/articles/101",
+        "target_url": "http://127.0.0.1:43961/api/public/articles/101",
         "visitor_self_url": null,
         "owner": {
           "status": 200,
@@ -137,119 +137,6 @@
       }
     },
     {
-      "endpoint": "GET /api/documents/{doc_uuid}",
-      "operation_id": "getConfidentialDocument",
-      "check": "BOLA",
-      "verdict": "SECURE",
-      "reason": "Both the Visitor cross-resource request and the Anonymous request were explicitly denied without business data in the body: HTTP authentication denial status 403",
-      "evidence": {
-        "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:57212/api/documents/550e8400-e29b-41d4-a716-446655440000",
-        "visitor_self_url": "http://127.0.0.1:57212/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2",
-        "owner": {
-          "status": 200,
-          "body": "{\"content\": \"[REDACTED]\", \"id\": \"550e8400-e29b-41d4-a716-446655440000\", \"owner_id\": \"1001\", \"title\": \"[REDACTED]\"}",
-          "sha256": "acc1ef46c3bb4306dbf08afe51be63dcc6a804c1204c13e9d85aa86a302338c5",
-          "truncated": false,
-          "error": null
-        },
-        "visitor_cross": {
-          "status": 403,
-          "body": "{\"code\": 403, \"error\": \"Forbidden\"}",
-          "sha256": "8b0a6238de200b26459309970c3539c86a387fe04c6cd953bb31fc13474e6670",
-          "truncated": false,
-          "error": null
-        },
-        "anonymous": {
-          "status": 401,
-          "body": "{\"code\": 401, \"error\": \"Unauthorized\"}",
-          "sha256": "2f67a496c42e029b18142f8153e3cb599c5402f3df237fdd05b95f937e6ede3a",
-          "truncated": false,
-          "error": null
-        },
-        "visitor_self": {
-          "status": 200,
-          "body": "{\"content\": \"[REDACTED]\", \"id\": \"7d444840-9dc0-11d1-b245-5ffdce74fad2\", \"owner_id\": \"1002\", \"title\": \"[REDACTED]\"}",
-          "sha256": "89f17a7686a860a66e13a03ba0c756ee9344bdf96359d7f63aece107bceb8d4c",
-          "truncated": false,
-          "error": null
-        },
-        "metrics": {
-          "confidence": 1.0,
-          "similarity": 0.0
-        },
-        "decision_evidence": {
-          "responses": {
-            "owner": {
-              "kind": "VALID",
-              "status_code": 200,
-              "is_auth_denial": false,
-              "reason": "Valid JSON application response"
-            },
-            "visitor_cross": {
-              "kind": "AUTH_DENIED",
-              "status_code": 403,
-              "is_auth_denial": true,
-              "reason": "HTTP authentication denial status 403"
-            },
-            "anonymous": {
-              "kind": "AUTH_DENIED",
-              "status_code": 401,
-              "is_auth_denial": true,
-              "reason": "HTTP authentication denial status 401"
-            },
-            "visitor_self": {
-              "kind": "VALID",
-              "status_code": 200,
-              "is_auth_denial": false,
-              "reason": "Valid JSON application response"
-            }
-          },
-          "anonymous_denied": true,
-          "anonymous_exact_match": false,
-          "anonymous_value_similarity": 0.0,
-          "structure_similarity": 0.0,
-          "value_similarity": 0.0,
-          "exact_value_match": false,
-          "owner_meaningful_value_count": 2,
-          "visitor_meaningful_value_count": 0,
-          "shared_value_count": 0,
-          "owner_specific_shared_value_count": 0,
-          "owner_specific_shared_value_paths": [],
-          "shared_resource_identifier_count": 0,
-          "shared_resource_identifier_paths": [],
-          "owner_only_shared_resource_identifier_count": 0,
-          "owner_only_shared_resource_identifier_paths": [],
-          "visitor_self_provided": true,
-          "visitor_self_exact_match": false,
-          "visitor_self_value_similarity": 0.0,
-          "visitor_self_shared_resource_identifier_count": 0,
-          "owner_baseline_valid": true,
-          "visitor_cross_baseline_valid": false,
-          "visitor_self_baseline_valid": true,
-          "owner_self_distinct": true,
-          "object_access_signals": [],
-          "confirmation_signals": [],
-          "expected_public": false,
-          "requires_auth": true,
-          "trusted_resource_id_paths": [
-            "id"
-          ],
-          "denial_body_conflict": false,
-          "visitor_denial_body_clean": true,
-          "anonymous_denial_body_clean": true,
-          "anonymous_authentication_violation": false,
-          "anonymous_owner_value_match": false,
-          "anonymous_owner_identifier_match": false,
-          "owner_shared_nonpublic_value_paths": [],
-          "missing_evidence": [],
-          "expected_visitor_access": "deny",
-          "policy_scope": "Configured Owner/Visitor identities and selected resource pair only"
-        },
-        "reason_category": "conclusive"
-      }
-    },
-    {
       "endpoint": "GET /api/users/{user_id}/profile",
       "operation_id": "getUserProfile",
       "check": "BOLA",
@@ -257,8 +144,8 @@
       "reason": "The Anonymous request was explicitly denied, while the unauthorized Visitor received concrete values or resource identifiers matching the Owner resource",
       "evidence": {
         "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:57212/api/users/1001/profile",
-        "visitor_self_url": "http://127.0.0.1:57212/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:43961/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:43961/api/users/1002/profile",
         "owner": {
           "status": 200,
           "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
@@ -375,6 +262,119 @@
       }
     },
     {
+      "endpoint": "GET /api/documents/{doc_uuid}",
+      "operation_id": "getConfidentialDocument",
+      "check": "BOLA",
+      "verdict": "SECURE",
+      "reason": "Both the Visitor cross-resource request and the Anonymous request were explicitly denied without business data in the body: HTTP authentication denial status 403",
+      "evidence": {
+        "requests_attempted": 4,
+        "target_url": "http://127.0.0.1:43961/api/documents/550e8400-e29b-41d4-a716-446655440000",
+        "visitor_self_url": "http://127.0.0.1:43961/api/documents/7d444840-9dc0-11d1-b245-5ffdce74fad2",
+        "owner": {
+          "status": 200,
+          "body": "{\"content\": \"[REDACTED]\", \"id\": \"550e8400-e29b-41d4-a716-446655440000\", \"owner_id\": \"1001\", \"title\": \"[REDACTED]\"}",
+          "sha256": "acc1ef46c3bb4306dbf08afe51be63dcc6a804c1204c13e9d85aa86a302338c5",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_cross": {
+          "status": 403,
+          "body": "{\"code\": 403, \"error\": \"Forbidden\"}",
+          "sha256": "8b0a6238de200b26459309970c3539c86a387fe04c6cd953bb31fc13474e6670",
+          "truncated": false,
+          "error": null
+        },
+        "anonymous": {
+          "status": 401,
+          "body": "{\"code\": 401, \"error\": \"Unauthorized\"}",
+          "sha256": "2f67a496c42e029b18142f8153e3cb599c5402f3df237fdd05b95f937e6ede3a",
+          "truncated": false,
+          "error": null
+        },
+        "visitor_self": {
+          "status": 200,
+          "body": "{\"content\": \"[REDACTED]\", \"id\": \"7d444840-9dc0-11d1-b245-5ffdce74fad2\", \"owner_id\": \"1002\", \"title\": \"[REDACTED]\"}",
+          "sha256": "89f17a7686a860a66e13a03ba0c756ee9344bdf96359d7f63aece107bceb8d4c",
+          "truncated": false,
+          "error": null
+        },
+        "metrics": {
+          "confidence": 1.0,
+          "similarity": 0.0
+        },
+        "decision_evidence": {
+          "responses": {
+            "owner": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "Valid JSON application response"
+            },
+            "visitor_cross": {
+              "kind": "AUTH_DENIED",
+              "status_code": 403,
+              "is_auth_denial": true,
+              "reason": "HTTP authentication denial status 403"
+            },
+            "anonymous": {
+              "kind": "AUTH_DENIED",
+              "status_code": 401,
+              "is_auth_denial": true,
+              "reason": "HTTP authentication denial status 401"
+            },
+            "visitor_self": {
+              "kind": "VALID",
+              "status_code": 200,
+              "is_auth_denial": false,
+              "reason": "Valid JSON application response"
+            }
+          },
+          "anonymous_denied": true,
+          "anonymous_exact_match": false,
+          "anonymous_value_similarity": 0.0,
+          "structure_similarity": 0.0,
+          "value_similarity": 0.0,
+          "exact_value_match": false,
+          "owner_meaningful_value_count": 2,
+          "visitor_meaningful_value_count": 0,
+          "shared_value_count": 0,
+          "owner_specific_shared_value_count": 0,
+          "owner_specific_shared_value_paths": [],
+          "shared_resource_identifier_count": 0,
+          "shared_resource_identifier_paths": [],
+          "owner_only_shared_resource_identifier_count": 0,
+          "owner_only_shared_resource_identifier_paths": [],
+          "visitor_self_provided": true,
+          "visitor_self_exact_match": false,
+          "visitor_self_value_similarity": 0.0,
+          "visitor_self_shared_resource_identifier_count": 0,
+          "owner_baseline_valid": true,
+          "visitor_cross_baseline_valid": false,
+          "visitor_self_baseline_valid": true,
+          "owner_self_distinct": true,
+          "object_access_signals": [],
+          "confirmation_signals": [],
+          "expected_public": false,
+          "requires_auth": true,
+          "trusted_resource_id_paths": [
+            "id"
+          ],
+          "denial_body_conflict": false,
+          "visitor_denial_body_clean": true,
+          "anonymous_denial_body_clean": true,
+          "anonymous_authentication_violation": false,
+          "anonymous_owner_value_match": false,
+          "anonymous_owner_identifier_match": false,
+          "owner_shared_nonpublic_value_paths": [],
+          "missing_evidence": [],
+          "expected_visitor_access": "deny",
+          "policy_scope": "Configured Owner/Visitor identities and selected resource pair only"
+        },
+        "reason_category": "conclusive"
+      }
+    },
+    {
       "endpoint": "PATCH /api/users/{user_id}/settings",
       "operation_id": "updateUserSettings",
       "check": "MASS_ASSIGNMENT",
@@ -383,8 +383,8 @@
       "evidence": {
         "field": "role",
         "readback_field": "role",
-        "target_url": "http://127.0.0.1:57212/api/users/1002/settings",
-        "readback_url": "http://127.0.0.1:57212/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:43961/api/users/1002/settings",
+        "readback_url": "http://127.0.0.1:43961/api/users/1002/profile",
         "request_content_type": "application/json",
         "snapshot_fields": [
           "role"
@@ -447,7 +447,7 @@
         "configured_fields": [
           "role"
         ],
-        "target_url": "http://127.0.0.1:57212/api/users/1002/nickname",
+        "target_url": "http://127.0.0.1:43961/api/users/1002/nickname",
         "cases": [
           {
             "field": "role",
@@ -471,12 +471,12 @@
       "cwe": "CWE-639",
       "severity": "High",
       "endpoint": "GET /api/users/{user_id}/profile",
-      "target_url": "http://127.0.0.1:57212/api/users/1001/profile",
+      "target_url": "http://127.0.0.1:43961/api/users/1001/profile",
       "details": "The Anonymous request was explicitly denied, while the unauthorized Visitor received concrete values or resource identifiers matching the Owner resource",
       "evidence": {
         "requests_attempted": 4,
-        "target_url": "http://127.0.0.1:57212/api/users/1001/profile",
-        "visitor_self_url": "http://127.0.0.1:57212/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:43961/api/users/1001/profile",
+        "visitor_self_url": "http://127.0.0.1:43961/api/users/1002/profile",
         "owner": {
           "status": 200,
           "body": "{\"department\": \"[REDACTED]\", \"id\": \"1001\", \"name\": \"[REDACTED]\", \"role\": \"user\", \"salary\": \"[REDACTED]\"}",
@@ -596,7 +596,7 @@
       "cwe": "CWE-915",
       "severity": "Critical",
       "endpoint": "PATCH /api/users/{user_id}/settings",
-      "target_url": "http://127.0.0.1:57212/api/users/1002/settings",
+      "target_url": "http://127.0.0.1:43961/api/users/1002/settings",
       "details": "Privilege field 'role' persisted after mutation",
       "injected_payload": {
         "role": "admin"
@@ -604,8 +604,8 @@
       "evidence": {
         "field": "role",
         "readback_field": "role",
-        "target_url": "http://127.0.0.1:57212/api/users/1002/settings",
-        "readback_url": "http://127.0.0.1:57212/api/users/1002/profile",
+        "target_url": "http://127.0.0.1:43961/api/users/1002/settings",
+        "readback_url": "http://127.0.0.1:43961/api/users/1002/profile",
         "request_content_type": "application/json",
         "snapshot_fields": [
           "role"
@@ -660,7 +660,7 @@
       "PATCH"
     ],
     "user_agents": [
-      "GrantTrace/2.7.0"
+      "GrantTrace/2.7.1"
     ],
     "server_stopped": true
   }
