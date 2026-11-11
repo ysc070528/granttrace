@@ -18,8 +18,8 @@ bundled mock, then copies the reports of a fresh demo run here.
 `tests/test_committed_examples.py` fails when the committed reports no longer
 match a fresh demo run.
 
-These reports were regenerated from the built-in demo for 2.7.0 and declare
-version 2.7.0; see [CHANGELOG.md](../CHANGELOG.md) for the changes since 2.6.0.
+These reports were regenerated from the built-in demo for 2.7.1 and declare
+version 2.7.1; see [CHANGELOG.md](../CHANGELOG.md) for the changes since 2.7.0.
 The demo's results are recorded in completion order, which can differ between
 runs. The JSON records
 the UTC generation time; the demo chose the loopback port for that run, so the

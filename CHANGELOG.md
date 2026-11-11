@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.7.1 - 2026-11-11
+
+A maintenance release. Detectors, evidence standards and report formats are
+unchanged from 2.7.0.
 
 ### Changed
 
@@ -15,12 +18,12 @@
   still runs, with a warning that the mock identities are in use; a dry run
   without identities stays offline and points to `--init-config` instead of a
   scan command. `granttrace demo`, `--init-config`, `--validate-config` and
-  scans with configured identities are unchanged.
+  scans with configured identities are unchanged (#92).
 - The console shows the scan target before a scan (`Scan target: ...`),
-  sanitized like the report's target.
+  sanitized like the report's target (#92).
 - `--help` describes GrantTrace as read-only authorization auditing, states
   the default target, and says that active PATCH/PUT checks run only in the
-  built-in demo and stop before any write against `--target`.
+  built-in demo and stop before any write against `--target` (#92).
 
 ### Documentation
 
@@ -29,7 +32,9 @@
   or DELETE, and a declared read-only POST is not proven free of side effects.
   The demo's findings are described as planted test flaws, and the sample
   report link explains that GitHub shows HTML source. The report screenshot is
-  retaken from the 2.7.0 demo.
+  retaken from the 2.7.0 demo (#92).
+- `SECURITY.md` and the command-line reference describe the new requirement
+  for a non-loopback target (#92).
 
 ## 2.7.0 - 2026-11-11
 

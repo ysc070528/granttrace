@@ -54,7 +54,7 @@ not detection rates: none of these tools was run on the targets of the
   re-authentication with its chains.
 - **Write operations, any HTTP method, or flows across requests:** the Burp
   extensions, ZAP and Akto send whatever their tables, contexts or templates
-  contain. GrantTrace 2.7.0 reads only: GET, plus query-style POST operations
+  contain. GrantTrace 2.7.1 reads only: GET, plus query-style POST operations
   you declare `read_only`.
 - **API discovery from live traffic and a large test library:** Akto builds its
   inventory from traffic connectors and runs templated tests across many
