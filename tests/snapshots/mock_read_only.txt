@@ -8,6 +8,7 @@ exit code: 0
  ###  #  #  #  #  #  #    #     #   #  #  #  #   ###  ####
              safety-first API authorization auditing  v<version>
 
+Scan target: http://127.0.0.1:<port>
 ====================================================================
 GrantTrace <version> safety-first audit
 Specification: OpenAPI 3.0.3 | endpoints: 5

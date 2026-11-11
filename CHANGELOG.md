@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A real scan of a target other than a loopback address (`localhost`,
+  `127.0.0.0/8`, `::1`) now needs identities from `--config`. Without them the
+  CLI exits with code 2 before sending any request and lists the
+  `--init-config`, `--validate-config` and `--dry-run` steps. It used to fall
+  back to the built-in mock identities, placeholder credentials and resource
+  IDs meant only for the bundled mock server, and scan the target with them.
+  Look-alike hosts such as `localhost.example.com`, `127.0.0.1.nip.io` or
+  integer IPv4 spellings count as remote. A loopback scan without identities
+  still runs, with a warning that the mock identities are in use; a dry run
+  without identities stays offline and points to `--init-config` instead of a
+  scan command. `granttrace demo`, `--init-config`, `--validate-config` and
+  scans with configured identities are unchanged.
+- The console shows the scan target before a scan (`Scan target: ...`),
+  sanitized like the report's target.
+- `--help` describes GrantTrace as read-only authorization auditing, states
+  the default target, and says that active PATCH/PUT checks run only in the
+  built-in demo and stop before any write against `--target`.
+
+### Documentation
+
+- The README no longer says GrantTrace "never writes to your API": it sends
+  GET requests and query-style POSTs you declare read-only, never PATCH, PUT
+  or DELETE, and a declared read-only POST is not proven free of side effects.
+  The demo's findings are described as planted test flaws, and the sample
+  report link explains that GitHub shows HTML source. The report screenshot is
+  retaken from the 2.7.0 demo.
+
 ## 2.7.0 - 2026-11-11
 
 ### Added

@@ -12,8 +12,9 @@
 GrantTrace reads your OpenAPI specification, requests the same resources as an
 **Owner**, a **Visitor** and an **Anonymous** identity, and compares what each
 of them gets back. It reports BOLA / IDOR and related authorization flaws only
-when the responses prove them, plans every request offline first, and never
-writes to your API.
+when the responses prove them and plans every request offline first. Against
+your API it sends GET requests, plus query-style POSTs only where you declare
+them read-only; it never sends PATCH, PUT or DELETE.
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-preview.png" alt="GrantTrace HTML report: summary, coverage and per-endpoint results" width="900">
 
@@ -22,10 +23,12 @@ python -m pip install granttrace
 granttrace demo     # a disposable local API; no configuration or credentials needed
 ```
 
-The demo starts a throwaway API on `127.0.0.1`, finds the BOLA and the mass
-assignment flaw it contains, restores its data, stops, and writes an HTML and a
-JSON report. A [sample report](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html)
-is in the repository.
+The demo starts a throwaway API on `127.0.0.1` with fictional data, finds the
+BOLA and the mass assignment flaw planted in it, restores its data, stops, and
+writes an HTML and a JSON report. These are the demo's own test flaws, not
+results from a real API. A [sample report](https://github.com/ysc070528/granttrace/blob/main/examples/sample_report.html)
+from the demo is in the repository; GitHub shows its HTML source, so download
+the raw file and open it in a browser.
 
 ## Why GrantTrace
 
@@ -99,7 +102,10 @@ what each release contains.
 ## Audit your own API
 
 Use a test environment you are authorized to test, two test accounts, and
-resources each of them owns. Steps 1 to 4 only touch local files.
+resources each of them owns. Steps 1 to 4 only touch local files. Step 5 needs
+the configuration's identities: without them GrantTrace refuses to scan any
+target other than a loopback address (`localhost`, `127.0.0.1`, `::1`) and
+sends nothing.
 
 ```bash
 # 1. Draft a configuration and a review checklist from the specification
@@ -141,10 +147,10 @@ evidence are in English.
 
 ## Safety
 
-Only test systems you are explicitly authorized to test. GrantTrace stays
-read-only against your API and refuses writes to external targets, but static
-rules cannot prove that every GET is harmless, so review the dry-run plan
-before a scan. Report vulnerabilities in GrantTrace itself privately, as
+Only test systems you are explicitly authorized to test. GrantTrace sends no
+PATCH, PUT or DELETE to your API and refuses writes to external targets, but
+static rules cannot prove that a GET, or a POST you declare read-only, has no
+side effects, so review the dry-run plan before a scan. Report vulnerabilities in GrantTrace itself privately, as
 described in [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SECURITY.md).
 
 ## Documentation
