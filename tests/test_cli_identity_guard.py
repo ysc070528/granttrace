@@ -28,7 +28,7 @@ from mock_server.server import TargetMockHandler
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "openapi.json"
 CONFIGURED = ROOT / "config.example.json"
-MOCK_CREDENTIALS = ("TOKEN_ALICE_OWNER_1001", "TOKEN_BOB_VISITOR_1002")
+MOCK_PLACEHOLDERS = ("TOKEN_ALICE_OWNER_1001", "TOKEN_BOB_VISITOR_1002")
 REFUSAL = "Refusing to scan a non-loopback target without configured identities"
 WARNING = "built-in MOCK identities"
 
@@ -101,13 +101,13 @@ class CliIdentityGuardTests(unittest.TestCase):
         connections.assert_not_called()
         opener.assert_not_called()
 
-    def assert_no_mock_credentials(self, *texts: str) -> None:
+    def assert_no_mock_placeholders(self, *texts: str) -> None:
         for text in texts:
-            for marker in MOCK_CREDENTIALS:
+            for marker in MOCK_PLACEHOLDERS:
                 self.assertNotIn(marker, text)
 
     def test_remote_scan_without_identities_is_refused_before_any_request(self):
-        secret_path = "SYNTHETIC_TARGET_PATH_Q7"
+        path_marker = "SYNTHETIC_TARGET_PATH_Q7"
         empty = self.write_config("empty.json", {})
         no_identities = self.write_config("no-identities.json", {"identities": {}})
         cases = {
@@ -118,10 +118,10 @@ class CliIdentityGuardTests(unittest.TestCase):
                                               "--write-endpoint", "PATCH /api/users/{user_id}/settings"],
         }
         targets = (
-            ["--target", "https://api.example.test/" + secret_path],
-            ["--target", "http://localhost.evil.com:8080/" + secret_path, "--allow-http"],
-            ["--target", "http://127.0.0.1.nip.io/" + secret_path, "--allow-http"],
-            ["--target", "http://10.0.0.5:8080/" + secret_path, "--allow-http"],
+            ["--target", "https://api.example.test/" + path_marker],
+            ["--target", "http://localhost.evil.com:8080/" + path_marker, "--allow-http"],
+            ["--target", "http://127.0.0.1.nip.io/" + path_marker, "--allow-http"],
+            ["--target", "http://10.0.0.5:8080/" + path_marker, "--allow-http"],
         )
         for name, extra in cases.items():
             for target in targets:
@@ -138,8 +138,8 @@ class CliIdentityGuardTests(unittest.TestCase):
                 self.assertIn("No requests were sent", stderr)
                 for step in ("--init-config", "--validate-config", "--dry-run"):
                     self.assertIn(step, stderr)
-                self.assertNotIn(secret_path, stdout + stderr)
-                self.assert_no_mock_credentials(stdout, stderr)
+                self.assertNotIn(path_marker, stdout + stderr)
+                self.assert_no_mock_placeholders(stdout, stderr)
                 self.assertFalse(self.html.exists())
                 self.assertFalse(self.exported.exists())
 
@@ -172,7 +172,7 @@ class CliIdentityGuardTests(unittest.TestCase):
         self.assertIn(WARNING, stderr)
         self.assertIn("--init-config", stderr)
         self.assertNotIn(REFUSAL, stderr)
-        self.assert_no_mock_credentials(stdout, stderr)
+        self.assert_no_mock_placeholders(stdout, stderr)
         self.assertIn(f"Scan target: http://127.0.0.1:{server.server_port}", stdout)
         report = json.loads(self.exported.read_text(encoding="utf-8"))
         self.assertGreater(report["stats"]["http_requests_sent"], 0)
@@ -192,15 +192,17 @@ class CliIdentityGuardTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
 
     def test_configured_remote_scan_is_unchanged_and_shows_a_sanitized_target(self):
-        secret = "SYNTHETIC_VISITOR_SECRET_K3"
+        # Public, fixed synthetic data: never loaded from an account, environment
+        # or credential store. It exercises auth-derived redaction of the target.
+        example_marker = "SYNTHETIC_VISITOR_MARKER_K3"
         config = self.write_config("configured.json", {"identities": {
-            "owner": {"id": "1001", "token": "Bearer SYNTHETIC_OWNER_SECRET"},
-            "visitor": {"id": "1002", "token": "Bearer " + secret},
+            "owner": {"id": "1001", "token": "Bearer SYNTHETIC_OWNER_MARKER"},
+            "visitor": {"id": "1002", "token": "Bearer " + example_marker},
             "anonymous": {},
         }})
         calls: List[str] = []
         for arguments in (["--config", str(CONFIGURED), "--target", "https://api.example.test"],
-                          ["--config", str(config), "--target", "https://api.example.test/" + secret]):
+                          ["--config", str(config), "--target", "https://api.example.test/" + example_marker]):
             with self.subTest(arguments=arguments), self.no_network(), \
                     patch.object(APISentinelAuditor, "run", autospec=True,
                                  side_effect=lambda auditor: calls.append(auditor.target_base_url)):
@@ -210,9 +212,9 @@ class CliIdentityGuardTests(unittest.TestCase):
             self.assertNotIn(REFUSAL, stderr)
             self.assertNotIn(WARNING, stderr)
             self.assertIn("Scan target: https://api.example.test", stdout)
-            self.assertNotIn(secret, stdout + stderr)
+            self.assertNotIn(example_marker, stdout + stderr)
             self.assertTrue(self.html.is_file())
-        self.assertEqual(calls, ["https://api.example.test", "https://api.example.test/" + secret])
+        self.assertEqual(calls, ["https://api.example.test", "https://api.example.test/" + example_marker])
 
     def test_dry_run_without_identities_stays_offline_and_points_to_init_config(self):
         for target in ("https://api.example.test", "http://127.0.0.1:8080"):
@@ -225,7 +227,7 @@ class CliIdentityGuardTests(unittest.TestCase):
             self.assertIn(WARNING, stderr)
             self.assertIn("--init-config", stderr)
             self.assertNotIn("Recommended first real scan", stderr)
-            self.assert_no_mock_credentials(stdout, stderr)
+            self.assert_no_mock_placeholders(stdout, stderr)
 
     def test_configured_dry_run_still_recommends_the_first_scan(self):
         with self.no_network():
