@@ -3,6 +3,54 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
+## v2.7.1 post-release verification - 2026-11-13
+
+Status: **v2.7.1 is published. The PyPI distributions and the official Windows
+ZIP are verified; manual acceptance on a clean Windows machine is not done.**
+The [pre-release acceptance](#v271-pre-release-acceptance---2026-11-11) below is
+kept unchanged as the record of the candidate.
+
+The [GitHub Release](https://github.com/ysc070528/granttrace/releases/tag/v2.7.1)
+was published on **2026-11-12 at 02:14:34 UTC**; it is neither a draft nor a
+prerelease and is the latest release. The `v2.7.1` tag (a lightweight tag, as
+for v2.7.0) resolves to release commit
+[a279309e3950d91603d6a94346a48eeaa4e9809b](https://github.com/ysc070528/granttrace/commit/a279309e3950d91603d6a94346a48eeaa4e9809b),
+the merge of #93 and the head of `main`; its tree is identical to the reviewed
+#93 head `2aaae81`. PyPI lists 2.7.1 as the latest version; 2.7.0 remains, and
+neither is yanked. The `v2.7.0` tag still resolves to `7362098`.
+
+Environment: Linux x86_64 container; CPython **3.9.25** (pip 23.0.1), **3.13.18**
+(pip 26.2.2) and **3.14.6** (pip 26.1.2); PyInstaller **6.22.3**, used only to read
+the Windows executable's archives. No Windows host was used.
+
+| Check | Verified result and evidence |
+|---|---|
+| Release-commit CI | On `a279309`: GrantTrace CI [run 42983811098](https://github.com/ysc070528/granttrace/actions/runs/42983811098), CodeQL [run 42983811137](https://github.com/ysc070528/granttrace/actions/runs/42983811137) and Windows x64 portable [run 42983811160](https://github.com/ysc070528/granttrace/actions/runs/42983811160): all passed |
+| PyPI publication workflow | [Run 43141489539](https://github.com/ysc070528/granttrace/actions/runs/43141489539): **manual `workflow_dispatch` from `main`** at 02:27:03 UTC, 12.5 minutes after the Release was published, not the `release` event. Both jobs passed: it validated the official v2.7.1 Release, checked out `a279309`, checked tag, project and runtime versions, built both distributions, passed `twine check --strict`, logged their SHA256s and published them with Trusted Publishing. No `release`-event run exists for v2.7.1, unlike 2.5.3, 2.6.0 and 2.7.0; the cause is not visible in the Actions data |
+| PyPI distributions | `granttrace-2.7.1-py3-none-any.whl`, 199,423 bytes, SHA256 `85d0fa730beaf232ff9e9f9ead35f5044e929179e8fca440f30ca50982a253d5`; `granttrace-2.7.1.tar.gz`, 1,575,805 bytes, SHA256 `aeb55cd642f3645af477c514d11ee21a33608ccab6ff7b6e1030323b1033b846`; uploaded at 02:27:50 and 02:27:52 UTC. The downloaded files match PyPI's digests and the publishing run's log. All 37 source files in the wheel and all 173 non-generated files in the sdist are byte-identical to `v2.7.1`; the sdist contains the pre-release record, so it was built from the tag, not the candidate `37eef7b` |
+| PyPI metadata | `Version: 2.7.1`, the unchanged `Summary`, `Requires-Python: >=3.9`, `Requires-Dist: PyYAML>=6.0`, `License-Expression: Apache-2.0`. The Markdown long description is the 2.7.1 README: it states that GrantTrace sends no PATCH, PUT or DELETE and describes the refusal; "never writes to your API" is gone |
+| Fresh PyPI installations | `pip install granttrace==2.7.1` from public PyPI in new virtual environments on CPython 3.9.25, 3.13.18 and 3.14.6; pip's report shows the wheel with SHA256 `85d0fa73…`. Each install: `GrantTrace 2.7.1`; `core` from `site-packages`; the new `--help` text (no "mass-assignment auditor"); `granttrace demo` exits 0 with BOLA and mass assignment confirmed, rollback verified, the database restored and the server stopped |
+| 2.7.1 refusal, installed from PyPI | A request recorder listened on the container's non-loopback address `192.0.2.2`. Scans of it without `--config`, with `{}` and with `--write-endpoint` but no configuration, and scans of `localhost.evil.com`, `127.0.0.1.nip.io` and `2130706433`, each exited 2 with the refusal and wrote no report; the recorder received **0 requests**. A configured scan of the same address was not refused, printed `Scan target`, and reached it (11 requests). A loopback scan of the bundled mock without identities ran with the mock-identity warning; the README development flow with `config.example.json` confirmed 1 finding; a remote dry run without identities sent 0 requests and pointed to `--init-config`. Same results on all three interpreters |
+| Installed-wheel validation | `scripts/verify_install.py --wheel` with the PyPI wheel passed on 3.13.18 and 3.9.25: read-only scan passed with 0 PATCH, the external active scan blocked without state authority with 0 PATCH, the database restored, versions in HTML and JSON checked, 0 requests for the offline plan, the draft configuration blocked, run outside the source tree |
+| Official Windows ZIP | Downloaded from the Release: `GrantTrace-v2.7.1-Windows-x64.zip`, 10,749,522 bytes, SHA256 `87865c576388330f19f9b943f2c35198dd522f57086c0cd23764712c491ff28d`. It matches the Release's `SHA256SUMS.txt` (`sha256sum -c`: OK; the file has Windows line endings and SHA256 `09305d899e9d854d5c6bdeb4c1036787cd099222140e050dbbbc9aeb2b874ad4`), GitHub's asset digest, and the `zip_sha256` recorded by Windows run 42983811160 on `a279309` (clean tree, Windows Server 2025, Python 3.14.5, PyInstaller 6.22.3), whose `verify_windows_portable.py` passed for these bytes |
+| Windows ZIP contents | Integrity test OK; 88 entries under one top folder; no absolute or parent paths. `granttrace.exe`, `Start-Demo.bat`, `README.txt`, `LICENSE` and the three demo assets are present; README and launcher show v2.7.1 with no placeholder left. `granttrace.exe` is PE32+ x86-64, 3,137,603 bytes, SHA256 `577c02d67b9828112f5d2d4f5a8fafe6e7a0924d85505c82880e07e0251005d0`, as in the build record |
+| Windows executable code | Read with PyInstaller's archive readers, without running anything: the entry script `api_sentinel` and all 33 bundled `core` and `mock_server` modules are bytecode-identical to the `v2.7.1` source compiled with CPython 3.14.6. The bundled version is 2.7.1, and `is_loopback_target`, the refusal text and the `Scan target` output are present |
+| Release assets timeline | The ZIP was uploaded at 02:11:10 UTC, before publication; `SHA256SUMS.txt` at 02:50:32 UTC, 36 minutes after publication |
+| Links and activity | The Release notes' CHANGELOG, verification-record and compare links, the PyPI project pages and the README images on `raw.githubusercontent.com` return HTTP 200. No workflow run failed after the release commit; no issue or pull request was opened since 2026-11-11 |
+
+Not done:
+
+- **Clean Windows machine:** nobody has extracted the official ZIP and
+  double-clicked `Start-Demo.bat` on a clean Windows machine (including paths with
+  spaces or Chinese characters, SmartScreen and the browser opening the report).
+  The CI verification ran the same bytes on Windows Server 2025, but it does not
+  exercise the 2.7.1 refusal; that the executable contains it is established from
+  its bytecode, not by running it on Windows.
+- **PyPI page rendering:** pypi.org served a JavaScript client challenge to this
+  environment, so the rendered page was not seen; the published long description
+  was read from PyPI's JSON API instead.
+- VAmPI and crAPI were not re-run; the code scanning alert inventory was not read.
+
 ## v2.7.1 pre-release acceptance - 2026-11-11
 
 Status: **accepted for release; v2.7.1 is not published.** Release candidate:
