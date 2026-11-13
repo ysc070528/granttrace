@@ -4,23 +4,31 @@
 
 ### Added
 
-- `granttrace diff BASELINE.json CURRENT.json [--export-json PATH]` compares two
-  JSON scan reports offline. Confirmed findings are matched by a stable finding
-  ID (check, operation template and, for BOPLA, RBAC and mass assignment, the
-  field or role), independent of target, port, time and resource values, and
-  classified as new, persisting, resolved or not comparable. A finding is
-  resolved only when the same check on the same scope is now SECURE, PUBLIC or
+- `granttrace diff BASELINE.json CURRENT.json [--export-json PATH]
+  [--assume-same-target]` compares two JSON scan reports offline. Confirmed
+  findings are matched by a stable finding ID (check, operation template and,
+  for BOPLA, RBAC and mass assignment, the field or role) and classified as
+  new, persisting, resolved or not comparable. A finding is resolved only when
+  the same check on the same target and scope is now SECURE, PUBLIC or
   AUTHORIZED; SKIPPED, INCONCLUSIVE, ERROR, SUSPICIOUS or missing results are
-  never treated as fixed. Changed test accounts, targets, per-operation policy
-  or resource values and coverage losses are reported with reason codes. The
-  output holds identifiers, verdicts and reason codes only, no evidence or
-  response data. The command exits 0 when the comparison completes and 2 for
-  invalid input; existing scan exit codes are unchanged.
-- Scan and demo JSON reports include `comparison_context`: truncated SHA-256
-  fingerprints of the test accounts (`id`, `role`, identity parameters) and of
-  each operation's policy and resource values, without tokens, headers or
-  cookies. `report_schema_version` stays 2; reports without it (2.7.1 and
-  earlier) are compared by the resource paths in their evidence.
+  never treated as fixed. A finding is new only when the baseline verified the
+  same check as not vulnerable; a first detection on an operation or check the
+  baseline did not cover is not comparable and counted separately. The target
+  includes the port, and an unreadable target (such as an omitted BOPLA
+  target) makes every conclusion not comparable; `--assume-same-target`
+  records an explicit assumption for local services on changing ports.
+  Changed test accounts, per-operation policy or resource values and coverage
+  losses are reported with reason codes. The output holds identifiers,
+  verdicts and reason codes only, no evidence or response data. The command
+  exits 0 when the comparison completes and 2 for invalid input; existing scan
+  exit codes are unchanged.
+- With `GRANTTRACE_COMPARISON_KEY` set (at least 16 characters), scan and demo
+  JSON reports include `comparison_context`: HMAC-SHA256 fingerprints of the
+  target, the test accounts (`id`, `role`, identity parameters) and each
+  operation's policy and resource values, without tokens, headers or cookies.
+  Without the key, reports contain no fingerprints. `report_schema_version`
+  stays 2; reports without a context (including 2.7.1 and earlier) are
+  compared by their targets and the resource paths in their evidence.
 
 ## 2.7.1 - 2026-11-11
 

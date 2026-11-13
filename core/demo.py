@@ -22,7 +22,7 @@ from urllib.request import ProxyHandler, build_opener
 from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_validator import ConfigValidator
-from core.report_diff import build_comparison_context
+from core.report_diff import build_comparison_context, comparison_key_from_environment
 from core.evidence import sanitize_log_text, sanitize_text
 from core.models import HTTPResult, json_values_equal, strict_json_loads
 from core.reporter import SecurityReportGenerator
@@ -180,6 +180,7 @@ def _verify_demo(auditor: APISentinelAuditor, server: DemoServer, read_only: boo
 def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
     print(f"GrantTrace Demo {__version__}")
     try:
+        comparison_key = comparison_key_from_environment()
         spec, config, database = load_assets()
         validation = ConfigValidator.validate(config, raw_spec=spec)
         if not validation.is_valid:
@@ -226,12 +227,14 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                    "elapsed_seconds": round(time.monotonic() - started, 3), "target": server.target,
                    "stats": auditor.stats, "results": auditor.results, "findings": auditor.findings,
-                   "demo": verification,
-                   "comparison_context": build_comparison_context(
-                       identities=auditor.identities, parameter_values=auditor.parameter_values,
-                       bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
-                       readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                       secret_values=reproduction_secrets)}
+                   "demo": verification}
+        if comparison_key is not None:
+            payload["comparison_context"] = build_comparison_context(
+                key=comparison_key, target=server.target,
+                identities=auditor.identities, parameter_values=auditor.parameter_values,
+                bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
+                readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
+                secret_values=reproduction_secrets)
         exported.write_text(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         print("Findings:")
         print(f"- BOLA / IDOR: {auditor.stats['bola_confirmed']} confirmed")

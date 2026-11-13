@@ -132,32 +132,45 @@ granttrace diff baseline.json current.json --export-json comparison.json
 
 | 状态 | 含义 |
 |---|---|
-| `new` | 当前为 CONFIRMED；基线中同一检查在相同范围内为 SECURE / PUBLIC / AUTHORIZED，或该操作在基线中不存在 |
-| `persisting` | 两份报告都为 CONFIRMED，范围相同 |
-| `resolved` | 基线为 CONFIRMED；当前同一检查在相同范围内为 SECURE / PUBLIC / AUTHORIZED |
+| `new` | 当前为 CONFIRMED；基线中同一检查、同一主体在相同目标和范围内为 SECURE / PUBLIC / AUTHORIZED（基线确认无漏洞，当前确认有漏洞） |
+| `persisting` | 两份报告都为 CONFIRMED，目标和范围相同 |
+| `resolved` | 基线为 CONFIRMED；当前同一检查在相同目标和范围内为 SECURE / PUBLIC / AUTHORIZED |
 | `not_comparable` | 无法得出以上结论，附原因代码 |
 
-SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**，只会是 `not_comparable`。
+SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**，只会是 `not_comparable`。基线没有检查过的操作或检查上出现的确认漏洞是**首次发现**，不是已证明的回归：状态为 `not_comparable`（`operation_not_in_baseline`、`not_checked_in_baseline` 或 `baseline_unverified`），不计入 `new`。JSON 的 `summary.current_confirmed_not_comparable` 统计当前已确认、但没有可比基线证据的漏洞，以免它们被忽略。
 
-Finding ID 形如 `gtf_` 加 16 位十六进制，由检查类型、操作模板（如 `GET /api/users/{id}`）和主体（BOPLA 的字段规则与身份、RBAC 的角色、Mass Assignment 的字段）计算，与目标地址、端口、时间、具体资源值和请求标识无关；同一检查在不同版本的报告中 ID 相同。
+Finding ID 形如 `gtf_` 加 16 位十六进制，由检查类型、操作模板（如 `GET /api/users/{id}`）和主体（BOPLA 的字段规则与身份、RBAC 的角色、Mass Assignment 的字段）计算，与目标地址、端口、时间、具体资源值和请求标识无关；同一检查在不同版本的报告中 ID 相同。ID 只用于对应，是否可比较另行判断。
 
 | 原因代码 | 含义 |
 |---|---|
-| `identities_changed` | 测试账号（identities 的 `id`、`role`、`parameters`）变化，所有结果不可比较 |
-| `target_changed` | 目标主机或基础路径变化（端口不计） |
+| `target_changed` | 目标的协议、主机、**端口**或基础路径不同，所有结论不可比较 |
+| `target_unknown` | 至少一份报告的目标无法识别（例如 BOPLA 报告隐藏了目标且没有比较密钥），所有结论不可比较 |
+| `identities_changed` | 测试账号（identities 的 `id`、`role`、`parameters`）变化，所有结论不可比较 |
 | `policy_changed` | 该操作的 `bola`、`bopla`、`readbacks` 配置或写允许清单变化 |
 | `resources_changed` | 该操作的 `parameter_values`，或证据中的资源路径变化 |
 | `scope_unknown` | 报告缺少资源路径，无法确认范围 |
 | `baseline_unverified` / `current_unverified` | 一方的结果是 SKIPPED、INCONCLUSIVE、ERROR 或 SUSPICIOUS |
 | `not_checked_in_baseline` | 该操作在基线中存在，但这项检查当时没有结果 |
+| `operation_not_in_baseline` | 该操作在基线中不存在，当前为首次发现 |
 | `missing_in_current` / `operation_not_in_current` | 当前报告没有这项检查或这个操作 |
-| `operation_not_in_baseline` | 新增的操作（状态仍为 `new`） |
 
 覆盖率单独呈现，不改变漏洞状态：JSON 的 `coverage` 给出两份报告的覆盖率统计、`conclusive_lost`（基线有确定结论、当前没有的检查）和 `conclusive_gained`，覆盖率下降另行标记。
 
-**可比较性依据。** 扫描和 demo 的 JSON 报告包含 `comparison_context`：测试账号（`id`、`role`、身份参数）以及每个操作的策略与资源参数的 SHA-256 截断指纹，用于判断两次扫描是否针对相同的账号、资源和策略。它不包含 token、header 或 cookie，含已知凭据的字符串先遮盖再计算；指纹不可逆，但低熵的值（例如短数字 ID）可以被枚举。两份报告都有时按声明比较（`basis: declared`）；任一份没有（2.7.1 及更早的报告）时退回到证据中的资源路径（`basis: evidence`），此时无法发现测试账号的变化，摘要会注明。
+**目标与端口。** 端口默认属于目标：同一主机的不同端口可能是不同的服务，`http://127.0.0.1:8001` 与 `http://127.0.0.1:8002` 不可比较；只有省略的默认端口与显式写出的相同（`http://host` 等于 `http://host:80`）。本地服务每次重启使用新端口（例如 `granttrace demo`）时，如果你确认两次扫描的是同一套部署，可以加 `--assume-same-target` 明确声明。这个声明只解除目标条件，会记录在 JSON 的 `comparability.assumptions`（`same_target`）和终端摘要中，比较结果也不会标为完全可比；不要在不确定时使用。
 
-**输出。** 终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字。比较完成时退出码为 `0`，与是否有新增漏洞无关；输入无效（不是 JSON、是 dry-run 计划或 SARIF、schema 不是 2、超过 64 MiB）或 `--export-json` 指向输入文件时为 `2`。
+**可比较性依据与隐私。** 默认情况下，报告不包含任何比较指纹。没有指纹时（`basis: evidence`），`diff` 精确比较两份报告的 `target`（含端口），并用证据中的资源路径确认范围；无法发现测试账号的变化，摘要会注明。BOPLA 报告为了隐私把目标写成 `[BOPLA TARGET OMITTED]`，这时目标无法识别，所有结论都是 `not_comparable`。
+
+需要可验证的比较时，在两次扫描中设置同一个比较密钥（至少 16 个字符，像密码一样保管，不要写进配置文件或报告）：
+
+```bash
+export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+设置后，JSON 报告增加 `comparison_context`：目标（协议、主机、端口、基础路径）、测试账号（`id`、`role`、身份参数）以及每个操作的策略与资源参数的 HMAC-SHA256 截断指纹，另有一个 `key_id` 用于识别两份报告是否使用同一密钥。`diff` 只比较这些指纹，不需要密钥。指纹不包含 token、header 或 cookie，含已知凭据的字符串先遮盖再计算；没有密钥的人无法用枚举短 ID、资源值或目标地址的方式反推出它们，BOPLA 报告也不会因此写入目标地址。两份报告都有同一密钥的上下文时按声明比较（`basis: declared`）；密钥不同时注明 `comparison_keys_differ` 并按证据比较；2.7.1 及更早的报告没有上下文，同样按证据比较。密钥长度不足时扫描在发送请求前以退出码 `2` 结束，错误信息不回显密钥。
+
+`comparability.fully_comparable` 只在双方都有同一密钥的上下文、目标和测试账号未变、没有任何操作的策略或资源变化、也没有使用 `--assume-same-target` 时为 `true`。单个操作的变化记录在 `comparability.operation_changes`，只影响该操作的结论。
+
+**输出。** 终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字。比较完成时退出码为 `0`，与是否有新增或不可比较的漏洞无关；输入无效（不是 JSON、是 dry-run 计划或 SARIF、schema 不是 2、超过 64 MiB）或 `--export-json` 指向输入文件时为 `2`。
 
 ## SARIF 导出
 

@@ -10,10 +10,23 @@ identity, RBAC role, mass-assignment field). Targets, ports, times and concrete
 resource values are not part of the identifier; they decide whether two results
 are comparable.
 
+A conclusion that depends on scope (new, persisting, resolved) needs evidence
+that both scans covered the same target (scheme, host, port and base path), the
+same test accounts, policy and resources:
+
+* With ``GRANTTRACE_COMPARISON_KEY`` set during both scans, reports carry a
+  ``comparison_context`` of HMAC-SHA256 fingerprints, which ``diff`` compares
+  without needing the key. Without the key they cannot be enumerated offline.
+* Without the key, reports carry no fingerprints. ``diff`` then compares the
+  report targets exactly and the resource paths in the evidence; a change of
+  test accounts cannot be detected, and an unreadable target (for example a
+  BOPLA report's omitted target) makes every finding not comparable.
+
 A finding is only reported as resolved when the same check on the same subject
 and scope now has a conclusive non-vulnerable verdict (SECURE, PUBLIC or
 AUTHORIZED). A SKIPPED, INCONCLUSIVE, ERROR or SUSPICIOUS result, or a missing
-one, never counts as a fix.
+one, never counts as a fix. A finding on an operation the baseline did not
+contain is a first detection, not a proven regression, and is not comparable.
 
 The comparison output holds identifiers, verdicts and enumerated reason codes
 only: no evidence, response data, URLs, credentials or free text from the
@@ -24,7 +37,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,6 +51,9 @@ from core.models import parse_operation_key, strict_json_loads
 
 COMPARISON_SCHEMA_VERSION = 1
 CONTEXT_VERSION = 1
+CONTEXT_ALGORITHM = "hmac-sha256"
+COMPARISON_KEY_ENV = "GRANTTRACE_COMPARISON_KEY"
+MIN_COMPARISON_KEY_LENGTH = 16
 MAX_REPORT_BYTES = 64 * 1024 * 1024
 
 CONFIRMED = "CONFIRMED"
@@ -47,6 +65,7 @@ CHECK_CWE = {"BOLA": "CWE-639", "BROKEN_AUTH": "CWE-306", "BFLA": "CWE-285", "RB
 STATUS_ORDER = ("new", "not_comparable", "persisting", "resolved")
 
 _CHECK_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+_FINGERPRINT = re.compile(r"[0-9a-f]{16}")
 _SUBJECT_LIMIT = 512
 
 Key = Tuple[str, str, Optional[str]]
@@ -56,8 +75,12 @@ class ReportError(ValueError):
     """An input report cannot be used for comparison."""
 
 
+class ComparisonKeyError(ValueError):
+    """GRANTTRACE_COMPARISON_KEY is set but unusable; the message never contains the key."""
+
+
 # ---------------------------------------------------------------------------
-# Identifiers and fingerprints
+# Identifiers, keys and fingerprints
 
 
 def finding_id(check: str, operation: str, subject: Optional[str] = None) -> str:
@@ -66,13 +89,43 @@ def finding_id(check: str, operation: str, subject: Optional[str] = None) -> str
     return "gtf_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
-def _fingerprint(kind: str, value: Any) -> str:
+def comparison_key_from_environment(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """The comparison key, or None when it is not set (an empty value counts as not set)."""
+    value = (os.environ if environ is None else environ).get(COMPARISON_KEY_ENV)
+    if not value:
+        return None
+    if len(value) < MIN_COMPARISON_KEY_LENGTH:
+        raise ComparisonKeyError(
+            f"{COMPARISON_KEY_ENV} must be at least {MIN_COMPARISON_KEY_LENGTH} characters; generate one with "
+            "python -c \"import secrets; print(secrets.token_hex(32))\" and keep it secret, like a password")
+    return value
+
+
+def target_identity(value: Any) -> Optional[Tuple[str, str, int, str]]:
+    """Scheme, host, port (default ports filled in) and base path of an http(s) target, or None."""
+    if not isinstance(value, str) or not value.startswith(("http://", "https://")):
+        return None
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None:
+        port = 443 if parts.scheme == "https" else 80
+    return parts.scheme, host, port, parts.path.rstrip("/")
+
+
+def _keyed(key: str, kind: str, value: Any) -> str:
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    return hashlib.sha256(f"granttrace/{kind}/v1\0{canonical}".encode("utf-8")).hexdigest()[:16]
+    digest = hmac.new(key.encode("utf-8"), f"granttrace/{kind}/v1\0{canonical}".encode("utf-8"), hashlib.sha256)
+    return digest.hexdigest()[:16]
 
 
 def _mask(value: Any, secrets: Tuple[str, ...]) -> Any:
-    """Replace strings that contain a credential before anything is hashed."""
+    """Replace strings that contain a credential before anything is fingerprinted."""
     if isinstance(value, str):
         if any(secret == value or (len(secret) >= 4 and secret in value) for secret in secrets):
             return "[REDACTED]"
@@ -104,16 +157,10 @@ def _by_operation(section: Any) -> Dict[str, Any]:
     return mapped
 
 
-def _operation_fingerprints(policy: Mapping[str, Any], resources: Any) -> Dict[str, str]:
-    return {"policy": _fingerprint("policy", policy), "resources": _fingerprint("resources", resources)}
-
-
-_UNCONFIGURED_POLICY = {"bola": None, "bopla": None, "readback": None, "write_allowlisted": False}
-DEFAULT_OPERATION_FINGERPRINTS = _operation_fingerprints(_UNCONFIGURED_POLICY, None)
-
-
 def build_comparison_context(
     *,
+    key: str,
+    target: str,
     identities: Any,
     parameter_values: Any = None,
     bola_config: Any = None,
@@ -122,14 +169,16 @@ def build_comparison_context(
     write_allowlist: Iterable[Any] = (),
     secret_values: Iterable[str] = (),
 ) -> Dict[str, Any]:
-    """Describe what a scan compared, without credentials, for later comparability checks.
+    """Keyed fingerprints of what a scan compared, for later comparability checks.
 
-    Identities are fingerprinted from their account ``id``, ``role`` and
-    identity parameters; tokens, headers and cookies are never included, and
-    any string containing a known credential is masked before hashing.
-    Operations are fingerprinted from their configured policy and resource
-    values. Fingerprints are truncated SHA-256 digests of these non-credential
-    values.
+    Every fingerprint is a truncated HMAC-SHA256 under the comparison key, so
+    short account IDs, resource values and the target cannot be enumerated
+    without the key, and ``diff`` compares them without needing it. The target
+    fingerprint covers scheme, host, port and base path. Identities are
+    fingerprinted from their ``id``, ``role`` and identity parameters; tokens,
+    headers and cookies are never included, and any string containing a known
+    credential is masked first. Operations are fingerprinted from their
+    configured policy and resource values.
     """
     secrets = tuple(sorted({value for value in secret_values if isinstance(value, str) and value}))
 
@@ -140,13 +189,18 @@ def build_comparison_context(
         material = {"id": data.get("id"), "role": data.get("role"), "parameters": parameters}
         if material["id"] is None and material["role"] is None and not parameters:
             return None
-        return _fingerprint("identity", _mask(material, secrets))
+        return _keyed(key, "identity", _mask(material, secrets))
+
+    def operation_fingerprints(policy: Mapping[str, Any], resources: Any) -> Dict[str, str]:
+        return {"policy": _keyed(key, "policy", _mask(policy, secrets)),
+                "resources": _keyed(key, "resources", _mask(resources, secrets))}
 
     identity_map = identities if isinstance(identities, Mapping) else {}
     declared: Dict[str, Any] = {name: identity_fingerprint(identity_map.get(name))
                                 for name in ("owner", "visitor", "anonymous")}
     roles = identity_map.get("roles")
-    declared["roles"] = ({str(name): identity_fingerprint(data) for name, data in sorted(roles.items(), key=lambda item: str(item[0]))}
+    declared["roles"] = ({str(name): identity_fingerprint(data)
+                          for name, data in sorted(roles.items(), key=lambda item: str(item[0]))}
                          if isinstance(roles, Mapping) else {})
 
     parameters = _by_operation(parameter_values)
@@ -156,11 +210,21 @@ def build_comparison_context(
     allowlisted = {operation for operation in map(_canonical_operation, write_allowlist or ()) if operation}
     operations: Dict[str, Dict[str, str]] = {}
     for operation in sorted(set(parameters) | set(bola) | set(bopla) | set(readbacks) | allowlisted):
-        policy = {"bola": bola.get(operation), "bopla": bopla.get(operation),
-                  "readback": readbacks.get(operation), "write_allowlisted": operation in allowlisted}
-        operations[operation] = _operation_fingerprints(_mask(policy, secrets),
-                                                        _mask(parameters.get(operation), secrets))
-    return {"version": CONTEXT_VERSION, "identities": declared, "operations": operations}
+        operations[operation] = operation_fingerprints(
+            {"bola": bola.get(operation), "bopla": bopla.get(operation), "readback": readbacks.get(operation),
+             "write_allowlisted": operation in allowlisted},
+            parameters.get(operation))
+    identity_of_target = target_identity(target)
+    return {
+        "version": CONTEXT_VERSION,
+        "algorithm": CONTEXT_ALGORITHM,
+        "key_id": _keyed(key, "comparison-key-id", None),
+        "target": _keyed(key, "target", list(identity_of_target)) if identity_of_target else None,
+        "identities": declared,
+        "operations": operations,
+        "unconfigured_operation": operation_fingerprints(
+            {"bola": None, "bopla": None, "readback": None, "write_allowlisted": False}, None),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +326,7 @@ def _subjects(check: str, verdict: str, evidence: Mapping[str, Any]) -> List[Tup
 
 
 def _url_scope(value: Any) -> Optional[str]:
-    """Path and query of an evidence URL; scheme, host and port are dropped."""
+    """Path and query of an evidence URL; the target itself is compared separately."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -322,25 +386,18 @@ class _Index:
 
 
 def _context(report: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """A keyed comparison context, or None (absent, unkeyed or malformed contexts are not used)."""
     context = report.get("comparison_context")
-    if (isinstance(context, Mapping) and context.get("version") == CONTEXT_VERSION
-            and isinstance(context.get("identities"), Mapping) and isinstance(context.get("operations"), Mapping)):
-        return context
-    return None
-
-
-def _target_identity(value: Any) -> Optional[Tuple[str, str, str]]:
-    """Scheme, host and base path of a report target; the port is ignored."""
-    if not isinstance(value, str) or not value.startswith(("http://", "https://")):
+    if not isinstance(context, Mapping) or context.get("version") != CONTEXT_VERSION:
         return None
-    try:
-        parts = urlsplit(value)
-        host = parts.hostname
-    except ValueError:
+    key_id = context.get("key_id")
+    if (context.get("algorithm") != CONTEXT_ALGORITHM or not isinstance(key_id, str)
+            or not _FINGERPRINT.fullmatch(key_id)):
         return None
-    if not host:
+    if not all(isinstance(context.get(name), Mapping)
+               for name in ("identities", "operations", "unconfigured_operation")):
         return None
-    return parts.scheme, host, parts.path.rstrip("/")
+    return context
 
 
 def _identity_changes(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> Tuple[List[str], List[str]]:
@@ -385,33 +442,60 @@ def _describe(key: Key) -> Dict[str, Any]:
     return described
 
 
-def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> Dict[str, Any]:
-    """Compare two validated reports; see the module docstring for the rules."""
+def _plain(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) and len(value) <= 64 and value.isprintable() else None
+
+
+def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
+                    assume_same_target: bool = False) -> Dict[str, Any]:
+    """Compare two validated reports; see the module docstring for the rules.
+
+    ``assume_same_target`` is the caller's explicit statement that both scans
+    targeted the same deployment although their targets differ or cannot be
+    read (for example a local service restarted on a new port). It removes only
+    the target condition, is recorded in the output and keeps the comparison
+    from being reported as fully comparable.
+    """
     old, new = _Index(baseline), _Index(current)
     old_context, new_context = _context(baseline), _context(current)
-    basis = "declared" if old_context is not None and new_context is not None else "evidence"
+    notes: Set[str] = set()
+    if old_context is not None and new_context is not None and old_context["key_id"] != new_context["key_id"]:
+        notes.add("comparison_keys_differ")
+        old_context = new_context = None
+    declared = old_context is not None and new_context is not None
+    basis = "declared" if declared else "evidence"
 
     changes: List[Dict[str, Any]] = []
-    notes: List[str] = []
     blocking: List[str] = []
+    assumptions: List[str] = []
     if baseline.get("tool_version") != current.get("tool_version"):
         changes.append({"kind": "tool_version", "baseline": baseline.get("tool_version"),
                         "current": current.get("tool_version"), "blocking": False})
-    old_target, new_target = _target_identity(baseline.get("target")), _target_identity(current.get("target"))
-    if old_target is None or new_target is None:
-        notes.append("target_not_comparable_in_reports")
-    elif old_target != new_target:
-        changes.append({"kind": "target", "blocking": True})
-        blocking.append("target_changed")
+
+    # Target: keyed fingerprints when declared, otherwise the report targets themselves.
+    if old_context is not None and new_context is not None:
+        old_target, new_target = old_context.get("target"), new_context.get("target")
+    else:
+        old_target, new_target = target_identity(baseline.get("target")), target_identity(current.get("target"))
+    target_state = ("unknown" if old_target is None or new_target is None
+                    else "changed" if old_target != new_target else "same")
+    if target_state != "same":
+        if assume_same_target:
+            assumptions.append("same_target")
+            changes.append({"kind": "target", "state": target_state, "acknowledged": True, "blocking": False})
+        else:
+            blocking.append(f"target_{target_state}")
+            changes.append({"kind": "target", "state": target_state, "blocking": True})
+
     if old_context is not None and new_context is not None:
         changed, undeclared = _identity_changes(old_context["identities"], new_context["identities"])
         if changed:
             changes.append({"kind": "identities", "identities": changed, "blocking": True})
             blocking.append("identities_changed")
         if undeclared:
-            notes.append("identity_account_ids_not_declared")
+            notes.add("identity_account_ids_not_declared")
     else:
-        notes.append("identities_not_recorded_in_reports")
+        notes.add("identities_unverified")
     added = sorted(new.operations - old.operations)
     removed = sorted(old.operations - new.operations)
     if added:
@@ -419,24 +503,39 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> 
     if removed:
         changes.append({"kind": "operations_removed", "count": len(removed), "blocking": False})
     if old.unreadable or new.unreadable:
-        notes.append("unreadable_results_ignored")
+        notes.add("unreadable_results_ignored")
 
-    def operation_fingerprints(context: Optional[Mapping[str, Any]], operation: str) -> Mapping[str, Any]:
-        entry = context["operations"].get(operation) if context is not None else None
-        return entry if isinstance(entry, Mapping) else DEFAULT_OPERATION_FINGERPRINTS
+    def declared_operation_reasons(operation: str) -> List[str]:
+        assert old_context is not None and new_context is not None
+        before = old_context["operations"].get(operation, old_context["unconfigured_operation"])
+        after = new_context["operations"].get(operation, new_context["unconfigured_operation"])
+        before = before if isinstance(before, Mapping) else {}
+        after = after if isinstance(after, Mapping) else {}
+        reasons = []
+        if before.get("policy") != after.get("policy"):
+            reasons.append("policy_changed")
+        if before.get("resources") != after.get("resources"):
+            reasons.append("resources_changed")
+        return reasons
+
+    operation_changes: Dict[str, Set[str]] = {}
+    if old_context is not None and new_context is not None:
+        # Operations in only one report are already reported as added or removed.
+        for operation in sorted(old.operations & new.operations):
+            reasons = declared_operation_reasons(operation)
+            if reasons:
+                operation_changes[operation] = set(reasons)
 
     def scope_reasons(key: Key, left: _Entry, right: _Entry) -> List[str]:
         reasons = list(blocking)
-        if basis == "declared":
-            before, after = operation_fingerprints(old_context, key[1]), operation_fingerprints(new_context, key[1])
-            if before.get("policy") != after.get("policy"):
-                reasons.append("policy_changed")
-            if before.get("resources") != after.get("resources"):
-                reasons.append("resources_changed")
+        if declared:
+            reasons.extend(sorted(operation_changes.get(key[1], ())))
         elif not left.scopes or not right.scopes:
             reasons.append("scope_unknown")
+            operation_changes.setdefault(key[1], set()).add("scope_unknown")
         elif left.scopes != right.scopes:
             reasons.append("resources_changed")
+            operation_changes.setdefault(key[1], set()).add("resources_changed")
         return reasons
 
     issues: List[Dict[str, Any]] = []
@@ -444,20 +543,16 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> 
         before, after = old.entries.get(key), new.entries.get(key)
         if not ((before is not None and before.confirmed) or (after is not None and after.confirmed)):
             continue
-        reasons: List[str] = []
         if after is not None and after.confirmed:
             if before is not None and before.confirmed:
                 reasons = scope_reasons(key, before, after)
                 status = "not_comparable" if reasons else "persisting"
+            elif before is None and key[1] not in old.operations:
+                # First detection on an operation the baseline did not contain: not a proven regression.
+                status, reasons = "not_comparable", list(blocking) + ["operation_not_in_baseline"]
             elif before is None:
-                if key[1] not in old.operations:
-                    reasons = list(blocking)
-                    status = "not_comparable" if reasons else "new"
-                    if not reasons:
-                        reasons = ["operation_not_in_baseline"]
-                else:
-                    status, reasons = "not_comparable", ["not_checked_in_baseline"]
-                    before = old.operation_level(key)
+                status, reasons = "not_comparable", ["not_checked_in_baseline"]
+                before = old.operation_level(key)
             elif before.conclusive_negative:
                 reasons = scope_reasons(key, before, after)
                 status = "not_comparable" if reasons else "new"
@@ -505,27 +600,35 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> 
         changes.append({"kind": "coverage_decreased", "blocking": False})
 
     summary = {status: sum(1 for issue in issues if issue["status"] == status) for status in STATUS_ORDER}
+    summary["current_confirmed_not_comparable"] = sum(
+        1 for issue in issues if issue["status"] == "not_comparable" and CONFIRMED in issue["current_verdicts"])
     summary["baseline_confirmed"] = sum(1 for entry in old.entries.values() if entry.confirmed)
     summary["current_confirmed"] = sum(1 for entry in new.entries.values() if entry.confirmed)
     return {
         "comparison_schema_version": COMPARISON_SCHEMA_VERSION,
         "tool_version": __version__,
         "baseline": {"tool_version": baseline.get("tool_version"), "generated_at": _plain(baseline.get("generated_at")),
-                     "context": "declared" if old_context is not None else "absent"},
+                     "context": "keyed" if _context(baseline) is not None else "absent"},
         "current": {"tool_version": current.get("tool_version"), "generated_at": _plain(current.get("generated_at")),
-                    "context": "declared" if new_context is not None else "absent"},
-        "comparability": {"basis": basis, "fully_comparable": not blocking, "changes": changes,
-                          "notes": sorted(set(notes))},
+                    "context": "keyed" if _context(current) is not None else "absent"},
+        "comparability": {
+            "basis": basis,
+            # True only when the target, test accounts, policy and resources were all verified
+            # as unchanged from keyed contexts, without any assumption.
+            "fully_comparable": declared and not blocking and not assumptions and not operation_changes,
+            "blocking": blocking,
+            "assumptions": assumptions,
+            "operation_changes": [{"operation": operation, "reasons": sorted(reasons)}
+                                  for operation, reasons in sorted(operation_changes.items())],
+            "changes": changes,
+            "notes": sorted(notes),
+        },
         "summary": summary,
         "issues": issues,
         "coverage": {"baseline": old_stats, "current": new_stats, "decreased": coverage_decreased,
                      "conclusive_lost": lost, "conclusive_gained": gained,
                      "operations_added": len(added), "operations_removed": len(removed)},
     }
-
-
-def _plain(value: Any) -> Optional[str]:
-    return value if isinstance(value, str) and len(value) <= 64 and value.isprintable() else None
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +638,17 @@ def _plain(value: Any) -> Optional[str]:
 def _printable(value: Any) -> str:
     text = str(value)
     return "".join(character if character.isprintable() else f"\\u{ord(character):04x}" for character in text)
+
+
+_NOTE_TEXT = {
+    "identities_unverified": "no keyed comparison context in one or both reports; a change of test accounts "
+                             f"cannot be detected (set {COMPARISON_KEY_ENV} for both scans)",
+    "comparison_keys_differ": "the reports were made with different comparison keys; keyed fingerprints "
+                              "were not used",
+    "identity_account_ids_not_declared": "owner/visitor have no account id in the configuration; "
+                                         "a change of test accounts cannot be detected",
+    "unreadable_results_ignored": "some result records could not be read and were ignored",
+}
 
 
 def summary_lines(comparison: Mapping[str, Any]) -> List[str]:
@@ -548,29 +662,34 @@ def summary_lines(comparison: Mapping[str, Any]) -> List[str]:
         f"Current:  GrantTrace {_printable(comparison['current']['tool_version'])}, "
         f"generated {_printable(comparison['current']['generated_at'] or 'unknown')}",
     ]
-    blocking = [change["kind"] for change in comparability["changes"] if change.get("blocking")]
-    if blocking:
-        lines.append("Comparability: NOT fully comparable (" + ", ".join(blocking) + " changed)")
+    if comparability["blocking"]:
+        lines.append("Comparability: NOT comparable for any finding (" + ", ".join(comparability["blocking"]) + ")")
+    elif comparability["fully_comparable"]:
+        lines.append("Comparability: verified (keyed comparison context in both reports)")
     else:
-        lines.append(f"Comparability: comparable (basis: {comparability['basis']})")
+        limits = []
+        if comparability["basis"] != "declared":
+            limits.append("test accounts not verified")
+        if comparability["assumptions"]:
+            limits.append("same target assumed by --assume-same-target")
+        if comparability["operation_changes"]:
+            limits.append(f"{len(comparability['operation_changes'])} operation(s) changed or unverifiable")
+        lines.append("Comparability: limited (" + "; ".join(limits) + ")")
     for change in comparability["changes"]:
         if change["kind"] == "tool_version":
             lines.append(f"  note: tool version changed from {_printable(change['baseline'])} "
                          f"to {_printable(change['current'])}")
         elif change["kind"] == "identities":
             lines.append("  identities changed: " + ", ".join(_printable(name) for name in change["identities"]))
-    note_text = {
-        "identities_not_recorded_in_reports": "identities are not recorded in one or both reports "
-                                              "(reports from 2.7.1 or earlier); a change of test accounts "
-                                              "cannot be detected",
-        "identity_account_ids_not_declared": "owner/visitor have no account id in the configuration; "
-                                             "a change of test accounts cannot be detected",
-        "target_not_comparable_in_reports": "the report targets cannot be compared",
-        "unreadable_results_ignored": "some result records could not be read and were ignored",
-    }
+        elif change["kind"] == "target":
+            state = "could not be read" if change["state"] == "unknown" else "differs"
+            suffix = " (acknowledged by --assume-same-target)" if change.get("acknowledged") else ""
+            lines.append(f"  target {state}{suffix}")
+    for item in comparability["operation_changes"]:
+        lines.append(f"  operation {_printable(item['operation'])}: " + ", ".join(item["reasons"]))
     for note in comparability["notes"]:
-        if note in note_text:
-            lines.append("  note: " + note_text[note])
+        if note in _NOTE_TEXT:
+            lines.append("  note: " + _NOTE_TEXT[note])
     old_cov = coverage["baseline"].get("conclusive_coverage_pct")
     new_cov = coverage["current"].get("conclusive_coverage_pct")
     coverage_line = "Conclusive coverage: "
@@ -591,7 +710,10 @@ def summary_lines(comparison: Mapping[str, Any]) -> List[str]:
             line += " (" + ", ".join(issue["reasons"]) + ")"
         lines.append(line)
     if summary["not_comparable"]:
-        lines.append("Not comparable findings are neither new nor fixed; see the reason codes.")
+        lines.append("Not comparable findings are neither proven new nor fixed; see the reason codes.")
+    if summary["current_confirmed_not_comparable"]:
+        lines.append(f"{summary['current_confirmed_not_comparable']} of them are confirmed in the current scan "
+                     "without comparable baseline evidence.")
     return lines
 
 
@@ -601,11 +723,19 @@ def _build_parser() -> argparse.ArgumentParser:
         description=("Compare two GrantTrace JSON scan reports offline. Confirmed findings are classified as "
                      "new, persisting, resolved or not comparable; SKIPPED or INCONCLUSIVE results never count "
                      "as fixed. No network access; no evidence or response data is copied."),
+        epilog=(f"Set the same {COMPARISON_KEY_ENV} (16+ characters) during both scans so that the reports "
+                "carry keyed fingerprints of target, test accounts, policy and resources, and diff can verify "
+                "that they are comparable. Without it, accounts cannot be verified and BOPLA reports, whose "
+                "target is omitted, are never comparable."),
     )
     parser.add_argument("baseline", metavar="BASELINE.json", help="Earlier GrantTrace JSON report (--export-json)")
     parser.add_argument("current", metavar="CURRENT.json", help="Later GrantTrace JSON report (--export-json)")
     parser.add_argument("--export-json", metavar="PATH", default=None,
                         help="Write the machine-readable comparison to PATH")
+    parser.add_argument("--assume-same-target", action="store_true",
+                        help=("State that both scans targeted the same deployment although their targets differ "
+                              "or cannot be read (for example a local service restarted on a new port). The "
+                              "assumption is recorded in the output; use it only when you know it is true"))
     return parser
 
 
@@ -630,7 +760,7 @@ def diff_main(argv: Sequence[str]) -> int:
                 reports.append(load_report(path))
             except ReportError as exc:
                 raise ReportError(f"{label} report: {exc}") from exc
-        comparison = compare_reports(reports[0], reports[1])
+        comparison = compare_reports(reports[0], reports[1], assume_same_target=args.assume_same_target)
     except ReportError as exc:
         print(f"[ERROR] {_printable(exc)}", file=sys.stderr)
         return 2

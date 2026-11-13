@@ -26,7 +26,7 @@ from core.onboarding import (
 )
 from core.parser import OpenAPIParser
 from core.remote_refs import InvalidRemoteRefHostError, RemoteRefConfig, normalize_remote_ref_host
-from core.report_diff import build_comparison_context
+from core.report_diff import ComparisonKeyError, build_comparison_context, comparison_key_from_environment
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
@@ -469,6 +469,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_config_validation(config_path, args.spec, remote_ref_config=remote_ref_config)
 
     spec_path = args.spec if args.spec is not None else "openapi.json"
+    comparison_key: Optional[str] = None
+    if not args.dry_run:
+        try:
+            comparison_key = comparison_key_from_environment()
+        except ComparisonKeyError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            return 2
     exit_code, config = _load_scan_configuration(args, spec_path, remote_ref_config)
     if exit_code is not None:
         return exit_code
@@ -514,7 +521,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         started = time.time()
         auditor.run()
         elapsed = time.time() - started
-        _export_reports(args, auditor, spec_path, elapsed)
+        _export_reports(args, auditor, spec_path, elapsed, comparison_key)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print("[ERROR] " + sanitize_log_text(sanitize_text(str(exc), secret_values=_published_secrets(locals().get("auditor")))), file=sys.stderr)
         return 2
@@ -687,7 +694,7 @@ def _display_target(args: argparse.Namespace, auditor: APISentinelAuditor) -> st
 
 
 def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
-                    elapsed: float) -> None:
+                    elapsed: float, comparison_key: Optional[str] = None) -> None:
     """Write the HTML report and the optional JSON and SARIF exports."""
     with PROPERTY_EVIDENCE_LOCK:
         report_stats = dict(auditor.stats)
@@ -733,13 +740,17 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
             }
             if report_rbac:
                 json_payload["rbac_matrix"] = report_rbac
-            # Credential-free fingerprints that let `granttrace diff` tell comparable scans apart.
-            json_payload["comparison_context"] = build_comparison_context(
-                identities=auditor.identities, parameter_values=auditor.parameter_values,
-                bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
-                readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                secret_values=reproduction_secrets,
-            )
+            if comparison_key is not None:
+                # Keyed, credential-free fingerprints that let `granttrace diff` verify that two scans
+                # covered the same target, accounts, policy and resources. Only written when the user
+                # supplied a comparison key, so reports carry no enumerable fingerprints by default.
+                json_payload["comparison_context"] = build_comparison_context(
+                    key=comparison_key, target=args.target,
+                    identities=auditor.identities, parameter_values=auditor.parameter_values,
+                    bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
+                    readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
+                    secret_values=reproduction_secrets,
+                )
             json.dump(
                 json_payload,
                 handle,
