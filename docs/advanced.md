@@ -122,6 +122,43 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
 
 路径显示继续脱敏并转义控制字符，避免文件名伪造日志行。NEXT 命令遇到控制字符时用 `<PATH_WITH_CONTROL_CHARACTERS>` 替代该参数；路径包含被识别为凭据、需要脱敏的片段时，用 `<PATH_REQUIRING_MANUAL_INPUT>` 替代。占位路径和 `<AUTHORIZED_TARGET_URL>` 都需先按实际位置与授权范围手工补全；不能直接当作真实路径或目标执行。
 
+## 对比两次扫描（granttrace diff）
+
+```bash
+granttrace diff baseline.json current.json --export-json comparison.json
+```
+
+离线读取两份由 `--export-json` 或 `granttrace demo` 生成的扫描报告（`report_schema_version` 2），不发送任何网络请求。确认漏洞按稳定的 Finding ID 对应，分为四类：
+
+| 状态 | 含义 |
+|---|---|
+| `new` | 当前为 CONFIRMED；基线中同一检查在相同范围内为 SECURE / PUBLIC / AUTHORIZED，或该操作在基线中不存在 |
+| `persisting` | 两份报告都为 CONFIRMED，范围相同 |
+| `resolved` | 基线为 CONFIRMED；当前同一检查在相同范围内为 SECURE / PUBLIC / AUTHORIZED |
+| `not_comparable` | 无法得出以上结论，附原因代码 |
+
+SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**，只会是 `not_comparable`。
+
+Finding ID 形如 `gtf_` 加 16 位十六进制，由检查类型、操作模板（如 `GET /api/users/{id}`）和主体（BOPLA 的字段规则与身份、RBAC 的角色、Mass Assignment 的字段）计算，与目标地址、端口、时间、具体资源值和请求标识无关；同一检查在不同版本的报告中 ID 相同。
+
+| 原因代码 | 含义 |
+|---|---|
+| `identities_changed` | 测试账号（identities 的 `id`、`role`、`parameters`）变化，所有结果不可比较 |
+| `target_changed` | 目标主机或基础路径变化（端口不计） |
+| `policy_changed` | 该操作的 `bola`、`bopla`、`readbacks` 配置或写允许清单变化 |
+| `resources_changed` | 该操作的 `parameter_values`，或证据中的资源路径变化 |
+| `scope_unknown` | 报告缺少资源路径，无法确认范围 |
+| `baseline_unverified` / `current_unverified` | 一方的结果是 SKIPPED、INCONCLUSIVE、ERROR 或 SUSPICIOUS |
+| `not_checked_in_baseline` | 该操作在基线中存在，但这项检查当时没有结果 |
+| `missing_in_current` / `operation_not_in_current` | 当前报告没有这项检查或这个操作 |
+| `operation_not_in_baseline` | 新增的操作（状态仍为 `new`） |
+
+覆盖率单独呈现，不改变漏洞状态：JSON 的 `coverage` 给出两份报告的覆盖率统计、`conclusive_lost`（基线有确定结论、当前没有的检查）和 `conclusive_gained`，覆盖率下降另行标记。
+
+**可比较性依据。** 扫描和 demo 的 JSON 报告包含 `comparison_context`：测试账号（`id`、`role`、身份参数）以及每个操作的策略与资源参数的 SHA-256 截断指纹，用于判断两次扫描是否针对相同的账号、资源和策略。它不包含 token、header 或 cookie，含已知凭据的字符串先遮盖再计算；指纹不可逆，但低熵的值（例如短数字 ID）可以被枚举。两份报告都有时按声明比较（`basis: declared`）；任一份没有（2.7.1 及更早的报告）时退回到证据中的资源路径（`basis: evidence`），此时无法发现测试账号的变化，摘要会注明。
+
+**输出。** 终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字。比较完成时退出码为 `0`，与是否有新增漏洞无关；输入无效（不是 JSON、是 dry-run 计划或 SARIF、schema 不是 2、超过 64 MiB）或 `--export-json` 指向输入文件时为 `2`。
+
 ## SARIF 导出
 
 完成审计后可同时输出 HTML、JSON 与 SARIF：

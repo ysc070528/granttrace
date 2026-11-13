@@ -525,5 +525,32 @@
         }
       }
     }
-  ]
+  ],
+  "comparison_context": {
+    "version": 1,
+    "identities": {
+      "owner": "f556081e4407388f",
+      "visitor": "eb86062a35ebaacf",
+      "anonymous": null,
+      "roles": {}
+    },
+    "operations": {
+      "GET /api/documents/{doc_uuid}": {
+        "policy": "da5a67d5ee78dc9e",
+        "resources": "9bc3b7e0ec339e7b"
+      },
+      "GET /api/public/articles/{article_id}": {
+        "policy": "f2fe4fe2e99b4a82",
+        "resources": "9796e88268c75b98"
+      },
+      "PATCH /api/users/{user_id}/nickname": {
+        "policy": "be86c9b9d0c57e09",
+        "resources": "759dd2e6e0d6d418"
+      },
+      "PATCH /api/users/{user_id}/settings": {
+        "policy": "be86c9b9d0c57e09",
+        "resources": "759dd2e6e0d6d418"
+      }
+    }
+  }
 }

@@ -26,6 +26,7 @@ from core.onboarding import (
 )
 from core.parser import OpenAPIParser
 from core.remote_refs import InvalidRemoteRefHostError, RemoteRefConfig, normalize_remote_ref_host
+from core.report_diff import build_comparison_context
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
@@ -49,7 +50,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
                      "BFLA and property-level checks)"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=("Built-in local demo: granttrace demo (no spec, config or credentials needed; the only place\n"
-                "where active mass-assignment checks with verified rollback run)\n\n"
+                "where active mass-assignment checks with verified rollback run)\n"
+                "Compare two JSON reports offline: granttrace diff BASELINE.json CURRENT.json\n\n"
                 "Recommended onboarding (local preparation before any target requests):\n"
                 "  1. granttrace --spec API.yaml --init-config config.local.json\n"
                 "  2. Review and fill the config + checklist manually.\n"
@@ -443,6 +445,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if selected and selected[0] == "demo":
         from core.demo import demo_main
         return demo_main(selected[1:])
+    if selected and selected[0] == "diff":
+        from core.report_diff import diff_main
+        return diff_main(selected[1:])
     args = build_argument_parser().parse_args(selected)
     exit_code = _check_cli_arguments(args)
     if exit_code is not None:
@@ -728,6 +733,13 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
             }
             if report_rbac:
                 json_payload["rbac_matrix"] = report_rbac
+            # Credential-free fingerprints that let `granttrace diff` tell comparable scans apart.
+            json_payload["comparison_context"] = build_comparison_context(
+                identities=auditor.identities, parameter_values=auditor.parameter_values,
+                bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
+                readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
+                secret_values=reproduction_secrets,
+            )
             json.dump(
                 json_payload,
                 handle,

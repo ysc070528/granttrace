@@ -110,6 +110,9 @@ granttrace --spec openapi.yaml --config config.local.json \
 - **JSON**（`--export-json`）：所有结果及证据，供自动化使用。
 - **SARIF 2.1.0**（`--export-sarif`）：只包含确认漏洞，供 GitHub 代码扫描使用。
   详见 [SARIF 导出](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#sarif-导出)。
+- **结果对比**（`granttrace diff BASELINE.json CURRENT.json`）：离线比较两份 JSON 报告，
+  把确认漏洞分为新增、持续存在、已不再复现和无法比较；跳过或不确定的结果不会被当作已修复。
+  详见 [对比两次扫描](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#对比两次扫描granttrace-diff)。
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-finding.png" alt="一个确认的 BOLA 漏洞：修复方向、复验步骤、cURL 模板和脱敏证据" width="700">
 

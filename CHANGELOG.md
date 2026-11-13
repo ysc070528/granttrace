@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `granttrace diff BASELINE.json CURRENT.json [--export-json PATH]` compares two
+  JSON scan reports offline. Confirmed findings are matched by a stable finding
+  ID (check, operation template and, for BOPLA, RBAC and mass assignment, the
+  field or role), independent of target, port, time and resource values, and
+  classified as new, persisting, resolved or not comparable. A finding is
+  resolved only when the same check on the same scope is now SECURE, PUBLIC or
+  AUTHORIZED; SKIPPED, INCONCLUSIVE, ERROR, SUSPICIOUS or missing results are
+  never treated as fixed. Changed test accounts, targets, per-operation policy
+  or resource values and coverage losses are reported with reason codes. The
+  output holds identifiers, verdicts and reason codes only, no evidence or
+  response data. The command exits 0 when the comparison completes and 2 for
+  invalid input; existing scan exit codes are unchanged.
+- Scan and demo JSON reports include `comparison_context`: truncated SHA-256
+  fingerprints of the test accounts (`id`, `role`, identity parameters) and of
+  each operation's policy and resource values, without tokens, headers or
+  cookies. `report_schema_version` stays 2; reports without it (2.7.1 and
+  earlier) are compared by the resource paths in their evidence.
+
 ## 2.7.1 - 2026-11-11
 
 A maintenance release. Detectors, evidence standards and report formats are
