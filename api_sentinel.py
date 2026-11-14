@@ -26,7 +26,9 @@ from core.onboarding import (
 )
 from core.parser import OpenAPIParser
 from core.remote_refs import InvalidRemoteRefHostError, RemoteRefConfig, normalize_remote_ref_host
-from core.report_diff import ComparisonKeyError, build_comparison_context, comparison_key_from_environment
+from core.report_diff import (
+    ComparisonKeyError, build_comparison_context, comparison_key_from_environment, specification_security_schemes,
+)
 from core.reporter import SecurityReportGenerator
 from core.reproduction import build_reproduction_templates
 from core.sarif import SarifReportGenerator
@@ -742,14 +744,17 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
                 json_payload["rbac_matrix"] = report_rbac
             if comparison_key is not None:
                 # Keyed, credential-free fingerprints that let `granttrace diff` verify that two scans
-                # covered the same target, accounts, policy and resources. Only written when the user
-                # supplied a comparison key, so reports carry no enumerable fingerprints by default.
+                # used the same target, identities, specification, policy and resources. Only written
+                # when the user supplied a comparison key, so reports carry no enumerable fingerprints
+                # by default.
                 json_payload["comparison_context"] = build_comparison_context(
-                    key=comparison_key, target=args.target,
-                    identities=auditor.identities, parameter_values=auditor.parameter_values,
+                    key=comparison_key, target=args.target, identities=auditor.identities,
+                    endpoints=auditor.parser.get_endpoints(),
+                    security_schemes=specification_security_schemes(auditor.parser.raw_spec),
+                    parameter_values=auditor.parameter_values,
                     bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
                     readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                    secret_values=reproduction_secrets,
+                    secret_values=auditor.secret_values(),
                 )
             json.dump(
                 json_payload,

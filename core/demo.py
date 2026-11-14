@@ -22,7 +22,9 @@ from urllib.request import ProxyHandler, build_opener
 from core import __version__
 from core.auditor import APISentinelAuditor
 from core.config_validator import ConfigValidator
-from core.report_diff import build_comparison_context, comparison_key_from_environment
+from core.report_diff import (
+    build_comparison_context, comparison_key_from_environment, specification_security_schemes,
+)
 from core.evidence import sanitize_log_text, sanitize_text
 from core.models import HTTPResult, json_values_equal, strict_json_loads
 from core.reporter import SecurityReportGenerator
@@ -230,11 +232,13 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
                    "demo": verification}
         if comparison_key is not None:
             payload["comparison_context"] = build_comparison_context(
-                key=comparison_key, target=server.target,
-                identities=auditor.identities, parameter_values=auditor.parameter_values,
+                key=comparison_key, target=server.target, identities=auditor.identities,
+                endpoints=auditor.parser.get_endpoints(),
+                security_schemes=specification_security_schemes(auditor.parser.raw_spec),
+                parameter_values=auditor.parameter_values,
                 bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
                 readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                secret_values=reproduction_secrets)
+                secret_values=auditor.secret_values())
         exported.write_text(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         print("Findings:")
         print(f"- BOLA / IDOR: {auditor.stats['bola_confirmed']} confirmed")

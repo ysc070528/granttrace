@@ -5,30 +5,35 @@
 ### Added
 
 - `granttrace diff BASELINE.json CURRENT.json [--export-json PATH]
-  [--assume-same-target]` compares two JSON scan reports offline. Confirmed
-  findings are matched by a stable finding ID (check, operation template and,
-  for BOPLA, RBAC and mass assignment, the field or role) and classified as
-  new, persisting, resolved or not comparable. A finding is resolved only when
-  the same check on the same target and scope is now SECURE, PUBLIC or
-  AUTHORIZED; SKIPPED, INCONCLUSIVE, ERROR, SUSPICIOUS or missing results are
-  never treated as fixed. A finding is new only when the baseline verified the
-  same check as not vulnerable; a first detection on an operation or check the
-  baseline did not cover is not comparable and counted separately. The target
-  includes the port, and an unreadable target (such as an omitted BOPLA
-  target) makes every conclusion not comparable; `--assume-same-target`
-  records an explicit assumption for local services on changing ports.
-  Changed test accounts, per-operation policy or resource values and coverage
-  losses are reported with reason codes. The output holds identifiers,
-  verdicts and reason codes only, no evidence or response data. The command
-  exits 0 when the comparison completes and 2 for invalid input; existing scan
-  exit codes are unchanged.
-- With `GRANTTRACE_COMPARISON_KEY` set (at least 16 characters), scan and demo
-  JSON reports include `comparison_context`: HMAC-SHA256 fingerprints of the
-  target, the test accounts (`id`, `role`, identity parameters) and each
-  operation's policy and resource values, without tokens, headers or cookies.
-  Without the key, reports contain no fingerprints. `report_schema_version`
-  stays 2; reports without a context (including 2.7.1 and earlier) are
-  compared by their targets and the resource paths in their evidence.
+  [--assume-same-target] [--assume-same-identities]` compares two JSON scan
+  reports offline. Confirmed findings are matched by a stable finding ID
+  (check, operation template and, for BOPLA, RBAC and mass assignment, the
+  field or role) and classified as new, persisting, resolved or not
+  comparable.
+  - A finding is resolved only when the same check on the same subject is now
+    SECURE, PUBLIC or AUTHORIZED; SKIPPED, INCONCLUSIVE, ERROR, SUSPICIOUS or
+    missing results are never treated as fixed. A finding is new only when the
+    baseline verified the same check as not vulnerable; a first detection is
+    not comparable and counted separately.
+  - No conclusion is drawn unless both reports are shown to cover the same
+    target (the port included), the same test identities and, for the
+    operation, the same specification, policy and resources. Reports without
+    keyed fingerprints, including those from 2.7.1 and earlier, are not
+    comparable by default; `--assume-same-target` and
+    `--assume-same-identities` state the missing part explicitly, never
+    override a detected change, and are recorded on the comparison and on
+    every finding that relies on them.
+  - The output holds identifiers, verdicts and reason codes only, as ASCII:
+    no evidence, response data or free text from the reports. The command
+    exits 0 when the comparison completes and 2 for invalid input; existing
+    scan exit codes are unchanged.
+- With `GRANTTRACE_COMPARISON_KEY` set (at least 32 random characters), scan
+  and demo JSON reports include `comparison_context`: keyed fingerprints
+  (HMAC-SHA256 under a PBKDF2-derived key) of the target, the test identities,
+  all credentials together, and each operation's specification, policy and
+  resource values. No token, header value or cookie is written. Without the
+  key, reports contain no fingerprints and are unchanged.
+  `report_schema_version` stays 2.
 
 ## 2.7.1 - 2026-11-11
 
