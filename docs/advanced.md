@@ -178,7 +178,9 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 
 凭据变化时，「轮换了同一账号的凭据」和「换成了另一个账号的凭据」从外部无法区分，所以默认不可比较；如果你只是轮换了凭据，用 `--assume-same-identities` 声明。2.7.1 及更早的报告没有 `comparison_context`，同样需要这个声明。
 
-两个假设参数必须完整拼写，只解除各自对应的条件，不会覆盖任何已检测到的变化。使用后会记录在 `comparability.assumptions`，每一条依赖它的结论也带有 `assumptions` 字段，终端输出标注 `[assumed: ...]`，并且整次比较不会被标为完全可比。只在你确实知道时使用。
+两个假设参数必须完整拼写，只解除各自对应的条件，不会覆盖任何已检测到的变化。使用后会以 `same_target`、`same_identities` 记录在 `comparability.assumptions`，每一条依赖它的结论也带有 `assumptions` 字段，终端输出标注 `[assumed: ...]`，并且整次比较不会被标为完全可比。只在你确实知道时使用。
+
+`comparability.notes` 还可能给出三种说明：`comparison_keys_differ`（两份报告的密钥不同，指纹未被采用）、`comparison_context_invalid`（上下文格式不合法、被截断或版本不受支持，未被采用）、`unreadable_results_ignored`（有无法解析、但不可能是确认漏洞的记录被忽略）。
 
 ### 只影响单个操作的变化
 
@@ -200,7 +202,7 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 | `not_checked_in_baseline` | 该操作在基线中存在，但这项检查或这个主体当时没有结果 |
 | `operation_not_in_baseline` | 该操作在基线中不存在，当前为首次发现 |
 | `missing_in_current` / `operation_not_in_current` | 当前报告没有这项检查、这个主体或这个操作 |
-| `subject_unknown` | 一条确定结论的记录读不出主体（字段、规则、身份或角色），无法与任何记录对应 |
+| `subject_unknown` | 一条 CONFIRMED 记录读不出主体（字段、规则、身份或角色），无法与任何记录对应 |
 
 ### fully_comparable 的含义和不能证明的事
 
