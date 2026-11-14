@@ -552,7 +552,8 @@ class ComparabilityTests(unittest.TestCase):
         unknown = compare_reports(report([result("BOLA", OP, "CONFIRMED")]), report([result("BOLA", OP, "SECURE")]),
                                   **flags)
         self.assertEqual(only(unknown)["reasons"], ["scope_unknown"])
-        for target in ("[BOPLA TARGET OMITTED]", "", "not-a-url", "http://", "ftp://host/", None, 7):
+        for target in ("[BOPLA TARGET OMITTED]", "", "not-a-url", "http://", "ftp://host/", None, 7,
+                       "http://host:99999", "http://host:port", "http://[::1"):
             with self.subTest(target=target):
                 hidden = compare_reports(report([bola("CONFIRMED")], target=target),
                                          report([bola("SECURE")], target=target), **flags)
@@ -665,6 +666,8 @@ class ComparabilityTests(unittest.TestCase):
 
         cases = {
             "nothing": ({}, None),
+            # A URL that cannot be parsed is no evidence of a resource; the others still are.
+            "unparseable readback url": ({"readback_url": "http://[::1"}, "resources_changed"),
             # The evidence URL's host is not the scope; the target is compared on its own.
             "host of the evidence url": ({"target_url": "https://elsewhere.example/a/1?x=1"}, None),
             "query value": ({"target_url": TARGET + "/a/1?x=2"}, "resources_changed"),
