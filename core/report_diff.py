@@ -18,12 +18,15 @@ resources for the operation:
 * With ``GRANTTRACE_COMPARISON_KEY`` set during both scans, reports carry a
   ``comparison_context`` of keyed fingerprints, which ``diff`` compares without
   needing the key. Every test identity must declare an account ``id``.
-* Without it (or with different keys, identities without an ``id``, or reports
-  from 2.7.1 and earlier) the test identities cannot be verified, and nothing
-  is reported as new, persisting or resolved unless the caller states the
-  assumption explicitly (``--assume-same-identities``). An unreadable or
-  different target needs ``--assume-same-target`` in the same way. Assumptions
-  are recorded on the comparison and on every finding that relies on them.
+* Without matching keyed contexts (no key, different keys, or reports from
+  2.7.1 and earlier) neither the test identities nor the specification, policy
+  and resource values can be verified. Nothing is then reported as new,
+  persisting or resolved unless the caller states each missing part
+  explicitly: ``--assume-same-identities`` covers the test accounts only and
+  ``--assume-same-configuration`` the specification, policy and resource
+  values only. An unreadable or different target needs ``--assume-same-target``
+  in the same way. Assumptions never override a detected change and are
+  recorded on the comparison and on every finding that relies on them.
 
 A finding is only reported as resolved when the same check on the same subject
 and scope now has a conclusive non-vulnerable verdict (SECURE, PUBLIC or
@@ -31,10 +34,24 @@ AUTHORIZED). A SKIPPED, INCONCLUSIVE, ERROR or SUSPICIOUS result, or a missing
 one, never counts as a fix. A finding is only new when the baseline verified the
 same check as not vulnerable; a first detection is not comparable.
 
+A verdict only counts when the record shows that the check sent a request
+(``requests_attempted`` of at least 1), the rule the scanner itself applies to
+conclusive coverage. Reports from versions before 2.5.3, which did not record
+request counts, are exempt when the count is absent. Request URLs and other
+evidence details are not required: a field policy, for example, removes them
+from every record of a report.
+
 Equal fingerprints show that the declared configuration did not change. They do
-not authenticate the reports, and they do not prove which account a credential
-belongs to: credentials are never fingerprinted, so that rotating them does not
-change a report.
+not authenticate the reports. Credentials are never written to a report and
+never fingerprinted one by one: identity fingerprints mask them, so a rotation
+does not look like another identity, and all credentials together enter one
+combined fingerprint, so a change of any of them is noticed. A rotated
+credential and another account's credential look the same, so a changed
+credential leaves the test accounts unverified. The combined fingerprint cannot
+test a guess of one credential on its own, except by someone who holds the
+comparison key and knows every other credential; keep the key like the
+credentials. A credential stored under a name that is not recognised as one is
+not masked and is fingerprinted with the value it is configured in.
 
 The comparison output holds identifiers, verdicts and enumerated reason codes
 only: no evidence, response data, URLs, credentials or free text from the
@@ -78,6 +95,9 @@ STATUS_ORDER = ("new", "not_comparable", "persisting", "resolved")
 # the accounts' data and permissions on the server may change between two scans.
 NOT_VERIFIED = ("report_integrity", "server_side_test_data")
 
+# Scan reports record requests_attempted on every result since this release.
+REQUEST_COUNTS_SINCE = (2, 5, 3)
+
 _KEY_SALT = b"granttrace/comparison-key/v2"
 _KEY_ITERATIONS = 200_000
 _CHECK_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
@@ -85,6 +105,7 @@ _FINGERPRINT = re.compile(r"[0-9a-f]{16}")
 _NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 _ACCOUNT = re.compile(r"owner|visitor|role:[A-Za-z0-9_.-]{1,128}")
 _VERSION = re.compile(r"[0-9]{1,6}(?:\.[0-9A-Za-z]{1,16}){1,5}(?:[-+][0-9A-Za-z.]{1,24})?")
+_RELEASE = re.compile(r"([0-9]{1,6})\.([0-9]{1,6})\.([0-9]{1,6})")
 _TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _SUBJECT_LIMIT = 512
 _OPERATION_LIMIT = 512
@@ -427,7 +448,7 @@ def validate_report(data: Any) -> None:
 
 
 class _Entry:
-    __slots__ = ("verdicts", "resources", "policy", "ambiguous")
+    __slots__ = ("verdicts", "resources", "policy", "ambiguous", "unobserved")
 
     def __init__(self) -> None:
         self.verdicts: Set[str] = set()
@@ -435,18 +456,21 @@ class _Entry:
         self.policy: Set[Tuple[Tuple[str, str], ...]] = set()
         # A confirmed record whose subject could not be read: it may belong to any subject.
         self.ambiguous = False
+        # A conclusive verdict whose record shows no request: it proves nothing either way.
+        self.unobserved = False
 
     @property
     def confirmed(self) -> bool:
+        # Listed even when unobserved, so that a reported finding never disappears from a comparison.
         return CONFIRMED in self.verdicts
 
     @property
     def conclusive_negative(self) -> bool:
-        return bool(self.verdicts) and self.verdicts <= CONCLUSIVE_NEGATIVE
+        return bool(self.verdicts) and self.verdicts <= CONCLUSIVE_NEGATIVE and not self.unobserved
 
     @property
     def conclusive(self) -> bool:
-        return bool(self.verdicts) and self.verdicts <= CONCLUSIVE_NEGATIVE | {CONFIRMED}
+        return bool(self.verdicts) and self.verdicts <= CONCLUSIVE_NEGATIVE | {CONFIRMED} and not self.unobserved
 
 
 def _bounded_subject(prefix: str, value: Any) -> Optional[str]:
@@ -524,6 +548,28 @@ def _evidence_scope(evidence: Mapping[str, Any]) -> Tuple[Tuple[Tuple[str, str],
     return tuple(sorted(resources)), tuple(sorted(policy))
 
 
+def _records_request_counts(version: Any) -> bool:
+    """Whether a report of this tool version records requests_attempted on every result.
+
+    A version that cannot be read gets no exemption.
+    """
+    release = _RELEASE.match(_version(version) or "")
+    return release is None or tuple(int(part) for part in release.groups()) >= REQUEST_COUNTS_SINCE
+
+
+def _executed(evidence: Mapping[str, Any], counts_recorded: bool) -> bool:
+    """Whether a record shows that its check sent at least one request.
+
+    This is the rule the scanner applies to conclusive coverage. A count of zero,
+    or one that is not a whole number, says that nothing was observed; an absent
+    count is only acceptable from a version that never recorded counts.
+    """
+    if "requests_attempted" not in evidence:
+        return not counts_recorded
+    attempted = evidence["requests_attempted"]
+    return type(attempted) is int and attempted >= 1
+
+
 class _Index:
     def __init__(self, report: Mapping[str, Any]) -> None:
         self.entries: Dict[Key, _Entry] = {}
@@ -531,6 +577,7 @@ class _Index:
         self.unreadable = 0
         # Unreadable records that may be confirmed findings on any operation.
         self.unattributed = 0
+        counts_recorded = _records_request_counts(report.get("tool_version"))
         for record in report.get("results", []):
             check = record.get("check") if isinstance(record, Mapping) else None
             operation = _canonical_operation(record.get("endpoint")) if isinstance(record, Mapping) else None
@@ -544,11 +591,14 @@ class _Index:
             evidence = record.get("evidence")
             evidence = evidence if isinstance(evidence, Mapping) else {}
             resources, policy = _evidence_scope(evidence)
+            executed = _executed(evidence, counts_recorded)
             self.operations.add(operation)
             for subject, subject_verdict, ambiguous in _subjects(check, verdict, evidence):
                 entry = self.entries.setdefault((check, operation, subject), _Entry())
                 entry.verdicts.add(subject_verdict)
                 entry.ambiguous = entry.ambiguous or ambiguous
+                if not executed and (subject_verdict == CONFIRMED or subject_verdict in CONCLUSIVE_NEGATIVE):
+                    entry.unobserved = True
                 if resources:
                     entry.resources.add(resources)
                 if policy:
@@ -690,17 +740,20 @@ def _declared_operation_changes(contexts: Tuple[Mapping[str, Any], Mapping[str, 
 
 
 def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
-                    assume_same_target: bool = False, assume_same_identities: bool = False) -> Dict[str, Any]:
+                    assume_same_target: bool = False, assume_same_identities: bool = False,
+                    assume_same_configuration: bool = False) -> Dict[str, Any]:
     """Compare two validated reports; see the module docstring for the rules.
 
-    The two assumptions are the caller's explicit statements for what the
-    reports cannot show. ``assume_same_target``: both scans targeted the same
-    deployment although their targets differ or cannot be read (for example a
-    local service restarted on a new port). ``assume_same_identities``: both
-    scans used the same test accounts although no keyed context verifies it.
-    Neither overrides a detected change of identities, specification, policy or
-    resources. Each is recorded on the comparison and on every finding that
-    relies on it, and keeps the comparison from being fully comparable.
+    The assumptions are the caller's explicit statements for what the reports
+    cannot show, each covering one thing only. ``assume_same_target``: both
+    scans targeted the same deployment although their targets differ or cannot
+    be read (for example a local service restarted on a new port).
+    ``assume_same_identities``: both scans used the same test accounts.
+    ``assume_same_configuration``: both scans used the same specification,
+    policy and resource values. The last two only apply when no matching keyed
+    contexts verify them. None overrides a detected change. Each is recorded on
+    the comparison and on every finding that relies on it, and keeps the
+    comparison from being fully comparable.
     """
     old, new = _Index(baseline), _Index(current)
     notes: Set[str] = set()
@@ -759,6 +812,18 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
             change["blocking"] = True
         changes.append(change)
 
+    # Specification, policy and resource values: verified per operation by keyed fingerprints only.
+    # The evidence below shows some changes, never their absence.
+    if contexts is None:
+        configuration: Dict[str, Any] = {"kind": "configuration", "state": "unverified"}
+        if assume_same_configuration:
+            assumptions.append("same_configuration")
+            configuration.update({"acknowledged": True, "blocking": False})
+        else:
+            blocking.append("configuration_unverified")
+            configuration["blocking"] = True
+        changes.append(configuration)
+
     if old.unreadable or new.unreadable:
         # An unreadable record that may be a confirmed finding could contradict any conclusion.
         unattributed = bool(old.unattributed or new.unattributed)
@@ -804,19 +869,25 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
             status, reasons = "not_comparable", blocking + ["subject_unknown"]
         elif after is not None and after.confirmed:
             if before is not None and before.confirmed:
-                reasons = scope_reasons(key, before, after)
-                status = "not_comparable" if reasons else "persisting"
+                if before.unobserved or after.unobserved:
+                    status = "not_comparable"
+                    reasons = blocking + ["baseline_unverified" if before.unobserved else "current_unverified"]
+                else:
+                    reasons = scope_reasons(key, before, after)
+                    status = "not_comparable" if reasons else "persisting"
             elif before is None and key[1] not in old.operations:
                 # First detection on an operation the baseline did not contain: not a proven regression.
                 status, reasons = "not_comparable", blocking + ["operation_not_in_baseline"]
             elif before is None:
                 status, reasons = "not_comparable", blocking + ["not_checked_in_baseline"]
                 before = old.operation_level(key)
-            elif before.conclusive_negative:
+            elif not before.conclusive_negative:
+                status, reasons = "not_comparable", blocking + ["baseline_unverified"]
+            elif after.unobserved:
+                status, reasons = "not_comparable", blocking + ["current_unverified"]
+            else:
                 reasons = scope_reasons(key, before, after)
                 status = "not_comparable" if reasons else "new"
-            else:
-                status, reasons = "not_comparable", blocking + ["baseline_unverified"]
         else:
             assert before is not None
             if after is None:
@@ -828,11 +899,13 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
                     after = fallback
                 else:
                     status, reasons = "not_comparable", blocking + ["missing_in_current"]
-            elif after.conclusive_negative:
+            elif not after.conclusive_negative:
+                status, reasons = "not_comparable", blocking + ["current_unverified"]
+            elif before.unobserved:
+                status, reasons = "not_comparable", blocking + ["baseline_unverified"]
+            else:
                 reasons = scope_reasons(key, before, after)
                 status = "not_comparable" if reasons else "resolved"
-            else:
-                status, reasons = "not_comparable", blocking + ["current_unverified"]
         issue = _describe(key)
         issue.update({"status": status, "baseline_verdicts": _sorted_verdicts(before),
                       "current_verdicts": _sorted_verdicts(after)})
@@ -973,6 +1046,12 @@ def summary_lines(comparison: Mapping[str, Any]) -> List[str]:
             line += (" (assumed the same by --assume-same-identities)" if change.get("acknowledged")
                      else "; state the same accounts with --assume-same-identities only if you know it")
             lines.append(line)
+        elif change["kind"] == "configuration":
+            line = ("  specification, policy and resource values not verified: both scans need the same "
+                    f"{COMPARISON_KEY_ENV}")
+            line += (" (assumed the same by --assume-same-configuration)" if change.get("acknowledged")
+                     else "; state that they were the same with --assume-same-configuration only if you know it")
+            lines.append(line)
     for item in comparability["operation_changes"]:
         lines.append(f"  operation {_ascii(item['operation'])}: " + ", ".join(item["reasons"]))
     for note in comparability["notes"]:
@@ -1023,7 +1102,7 @@ def _build_parser() -> argparse.ArgumentParser:
                 "scans and give every test identity an account id, so that the reports carry keyed fingerprints "
                 "of target, identities, specification, policy and resources and diff can verify that the declared "
                 "configuration is unchanged. Otherwise findings are not comparable unless you state the "
-                "assumptions below."),
+                "assumptions below; each one covers only what it names."),
     )
     parser.add_argument("baseline", metavar="BASELINE.json", help="Earlier GrantTrace JSON report (--export-json)")
     parser.add_argument("current", metavar="CURRENT.json", help="Later GrantTrace JSON report (--export-json)")
@@ -1036,8 +1115,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--assume-same-identities", action="store_true",
                         help=("State that both scans used the same test accounts although the reports cannot "
                               "show it (no comparison key, different keys, or identities without an account id). "
-                              "It never overrides a detected change. Recorded in the output; use it only when "
-                              "you know it is true"))
+                              "It says nothing about the specification or configuration and never overrides a "
+                              "detected change. Recorded in the output; use it only when you know it is true"))
+    parser.add_argument("--assume-same-configuration", action="store_true",
+                        help=("State that both scans used the same OpenAPI document, policy and resource values "
+                              "although the reports cannot show it (no comparison key or different keys). It says "
+                              "nothing about the test accounts and never overrides a change the evidence shows. "
+                              "Recorded in the output; use it only when you know it is true"))
     return parser
 
 
@@ -1064,7 +1148,8 @@ def diff_main(argv: Sequence[str]) -> int:
             except ReportError as exc:
                 raise ReportError(f"{label} report: {exc}") from exc
         comparison = compare_reports(reports[0], reports[1], assume_same_target=args.assume_same_target,
-                                     assume_same_identities=args.assume_same_identities)
+                                     assume_same_identities=args.assume_same_identities,
+                                     assume_same_configuration=args.assume_same_configuration)
     except ReportError as exc:
         print(f"[ERROR] {_printable(exc)}", file=sys.stderr)
         return 2

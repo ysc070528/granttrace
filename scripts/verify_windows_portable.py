@@ -245,21 +245,27 @@ def verify_report_comparison(executable, directory, environment):
     # Two demo runs listen on different ports and carry no fingerprints: nothing may be concluded.
     printed, blocked = compare(active, readonly)
     require(
-        blocked["comparability"]["blocking"] == ["target_changed", "identities_unverified"]
+        blocked["comparability"]["blocking"] == ["target_changed", "identities_unverified", "configuration_unverified"]
         and all(issue["status"] == "not_comparable" for issue in blocked["issues"])
         and "NOT comparable for any finding" in printed and "--assume-same-target" in printed,
-        "Packaged diff compared reports of different targets and unverified accounts",
+        "Packaged diff compared reports of different targets, accounts and configurations",
     )
-    # With both assumptions stated, the BOLA finding persists; the PATCH finding was only skipped
+    # Stating the same accounts says nothing about the configuration.
+    _, accounts_only = compare(active, readonly, "--assume-same-target", "--assume-same-identities")
+    require(accounts_only["comparability"]["blocking"] == ["configuration_unverified"],
+            "Packaged diff let an assumption about accounts cover the configuration")
+    # With every assumption stated, the BOLA finding persists; the PATCH finding was only skipped
     # by the read-only run and must not count as fixed.
-    printed, assumed = compare(active, readonly, "--assume-same-target", "--assume-same-identities")
+    printed, assumed = compare(active, readonly, "--assume-same-target", "--assume-same-identities",
+                               "--assume-same-configuration")
+    stated = ["same_target", "same_identities", "same_configuration"]
     findings = {issue["check"]: (issue["status"], issue.get("reasons"), issue.get("assumptions"))
                 for issue in assumed["issues"]}
     require(
-        findings == {"BOLA": ("persisting", None, ["same_target", "same_identities"]),
+        findings == {"BOLA": ("persisting", None, stated),
                      "MASS_ASSIGNMENT": ("not_comparable", ["current_unverified"], None)}
         and assumed["comparability"]["fully_comparable"] is False
-        and assumed["summary"]["resolved"] == 0 and "[assumed: same_target, same_identities]" in printed,
+        and assumed["summary"]["resolved"] == 0 and f"[assumed: {', '.join(stated)}]" in printed,
         f"Packaged diff misclassified the demo findings: {findings}",
     )
     # Keyed fingerprints are computed and compared inside the package; the key is never written.
@@ -287,7 +293,8 @@ def verify_report_comparison(executable, directory, environment):
         dict(environment, GRANTTRACE_COMPARISON_KEY="short-key"), 2)
     require(not (directory / "weak-key").exists(), "A demo ran with an unusable comparison key")
     return {
-        "unverified_reports_not_compared": True, "assumptions_recorded_on_findings": True,
+        "unverified_reports_not_compared": True, "account_assumption_does_not_cover_configuration": True,
+        "assumptions_recorded_on_findings": True,
         "skipped_result_not_counted_as_fixed": True, "keyed_basis": same["comparability"]["basis"],
         "keyed_persisting_findings": same["summary"]["persisting"], "comparison_json_ascii_only": True,
         "dry_run_plan_refused_exit_code": 2, "weak_comparison_key_refused_exit_code": 2,

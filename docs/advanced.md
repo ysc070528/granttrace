@@ -137,9 +137,9 @@ granttrace diff baseline.json current.json --export-json comparison.json
 | `resolved` | 基线为 CONFIRMED；当前同一检查、同一主体为 SECURE / PUBLIC / AUTHORIZED |
 | `not_comparable` | 无法得出以上结论，附原因代码 |
 
-**核心规则：** 只有在两份报告被证明针对同一目标、同一组测试身份，并且该操作的规范定义、策略和资源都没有变化时，才给出 `new`、`persisting` 或 `resolved`。证明不了的部分，要么由你用命令行参数明确声明为假设，要么结论就是 `not_comparable`。`resolved` 的含义是「在相同配置下不再复现」，不是「已证明修复」。
+**核心规则：** 只有在两份报告被证明针对同一目标、同一组测试身份，并且该操作的规范定义、策略和资源都没有变化时，才给出 `new`、`persisting` 或 `resolved`。证明不了的部分，要么由你用命令行参数逐项明确声明为假设，要么结论就是 `not_comparable`；每个假设只覆盖它所说的那一项。`resolved` 的含义是「在相同配置下不再复现」，不是「已证明修复」。
 
-SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**。同一漏洞有多条记录时，只要有一条 CONFIRMED 就按 CONFIRMED 处理，只要有一条不是确定结论就不算已修复。基线没有检查过的操作或检查上出现的确认漏洞是**首次发现**，不是已证明的回归，不计入 `new`；JSON 的 `summary.current_confirmed_not_comparable` 统计当前已确认、但没有可比基线证据的漏洞，以免它们被忽略。
+SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**。同一漏洞有多条记录时，只要有一条 CONFIRMED 就按 CONFIRMED 处理，只要有一条不是确定结论就不算已修复。判定还必须有实际发出的请求作支撑：记录中的 `requests_attempted` 至少为 1，这与扫描器自己计算确定覆盖率的规则相同。请求次数为 0、不是整数，或在 2.5.3 及以后版本的报告中缺失时，这条判定不能支持任何结论（原因代码 `baseline_unverified` / `current_unverified`），但 CONFIRMED 仍会列出。2.5.2 及更早的版本不记录请求次数，它们的报告中缺失该字段不受影响。请求 URL 等细节则可以缺失，例如字段策略（BOPLA）会把整份报告所有记录的 URL 都去掉。基线没有检查过的操作或检查上出现的确认漏洞是**首次发现**，不是已证明的回归，不计入 `new`；JSON 的 `summary.current_confirmed_not_comparable` 统计当前已确认、但没有可比基线证据的漏洞，以免它们被忽略。
 
 Finding ID 形如 `gtf_` 加 16 位十六进制，由检查类型、操作模板（如 `GET /api/users/{id}`）和主体（BOPLA 的字段规则与身份、RBAC 的角色、Mass Assignment 的字段）计算，与目标地址、端口、时间、具体资源值和请求标识无关。ID 只用于对应，是否可比较另行判断。
 
@@ -162,7 +162,7 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 | `credentials` | 所有凭据合并计算的一个指纹（token、身份 header 的值、配置中含已知凭据的值） |
 | `operations` | 每个操作在 OpenAPI 规范中的定义（参数、安全要求、请求体、安全方案）、`bola` / `bopla` / `readbacks` 策略与写允许清单、`parameter_values` |
 
-`diff` 只比较指纹，不需要密钥。没有密钥的人无法用枚举短 ID、资源值或目标地址的方式反推它们；BOPLA 报告也不会因此写入目标地址。`key_id` 不泄露密钥，但能让人看出两份报告使用了同一个密钥。密钥强度由你保证：派生会让每次猜测的代价提高约 20 万倍，但仍然挡不住对弱口令的离线字典攻击，所以请使用随机生成的密钥。token、cookie 和 header 的值本身从不写入：身份指纹在计算前先遮盖凭据，所以轮换凭据不会被当成「换了身份」；凭据只进入合并的 `credentials` 指纹，它是所有凭据的单一摘要，不能用来单独验证对某一个凭据的猜测。
+`diff` 只比较指纹，不需要密钥。没有密钥的人无法用枚举短 ID、资源值或目标地址的方式反推它们；BOPLA 报告也不会因此写入目标地址。`key_id` 不泄露密钥，但能让人看出两份报告使用了同一个密钥。密钥强度由你保证：派生会让每次猜测的代价提高约 20 万倍，但仍然挡不住对弱口令的离线字典攻击，所以请使用随机生成的密钥。token、cookie 和 header 的值本身从不写入：身份指纹在计算前先遮盖凭据，所以轮换凭据不会被当成「换了身份」；凭据只进入合并的 `credentials` 指纹，它是所有凭据的单一摘要，不能用来单独验证对某一个凭据的猜测——除非猜测者同时持有比较密钥并知道其余所有凭据，所以比较密钥要和凭据一样保管。没有被识别为凭据的值（例如放在名称不像凭据的参数里）不会被遮盖，会和它所在的配置项一起计算指纹。
 
 ### 默认不可比较的情况与显式假设
 
@@ -171,14 +171,17 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 | 目标的协议、主机、**端口**或基础路径不同 | `target_changed` | 确认是同一套部署时加 `--assume-same-target` |
 | 目标无法识别（例如 BOPLA 报告隐藏了目标且没有密钥） | `target_unknown` | 设置密钥，或加 `--assume-same-target` |
 | 没有密钥、两次密钥不同、身份没有填 `id`，或凭据发生了变化 | `identities_unverified` | 设置密钥并填写 `id`；确认是同一批账号时加 `--assume-same-identities` |
+| 没有密钥或两次密钥不同，规范、策略和资源参数无法核对 | `configuration_unverified` | 设置密钥；确认两次扫描使用同一份 OpenAPI 规范和相同的配置（`bola` / `bopla` / `readbacks`、写允许清单、`parameter_values`）时加 `--assume-same-configuration` |
 | 身份的声明内容变化（`id`、`role`、参数、非凭据 header、角色增减） | `identities_changed` | 不可覆盖 |
 | 可能是确认漏洞的结果记录无法解析 | `unreadable_results` | 不可覆盖 |
 
 端口默认属于目标：同一主机的不同端口可能是不同的服务，只有省略的默认端口与显式写出的相同（`http://host` 等于 `http://host:80`）。本地服务每次重启使用新端口（例如 `granttrace demo`）时，需要 `--assume-same-target`。
 
-凭据变化时，「轮换了同一账号的凭据」和「换成了另一个账号的凭据」从外部无法区分，所以默认不可比较；如果你只是轮换了凭据，用 `--assume-same-identities` 声明。2.7.1 及更早的报告没有 `comparison_context`，同样需要这个声明。
+凭据变化时，「轮换了同一账号的凭据」和「换成了另一个账号的凭据」从外部无法区分，所以默认不可比较；如果你只是轮换了凭据，用 `--assume-same-identities` 声明。
 
-两个假设参数必须完整拼写，只解除各自对应的条件，不会覆盖任何已检测到的变化。使用后会以 `same_target`、`same_identities` 记录在 `comparability.assumptions`，每一条依赖它的结论也带有 `assumptions` 字段，终端输出标注 `[assumed: ...]`，并且整次比较不会被标为完全可比。只在你确实知道时使用。
+账号一致不代表配置一致：没有可核对的上下文时，`--assume-same-identities` 只说明账号相同，不说明 OpenAPI 规范和配置相同；规范里多一个带默认值的 header，或者 `parameter_values` 多设置一个 header，都可能让同一个漏洞在第二次扫描中表现为 SECURE，而证据中的请求路径完全一样。所以这种情况还需要单独的 `--assume-same-configuration`。2.7.1 及更早的报告没有 `comparison_context`，同样需要这两项声明（端口变化时再加 `--assume-same-target`）。
+
+三个假设参数必须完整拼写，只解除各自对应的条件，不会覆盖任何已检测到的变化（包括证据中能看到的请求路径和判定依据的变化）。使用后会以 `same_target`、`same_identities`、`same_configuration` 记录在 `comparability.assumptions`，每一条依赖它的结论也带有 `assumptions` 字段，终端输出标注 `[assumed: ...]`，并且整次比较不会被标为完全可比。只在你确实知道时使用。
 
 `comparability.notes` 还可能给出三种说明：`comparison_keys_differ`（两份报告的密钥不同，指纹未被采用）、`comparison_context_invalid`（上下文格式不合法、被截断或版本不受支持，未被采用）、`unreadable_results_ignored`（有无法解析、但不可能是确认漏洞的记录被忽略）。
 
@@ -198,7 +201,7 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 
 | 原因代码 | 含义 |
 |---|---|
-| `baseline_unverified` / `current_unverified` | 一方的结果是 SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或未知判定 |
+| `baseline_unverified` / `current_unverified` | 一方的结果是 SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或未知判定，或者确定判定没有实际发出的请求支撑 |
 | `not_checked_in_baseline` | 该操作在基线中存在，但这项检查或这个主体当时没有结果 |
 | `operation_not_in_baseline` | 该操作在基线中不存在，当前为首次发现 |
 | `missing_in_current` / `operation_not_in_current` | 当前报告没有这项检查、这个主体或这个操作 |

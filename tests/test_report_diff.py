@@ -43,9 +43,14 @@ TARGET = "http://127.0.0.1:8000"
 NEGATIVE = ("SECURE", "PUBLIC", "AUTHORIZED")
 UNVERIFIED = ("SKIPPED", "INCONCLUSIVE", "ERROR", "SUSPICIOUS", "NOT-A-VERDICT")
 CONCLUSIONS = ("new", "persisting", "resolved")
+# Without matching keyed contexts, both the accounts and the configuration have to be stated.
+UNKEYED: Dict[str, bool] = {"assume_same_identities": True, "assume_same_configuration": True}
+UNKEYED_FLAGS = ("--assume-same-identities", "--assume-same-configuration")
 
 
 def result(check: str, endpoint: str, verdict: str, **evidence: Any) -> Dict[str, Any]:
+    # Every report since 2.5.3 records how many requests a check sent.
+    evidence.setdefault("requests_attempted", 3)
     return {"endpoint": endpoint, "operation_id": "op", "check": check, "verdict": verdict,
             "reason": "synthetic", "evidence": evidence}
 
@@ -127,7 +132,7 @@ class FindingIdentityTests(unittest.TestCase):
         second["results"][0]["evidence"]["request_id"] = "random-7f3a"
         # The identifier is the same wherever and whenever the finding was seen; comparability is separate.
         blocked = compare_reports(first, second)
-        assumed = compare_reports(first, second, assume_same_target=True, assume_same_identities=True)
+        assumed = compare_reports(first, second, assume_same_target=True, **UNKEYED)
         self.assertEqual((only(blocked)["status"], only(assumed)["status"]), ("not_comparable", "persisting"))
         for comparison in (blocked, assumed):
             self.assertEqual(only(comparison)["finding_id"], finding_id("BOLA", OP))
@@ -281,7 +286,8 @@ class StatusMatrixTests(unittest.TestCase):
                     new = (keyed if new_keyed else report)(self.records(after))
                     comparison = compare_reports(old, new)
                     issue = by_id(comparison)[("BOLA", OP, None)]
-                    self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", ["identities_unverified"]))
+                    self.assertEqual((issue["status"], issue["reasons"]),
+                                     ("not_comparable", ["identities_unverified", "configuration_unverified"]))
                     self.assertEqual(comparison["comparability"]["basis"], "evidence")
 
     def test_assumptions_restore_conclusions_and_are_recorded_on_every_finding(self):
@@ -292,8 +298,9 @@ class StatusMatrixTests(unittest.TestCase):
              {"assume_same_identities": True}, ["same_identities"]),
             ("no account ids", {"who": identities(None, None)}, {"who": identities(None, None)},
              {"assume_same_identities": True}, ["same_identities"]),
+            ("different keys", {}, {"key": OTHER_KEY}, UNKEYED, ["same_identities", "same_configuration"]),
             ("different keys and ports", {}, {"key": OTHER_KEY, "target": "http://127.0.0.1:8001"},
-             {"assume_same_target": True, "assume_same_identities": True}, ["same_target", "same_identities"]),
+             dict(UNKEYED, assume_same_target=True), ["same_target", "same_identities", "same_configuration"]),
         ]
         for name, baseline, current, flags, expected in cases:
             for before, after, status in self.CONCLUSIVE_ROWS:
@@ -307,7 +314,7 @@ class StatusMatrixTests(unittest.TestCase):
                     self.assertEqual(comparison["summary"]["relying_on_assumptions"], 1)
 
     def test_assumptions_never_override_a_detected_change(self):
-        both = {"assume_same_target": True, "assume_same_identities": True}
+        both = dict(UNKEYED, assume_same_target=True)
         for name, baseline, current, reason in self.BLOCKERS:
             if reason in ("target_changed", "target_unknown", "identities_unverified"):
                 continue
@@ -320,19 +327,28 @@ class StatusMatrixTests(unittest.TestCase):
                 self.assertNotIn("assumptions", issue)
 
     def test_an_assumption_covers_only_its_own_condition(self):
-        # The target assumption does not vouch for the accounts, and the other way round.
+        # The target assumption vouches neither for the accounts nor for the configuration.
         comparison, issue = self.compare(["CONFIRMED"], ["SECURE"], current={"key": OTHER_KEY},
                                          assume_same_target=True)
         assert issue is not None
-        self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", ["identities_unverified"]))
+        self.assertEqual((issue["status"], issue["reasons"]),
+                         ("not_comparable", ["identities_unverified", "configuration_unverified"]))
         self.assertEqual(comparison["comparability"]["assumptions"], [])
+        # The same accounts are not the same specification, policy and resources, and the other way round.
+        for flag, remaining in (("assume_same_identities", "configuration_unverified"),
+                                ("assume_same_configuration", "identities_unverified")):
+            with self.subTest(flag):
+                comparison, issue = self.compare(["CONFIRMED"], ["SECURE"], current={"key": OTHER_KEY},
+                                                 **{flag: True})
+                assert issue is not None
+                self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", [remaining]))
+                self.assertEqual(comparison["comparability"]["blocking"], [remaining])
         comparison, issue = self.compare(["CONFIRMED"], ["SECURE"], current={"target": "http://127.0.0.1:8001"},
                                          assume_same_identities=True)
         assert issue is not None
         self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", ["target_changed"]))
         # An assumption that is not needed is not recorded.
-        comparison, issue = self.compare(["CONFIRMED"], ["SECURE"], assume_same_target=True,
-                                         assume_same_identities=True)
+        comparison, issue = self.compare(["CONFIRMED"], ["SECURE"], assume_same_target=True, **UNKEYED)
         assert issue is not None
         self.assertEqual((issue["status"], comparison["comparability"]["assumptions"]), ("resolved", []))
         self.assertTrue(comparison["comparability"]["fully_comparable"])
@@ -487,6 +503,95 @@ class SubjectTests(unittest.TestCase):
         self.assertFalse(comparison["comparability"]["fully_comparable"])
 
 
+class ObservationTests(unittest.TestCase):
+    """A verdict only counts when its record shows that the check sent a request.
+
+    That is the rule the scanner applies to conclusive coverage. Request URLs and
+    other details may be missing; the request count may not, except in reports
+    from versions that never recorded it.
+    """
+
+    NO_REQUEST = {"zero": 0, "absent": None, "true": True, "false": False, "text": "3", "negative": -1,
+                  "fraction": 1.5, "null": "null"}
+
+    @staticmethod
+    def record(verdict: str, count: Any = 4, version_has_counts: bool = True) -> Dict[str, Any]:
+        record = bola(verdict)
+        if count is None:
+            del record["evidence"]["requests_attempted"]
+        else:
+            record["evidence"]["requests_attempted"] = None if count == "null" else count
+        return record
+
+    def test_a_verdict_without_a_request_never_supports_a_conclusion(self):
+        # (baseline, current, record without a request, outcome)
+        transitions = [("CONFIRMED", "SECURE", "current", "current_unverified"),
+                       ("CONFIRMED", "PUBLIC", "current", "current_unverified"),
+                       ("CONFIRMED", "SECURE", "baseline", "baseline_unverified"),
+                       ("SECURE", "CONFIRMED", "baseline", "baseline_unverified"),
+                       ("AUTHORIZED", "CONFIRMED", "baseline", "baseline_unverified"),
+                       ("SECURE", "CONFIRMED", "current", "current_unverified"),
+                       ("CONFIRMED", "CONFIRMED", "baseline", "baseline_unverified"),
+                       ("CONFIRMED", "CONFIRMED", "current", "current_unverified")]
+        for before, after, side, reason in transitions:
+            for name, count in self.NO_REQUEST.items():
+                with self.subTest(before=before, after=after, without_request=side, count=name):
+                    old = self.record(before, count if side == "baseline" else 4)
+                    new = self.record(after, count if side == "current" else 4)
+                    comparison = compare_reports(keyed([old]), keyed([new]))
+                    self.assertEqual((only(comparison)["status"], only(comparison)["reasons"]),
+                                     ("not_comparable", [reason]))
+                    # The scope is verified; it is the verdict that lacks its observation.
+                    self.assertTrue(comparison["comparability"]["fully_comparable"])
+                    self.assertEqual([comparison["summary"][key] for key in CONCLUSIONS], [0, 0, 0])
+        for count in (1, 2, 40):
+            self.assertEqual(only(compare_reports(keyed([self.record("CONFIRMED", count)]),
+                                                  keyed([self.record("SECURE", count)])))["status"], "resolved")
+
+    def test_one_record_without_a_request_spoils_the_others(self):
+        observed, unobserved = self.record("SECURE"), self.record("SECURE", 0)
+        comparison = compare_reports(keyed([self.record("CONFIRMED")]), keyed([observed, unobserved]))
+        self.assertEqual(only(comparison)["reasons"], ["current_unverified"])
+
+    def test_a_confirmed_finding_without_a_request_stays_listed(self):
+        comparison = compare_reports(keyed([self.record("CONFIRMED", 0)]), keyed([self.record("CONFIRMED", 0)]))
+        self.assertEqual((only(comparison)["status"], only(comparison)["reasons"]),
+                         ("not_comparable", ["baseline_unverified"]))
+        self.assertEqual((comparison["summary"]["current_confirmed_not_comparable"],
+                          comparison["summary"]["current_confirmed"]), (1, 1))
+
+    def test_reports_from_before_request_counts_keep_their_verdicts(self):
+        def compare(version: str, count: Any) -> Dict[str, Any]:
+            return only(compare_reports(report([self.record("CONFIRMED", count)], version=version),
+                                        report([self.record("SECURE", count)], version=version), **UNKEYED))
+
+        # Versions up to 2.5.2 did not record request counts: an absent count is not a missing request.
+        for version in ("2.4.1", "2.5.0", "2.5.2", "2.5.2.post1"):
+            with self.subTest(version=version):
+                self.assertEqual(compare(version, None)["status"], "resolved")
+                # A count that is present is read like any other.
+                self.assertEqual(compare(version, 0)["reasons"], ["current_unverified"])
+        # From 2.5.3 on, and when the version cannot be read, an absent count is a missing request.
+        for version in ("2.5.3", "2.7.1", "2.8.0", "10.0.0", "2.6", "nightly", "?"):
+            with self.subTest(version=version):
+                self.assertEqual(compare(version, None)["reasons"], ["current_unverified"])
+
+    def test_a_summary_without_a_request_verifies_no_field(self):
+        mass = {"target_url": TARGET + "/api/users/1/settings"}
+        confirmed = result("MASS_ASSIGNMENT", PATCH_OP, "CONFIRMED", field="role", **mass)
+        for count, status in ((5, "resolved"), (0, "not_comparable")):
+            with self.subTest(count=count):
+                summary = result("MASS_ASSIGNMENT", PATCH_OP, "SECURE", safe_fields=["role"], requests_attempted=count,
+                                 **mass)
+                self.assertEqual(only(compare_reports(keyed([confirmed]), keyed([summary])))["status"], status)
+
+    def test_a_verdict_without_a_request_is_not_conclusive_coverage(self):
+        comparison = compare_reports(keyed([self.record("SECURE")]), keyed([self.record("SECURE", 0)]))
+        self.assertEqual([item["operation"] for item in comparison["coverage"]["conclusive_lost"]], [OP])
+        self.assertTrue(comparison["coverage"]["decreased"])
+        self.assertEqual(comparison["issues"], [])
+
+
 class ComparabilityTests(unittest.TestCase):
     def test_fully_comparable_needs_a_verified_unchanged_context(self):
         comparison = compare_reports(keyed([bola("CONFIRMED")]), keyed([bola("SECURE")]))
@@ -541,9 +646,10 @@ class ComparabilityTests(unittest.TestCase):
                 self.assertEqual(only(policy)["reasons"], ["policy_changed"])
 
     def test_reports_without_context_are_compared_by_evidence_only_under_assumptions(self):
-        flags = {"assume_same_identities": True}
+        flags = UNKEYED
         same = compare_reports(report([bola("CONFIRMED")]), report([bola("SECURE")]), **flags)
-        self.assertEqual((only(same)["status"], only(same)["assumptions"]), ("resolved", ["same_identities"]))
+        self.assertEqual((only(same)["status"], only(same)["assumptions"]),
+                         ("resolved", ["same_identities", "same_configuration"]))
         self.assertEqual((same["comparability"]["basis"], same["comparability"]["fully_comparable"]),
                          ("evidence", False))
         moved = compare_reports(report([bola("CONFIRMED", path="/api/items/1")]),
@@ -560,7 +666,7 @@ class ComparabilityTests(unittest.TestCase):
                 self.assertEqual(only(hidden)["reasons"], ["target_unknown"])
 
     def test_default_ports_are_the_only_port_equivalence(self):
-        flags = {"assume_same_identities": True}
+        flags = UNKEYED
         for implicit, explicit in (("http://api.example", "http://api.example:80"),
                                    ("https://api.example/", "https://api.example:443"),
                                    ("https://API.example/v1/", "https://api.example:443/v1")):
@@ -642,6 +748,11 @@ class ComparabilityTests(unittest.TestCase):
         self.assertEqual(changes("identities", plain_old, plain_new, assume_same_identities=True), [
             {"kind": "identities", "state": "unverified", "cause": "no_keyed_context", "identities": [],
              "acknowledged": True, "blocking": False}])
+        self.assertEqual(changes("configuration", plain_old, plain_new, assume_same_identities=True), [
+            {"kind": "configuration", "state": "unverified", "blocking": True}])
+        self.assertEqual(changes("configuration", plain_old, plain_new, assume_same_configuration=True), [
+            {"kind": "configuration", "state": "unverified", "acknowledged": True, "blocking": False}])
+        self.assertEqual(changes("configuration", here, keyed([bola("SECURE")])), [])
         self.assertEqual(changes("target", report([bola("CONFIRMED")], target=7), plain_new),
                          [{"kind": "target", "state": "unknown", "blocking": True}])
 
@@ -679,18 +790,26 @@ class ComparabilityTests(unittest.TestCase):
             "required role": ({"required_role": "owner"}, "policy_changed"),
         }
         for name, (changed, reason) in cases.items():
-            for flags, make in (({}, keyed), ({"assume_same_identities": True}, report)):
+            for flags, make in (({}, keyed), (UNKEYED, report)):
                 with self.subTest(name, keyed=make is keyed):
                     issue = only(compare_reports(make([record("CONFIRMED")]), make([record("SECURE", **changed)]),
                                                  **flags))
                     self.assertEqual((issue["status"], issue.get("reasons")),
                                      ("not_comparable", [reason]) if reason else ("resolved", None))
 
-    def test_one_sided_evidence_does_not_outrank_agreeing_fingerprints(self):
-        # A report made with a field policy carries no request paths; the fingerprints still cover them.
-        with_paths, without = [bola("CONFIRMED")], [result("BOLA", OP, "SECURE")]
-        self.assertEqual(only(compare_reports(keyed(with_paths), keyed(without)))["status"], "resolved")
-        unkeyed = compare_reports(report(with_paths), report(without), assume_same_identities=True)
+    def test_request_urls_missing_on_one_side_are_covered_by_agreeing_fingerprints_only(self):
+        # A field policy removes request URLs from every record of a report; the checks still sent requests.
+        def stripped(verdict: str) -> Dict[str, Any]:
+            return result("BOLA", OP, verdict, requests_attempted=4)
+
+        for name, old, new in (("baseline", [bola("CONFIRMED")], [stripped("SECURE")]),
+                               ("current", [stripped("CONFIRMED")], [bola("SECURE")])):
+            with self.subTest(urls_only_in=name):
+                comparison = compare_reports(keyed(old), keyed(new))
+                self.assertEqual((only(comparison)["status"], comparison["comparability"]["fully_comparable"]),
+                                 ("resolved", True))
+        # Without fingerprints nothing shows that the requests went to the same resources.
+        unkeyed = compare_reports(report([bola("CONFIRMED")]), report([stripped("SECURE")]), **UNKEYED)
         self.assertEqual(only(unkeyed)["reasons"], ["scope_unknown"])
 
     def test_the_comparison_names_versions_times_counts_and_order(self):
@@ -1018,7 +1137,7 @@ class ContextTests(unittest.TestCase):
                 comparison = compare_reports(report([bola("CONFIRMED")], context=broken),
                                              report([bola("SECURE")], context=broken))
                 self.assertEqual((only(comparison)["status"], only(comparison)["reasons"]),
-                                 ("not_comparable", ["identities_unverified"]))
+                                 ("not_comparable", ["identities_unverified", "configuration_unverified"]))
                 self.assertEqual(comparison["comparability"]["basis"], "evidence")
                 self.assertEqual(comparison["comparability"]["notes"], ["comparison_context_invalid"])
                 self.assertEqual(comparison["baseline"]["context"], "invalid")
@@ -1079,16 +1198,21 @@ class RandomizedInvariantTests(unittest.TestCase):
             "changed": {operation: rng.choice(("spec", "policy", "resources")) for operation in self.OPERATIONS
                         if choice() < 0.15},
             "moved": {operation for operation in self.OPERATIONS if choice() < 0.1},
-            "flags": {"assume_same_target": choice() < 0.4, "assume_same_identities": choice() < 0.4},
+            "flags": {"assume_same_target": choice() < 0.4, "assume_same_identities": choice() < 0.4,
+                      "assume_same_configuration": choice() < 0.4},
             "verdicts": [{(check, operation): [rng.choice(self.VERDICTS) for _ in range(rng.choice((1, 1, 2)))]
                           for check in self.CHECKS for operation in self.OPERATIONS if choice() < 0.7}
                          for _ in range(2)],
+            # Records that say no request was sent.
+            "unobserved": [{(check, operation) for check in self.CHECKS for operation in self.OPERATIONS
+                            if choice() < 0.08} for _ in range(2)],
         }
 
     def build(self, scenario: Dict[str, Any], side: int) -> Dict[str, Any]:
         current = side == 1
         records = [result(check, operation, verdict, target_url=TARGET + (
-                       "/moved" if current and operation in scenario["moved"] else "/same"))
+                       "/moved" if current and operation in scenario["moved"] else "/same"),
+                       requests_attempted=0 if (check, operation) in scenario["unobserved"][side] else 3)
                    for (check, operation), verdicts in scenario["verdicts"][side].items() for verdict in verdicts]
         target = TARGET if scenario["same_target"] or not current else "http://127.0.0.1:9000"
         if not scenario["keyed"][side]:
@@ -1116,12 +1240,17 @@ class RandomizedInvariantTests(unittest.TestCase):
         if "CONFIRMED" not in (before or set()) | (after or set()):
             return None
         negative = set(NEGATIVE)
+        # A conclusive verdict from a record without a request proves nothing.
+        unobserved = [key in scenario["unobserved"][side] and bool(verdicts & (negative | {"CONFIRMED"}))
+                      for side, verdicts in enumerate((before or set(), after or set()))]
+        proven_safe = [verdicts is not None and verdicts <= negative and not unobserved[side]
+                       for side, verdicts in enumerate((before, after))]
         candidate: Optional[str]
         if after is not None and "CONFIRMED" in after:
-            candidate = ("persisting" if before is not None and "CONFIRMED" in before
-                         else "new" if before is not None and before <= negative else None)
+            candidate = ("persisting" if before is not None and "CONFIRMED" in before and not any(unobserved)
+                         else "new" if proven_safe[0] and not unobserved[1] else None)
         else:
-            candidate = "resolved" if after is not None and after <= negative else None
+            candidate = "resolved" if proven_safe[1] and not unobserved[0] else None
         if candidate is None:
             return "not_comparable"
         declared = all(scenario["keyed"]) and scenario["same_key"]
@@ -1133,7 +1262,7 @@ class RandomizedInvariantTests(unittest.TestCase):
             operation_ok = key[1] not in scenario["changed"]
         else:
             identities_ok = flags["assume_same_identities"]
-            operation_ok = True
+            operation_ok = flags["assume_same_configuration"]
         comparable = target_ok and identities_ok and operation_ok and key[1] not in scenario["moved"]
         return candidate if comparable else "not_comparable"
 
@@ -1260,7 +1389,7 @@ class RandomizedInvariantTests(unittest.TestCase):
                             patch("socket.socket", side_effect=failure), \
                             patch("socket.create_connection", side_effect=failure):
                         code = api_sentinel.main(["diff", str(paths[0]), str(paths[1]), "--assume-same-target",
-                                                  "--assume-same-identities", "--export-json", str(paths[2])])
+                                                  *UNKEYED_FLAGS, "--export-json", str(paths[2])])
                     outcomes.add(code)
                     self.assertIn(code, (0, 2), stderr.getvalue())
                     self.assertNotIn("Traceback", stderr.getvalue())
@@ -1312,7 +1441,7 @@ class PrivacyAndHostileInputTests(unittest.TestCase):
 
     def test_output_contains_no_evidence_credentials_or_free_text_from_the_reports(self):
         baseline, current = self.leaky_reports()
-        for flags in ([], ["--assume-same-target", "--assume-same-identities"]):
+        for flags in ([], ["--assume-same-target", *UNKEYED_FLAGS]):
             with self.subTest(flags=flags):
                 code, stdout, stderr = self.call(["diff", str(self.write("a.json", baseline)),
                                                   str(self.write("b.json", current)), *flags,
@@ -1341,7 +1470,7 @@ class PrivacyAndHostileInputTests(unittest.TestCase):
         ]
         baseline = self.write("a.json", report(records, version="2.8.0\x1b[2J", generated_at="2026\r\nforged"))
         current = self.write("b.json", report(records))
-        code, stdout, stderr = self.call(["diff", str(baseline), str(current), "--assume-same-identities",
+        code, stdout, stderr = self.call(["diff", str(baseline), str(current), *UNKEYED_FLAGS,
                                           "--export-json", str(self.folder / "out.json")])
         self.assertEqual(code, 0, stderr)
         exported = (self.folder / "out.json").read_text(encoding="utf-8")
@@ -1363,7 +1492,7 @@ class PrivacyAndHostileInputTests(unittest.TestCase):
                                         ' {"endpoint": "PATCH /u", "check": "MASS_ASSIGNMENT", "verdict": "CONFIRMED",'
                                         ' "evidence": {"field": "\\ud800"}}]}')
         code, stdout, stderr = self.call(["diff", str(baseline), str(baseline), "--assume-same-target",
-                                          "--assume-same-identities", "--export-json", str(self.folder / "o.json")])
+                                          *UNKEYED_FLAGS, "--export-json", str(self.folder / "o.json")])
         self.assertEqual(code, 0, stderr)
         written = json.loads((self.folder / "o.json").read_text(encoding="utf-8"))
         self.assertEqual(written["comparability"]["blocking"], ["unreadable_results"])
@@ -1598,7 +1727,7 @@ class CommandLineTests(unittest.TestCase):
             "other target": (keyed([bola("CONFIRMED")]), keyed([bola("CONFIRMED")], target="http://127.0.0.1:9"),
                              []),
             "assumed": (report([bola("CONFIRMED")]), report([bola("SECURE")], target="http://127.0.0.1:9"),
-                        ["--assume-same-target", "--assume-same-identities"]),
+                        ["--assume-same-target", *UNKEYED_FLAGS]),
         }
         for name, (old, new, flags) in cases.items():
             with self.subTest(name):
@@ -1610,21 +1739,22 @@ class CommandLineTests(unittest.TestCase):
         new = self.write("new.json", report([bola("SECURE")], target="http://127.0.0.1:9999"))
         code, stdout, _ = self.call(["diff", str(old), str(new)])
         self.assertEqual(code, 0)
-        self.assertIn("NOT comparable for any finding (target_changed, identities_unverified)", stdout)
-        self.assertIn("--assume-same-target", stdout)
-        self.assertIn("--assume-same-identities", stdout)
-        self.assertIn("GRANTTRACE_COMPARISON_KEY", stdout)
+        self.assertIn("NOT comparable for any finding (target_changed, identities_unverified, "
+                      "configuration_unverified)", stdout)
+        for flag in ("--assume-same-target", *UNKEYED_FLAGS, "GRANTTRACE_COMPARISON_KEY"):
+            self.assertIn(flag, stdout)
         self.assertIn("0 new, 0 persisting, 0 resolved, 1 not comparable", stdout)
-        code, stdout, _ = self.call(["diff", str(old), str(new), "--assume-same-target", "--assume-same-identities"])
+        code, stdout, _ = self.call(["diff", str(old), str(new), "--assume-same-target", *UNKEYED_FLAGS])
         self.assertEqual(code, 0)
         self.assertIn("Comparability: limited (assumed by the caller: same_target; assumed by the caller: "
-                      "same_identities)", stdout)
-        self.assertIn("[assumed: same_target, same_identities]", stdout)
+                      "same_identities; assumed by the caller: same_configuration)", stdout)
+        self.assertIn("[assumed: same_target, same_identities, same_configuration]", stdout)
         self.assertIn("Conclusions that rely on assumptions stated by the caller, not on verification: 1.", stdout)
 
     def test_assumptions_must_be_spelled_out(self):
         old = self.write("old.json", report([bola("CONFIRMED")]))
-        for abbreviated in ("--assume", "--assume-same", "--assume-same-t", "--assume-same-id", "--export"):
+        for abbreviated in ("--assume", "--assume-same", "--assume-same-t", "--assume-same-id", "--assume-same-c",
+                            "--export"):
             with self.subTest(abbreviated):
                 stderr = io.StringIO()
                 with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as exited:
@@ -1639,7 +1769,8 @@ class CommandLineTests(unittest.TestCase):
             api_sentinel.main(["diff", "--help"])
         self.assertEqual(exited.exception.code, 0)
         for expected in ("never count", "--assume-same-target", "--assume-same-identities",
-                         "GRANTTRACE_COMPARISON_KEY", "--export-json PATH", "BASELINE.json CURRENT.json"):
+                         "--assume-same-configuration", "covers only what it names", "GRANTTRACE_COMPARISON_KEY",
+                         "--export-json PATH", "BASELINE.json CURRENT.json"):
             self.assertIn(expected, " ".join(stdout.getvalue().split()))
 
 
@@ -1694,18 +1825,21 @@ class SummaryTests(unittest.TestCase):
             "Baseline: GrantTrace unknown version, generated unknown",
             "Current:  GrantTrace 2.8.0, generated 2026-11-13T00:00:00Z",
             "Comparability: NOT comparable for any finding (target_unknown, identities_unverified, "
-            "unreadable_results)",
+            "configuration_unverified, unreadable_results)",
             "  a target cannot be read. Set the comparison key for both scans, or state the same deployment with "
             "--assume-same-target",
             "  a result record that may be a confirmed finding could not be read",
             "  note: tool versions: unknown and 2.8.0",
             "  test accounts not verified: both scans need the same GRANTTRACE_COMPARISON_KEY; state the same "
             "accounts with --assume-same-identities only if you know it",
+            "  specification, policy and resource values not verified: both scans need the same "
+            "GRANTTRACE_COMPARISON_KEY; state that they were the same with --assume-same-configuration only if you "
+            "know it",
             "  note: a comparison context is malformed or from an unsupported version and was not used",
             "Conclusive coverage: not recorded",
             "Confirmed findings: 0 new, 0 persisting, 0 resolved, 1 not comparable",
             f"  NOT COMPARABLE  {finding_id('BOLA', OP)} BOLA {OP} (target_unknown, identities_unverified, "
-            "unreadable_results)",
+            "configuration_unverified, unreadable_results)",
             "Not comparable findings are neither proven new nor fixed; see the reason codes.",
             self.CLOSING])
 
@@ -1750,9 +1884,19 @@ class SummaryTests(unittest.TestCase):
             "  test accounts not verified: a credential differs between the scans (a rotation and another "
             "account's credential look the same); state the same accounts with --assume-same-identities only if "
             "you know it"])
-        self.assertEqual(lines(keyed([bola("SECURE")], key=OTHER_KEY))[2],
-                         "  note: the reports were made with different comparison keys; keyed fingerprints were "
-                         "not used")
+        self.assertEqual(lines(keyed([bola("SECURE")], key=OTHER_KEY))[1:], [
+            "  test accounts not verified: both scans need the same GRANTTRACE_COMPARISON_KEY; state the same "
+            "accounts with --assume-same-identities only if you know it",
+            "  specification, policy and resource values not verified: both scans need the same "
+            "GRANTTRACE_COMPARISON_KEY; state that they were the same with --assume-same-configuration only if you "
+            "know it",
+            "  note: the reports were made with different comparison keys; keyed fingerprints were not used"])
+        self.assertEqual(lines(keyed([bola("SECURE")], key=OTHER_KEY), assume_same_configuration=True)[:3], [
+            "Comparability: NOT comparable for any finding (identities_unverified)",
+            "  test accounts not verified: both scans need the same GRANTTRACE_COMPARISON_KEY; state the same "
+            "accounts with --assume-same-identities only if you know it",
+            "  specification, policy and resource values not verified: both scans need the same "
+            "GRANTTRACE_COMPARISON_KEY (assumed the same by --assume-same-configuration)"])
         self.assertEqual(lines(keyed([bola("SECURE")], target="http://127.0.0.1:8001")), [
             "Comparability: NOT comparable for any finding (target_changed)",
             "  the targets differ (scheme, host, port or base path). If both scans tested the same deployment, "
@@ -1828,6 +1972,46 @@ class _DocumentsApi(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+class _ShopApi(BaseHTTPRequestHandler):
+    """Orders that any user can read unless `fixed`, and documents scanned with a field policy."""
+
+    fixed = False
+    users = {"Bearer owner-test": "owner", "Bearer visitor-test": "visitor"}
+    orders = {11: {"id": 11, "owner": "owner", "total": 99.5, "address": "1 Owner Street"},
+              22: {"id": 22, "owner": "visitor", "total": 5.0, "address": "2 Visitor Avenue"}}
+    documents = {"1001": {"id": "1001", "title": "Shared", "private_note": "owner-note-5521"},
+                 "1002": {"id": "1002", "title": "Mine", "private_note": "visitor-note-8812"}}
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def reply(self, status: int, body: Any) -> None:
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        who = self.users.get(self.headers.get("Authorization", ""))
+        if who is None:
+            return self.reply(401, {"error": "authentication required"})
+        kind, _, name = self.path.strip("/").partition("/")
+        if kind == "orders":
+            order = self.orders.get(int(name))
+            if order is None:
+                return self.reply(404, {"error": "not found"})
+            allowed = order["owner"] == who or not type(self).fixed
+            return self.reply(200, order) if allowed else self.reply(403, {"error": "forbidden"})
+        document = self.documents.get(name)
+        if document is None:
+            return self.reply(404, {"error": "not found"})
+        if who == "visitor" and name == "1001":
+            return self.reply(200, {key: value for key, value in document.items() if key != "private_note"})
+        return self.reply(200, document)
+
+
 class EndToEndTests(unittest.TestCase):
     """Real scans of a local API and the built-in demo, compared with `granttrace diff`."""
 
@@ -1884,12 +2068,19 @@ class EndToEndTests(unittest.TestCase):
     # --- an orders API with an intra-organisation BOLA ---------------------------------------------
 
     @staticmethod
-    def orders_spec(edge: bool = False) -> Dict[str, Any]:
+    def orders_spec(edge: bool = False, header: Optional[str] = None) -> Dict[str, Any]:
         parameters: List[Dict[str, Any]] = [{"name": "orderId", "in": "path", "required": True,
                                              "schema": {"type": "integer"}}]
         if edge:
             parameters.append({"name": "edge", "in": "query", "required": True,
                                "schema": {"type": "string", "enum": ["eu"]}})
+        if header == "default":
+            # An optional header with a default is sent with that default on every request.
+            parameters.append({"name": "X-Edge-Region", "in": "header", "required": False,
+                               "schema": {"type": "string", "default": "eu"}})
+        elif header == "optional":
+            parameters.append({"name": "X-Edge-Region", "in": "header", "required": False,
+                               "schema": {"type": "string"}})
         return {"openapi": "3.0.3", "info": {"title": "orders", "version": "1"},
                 "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
                 "security": [{"bearer": []}],
@@ -1898,19 +2089,23 @@ class EndToEndTests(unittest.TestCase):
 
     @staticmethod
     def orders_config(visitor_token: str = "Bearer visitor-test", ids: bool = True,
-                      visitor_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                      visitor_headers: Optional[Dict[str, str]] = None,
+                      common: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         owner: Dict[str, Any] = {"token": "Bearer owner-test"}
         visitor: Dict[str, Any] = {"token": visitor_token}
         if ids:
             owner["id"], visitor["id"] = "1", "2"
         if visitor_headers:
             visitor["headers"] = visitor_headers
+        values: Dict[str, Any] = {"owner": {"orderId": 11}, "visitor": {"orderId": 22}}
+        if common:
+            values["common"] = common
         return {"identities": {"owner": owner, "visitor": visitor, "anonymous": {}},
-                "parameter_values": {"GET /orders/{orderId}": {"owner": {"orderId": 11}, "visitor": {"orderId": 22}}}}
+                "parameter_values": {"GET /orders/{orderId}": values}}
 
     def orders(self, name: str, mode: str, **options: Any) -> Tuple[Path, int]:
         _OrdersApi.mode = mode
-        spec = self.orders_spec(options.pop("edge", False))
+        spec = self.orders_spec(options.pop("edge", False), options.pop("header", None))
         scan_options = {name: options.pop(name) for name in ("port", "key") if name in options}
         return self.scan(name, _OrdersApi, spec, self.orders_config(**options), **scan_options)
 
@@ -1956,14 +2151,15 @@ class EndToEndTests(unittest.TestCase):
                 self.assertFalse(comparison["comparability"]["fully_comparable"])
                 self.assertEqual(comparison["summary"]["resolved"], 0)
         # Without a key, or without account ids, the same swap of accounts cannot be told from a fix.
-        for name, options in (("no key", {"key": None}), ("no account ids", {"ids": False})):
+        for name, options, reasons in (("no key", {"key": None}, ["identities_unverified", "configuration_unverified"]),
+                                       ("no account ids", {"ids": False}, ["identities_unverified"])):
             with self.subTest(name):
                 first, first_port = self.orders(name.replace(" ", "-") + "-a", "intra_org", **options)
                 second, _ = self.orders(name.replace(" ", "-") + "-b", "intra_org", port=first_port,
                                         visitor_token="Bearer other-account", **options)
                 comparison = self.diff(first, second)
                 issue = self.finding(comparison)
-                self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", ["identities_unverified"]))
+                self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", reasons))
                 self.assertEqual(issue["current_verdicts"], ["SECURE"])
 
     def test_a_rotated_credential_needs_the_stated_assumption(self):
@@ -1979,6 +2175,43 @@ class EndToEndTests(unittest.TestCase):
         edited, _ = self.orders("edited", "intra_org", port=port, edge=True)
         self.assertEqual(self.finding(self.diff(vulnerable, edited, "--assume-same-identities",
                                                 "--assume-same-target"))["status"], "not_comparable")
+
+    def test_an_assumption_about_accounts_never_covers_the_configuration(self):
+        """The API stays vulnerable; only the OpenAPI document or the parameter values change, and the
+        request paths in the evidence stay the same, so the evidence cannot show the difference."""
+        cases = {
+            # The document gains an optional header whose default selects the properly checked edge.
+            "specification": ({}, {"header": "default"}, "spec_changed"),
+            # The document is unchanged; the parameter values now set that optional header.
+            "parameter values": ({"header": "optional"}, {"header": "optional", "common": {"X-Edge-Region": "eu"}},
+                                 "resources_changed"),
+        }
+        for name, (before, after, detected) in cases.items():
+            for key in (None, KEY):
+                with self.subTest(name, keyed=key is not None):
+                    label = name.replace(" ", "-") + ("-keyed" if key else "")
+                    baseline, port = self.orders(label + "-a", "intra_org", key=key, **before)
+                    current, _ = self.orders(label + "-b", "intra_org", key=key, port=port, **after)
+                    records = [json.loads(path.read_text(encoding="utf-8"))["results"][0]
+                               for path in (baseline, current)]
+                    self.assertEqual([record["verdict"] for record in records], ["CONFIRMED", "SECURE"])
+                    for field in ("target_url", "visitor_self_url"):
+                        self.assertEqual(records[0]["evidence"][field], records[1]["evidence"][field])
+                    accounts_only = self.finding(self.diff(baseline, current, "--assume-same-identities"))
+                    every_flag = self.diff(baseline, current, "--assume-same-target", *UNKEYED_FLAGS)
+                    if key is None:
+                        # Stating the same accounts says nothing about the configuration.
+                        self.assertEqual((accounts_only["status"], accounts_only["reasons"]),
+                                         ("not_comparable", ["configuration_unverified"]))
+                        # Stating both is the caller's claim, and every conclusion says so.
+                        stated = self.finding(every_flag)
+                        self.assertEqual((stated["status"], stated["assumptions"]),
+                                         ("resolved", ["same_identities", "same_configuration"]))
+                    else:
+                        # With fingerprints the change is detected, and no assumption overrides it.
+                        for issue in (accounts_only, self.finding(every_flag)):
+                            self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", [detected]))
+                        self.assertEqual(every_flag["comparability"]["assumptions"], [])
 
     def test_two_services_on_one_host_are_another_target(self):
         vulnerable, first_port = self.orders("vulnerable-service", "intra_org")
@@ -2043,6 +2276,53 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(self.finding(comparison, "BOPLA", subject)["status"], "resolved")
         self.assertEqual(comparison["comparability"]["basis"], "declared")
 
+    def test_a_field_policy_elsewhere_removes_request_urls_without_blocking_a_fix(self):
+        """Request URLs are details a report may omit; the request count is not."""
+        spec = {"openapi": "3.0.3", "info": {"title": "shop", "version": "1"},
+                "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
+                "security": [{"bearer": []}],
+                "paths": {"/orders/{orderId}": {"get": {"operationId": "getOrder",
+                                                        "responses": {"200": {"description": "ok"}},
+                                                        "parameters": [{"name": "orderId", "in": "path",
+                                                                        "required": True,
+                                                                        "schema": {"type": "integer"}}]}},
+                          "/documents/{id}": {"get": {"operationId": "getDocument",
+                                                      "responses": {"200": {"description": "ok"}},
+                                                      "parameters": [{"name": "id", "in": "path", "required": True,
+                                                                      "schema": {"type": "string"}}]}}}}
+        config: Dict[str, Any] = {
+            "identities": {"owner": {"id": "1", "token": "Bearer owner-test", "parameters": {"id": "1001"}},
+                           "visitor": {"id": "2", "token": "Bearer visitor-test", "parameters": {"id": "1002"}},
+                           "anonymous": {}},
+            "parameter_values": {"GET /orders/{orderId}": {"owner": {"orderId": 11}, "visitor": {"orderId": 22}}}}
+        field_rule = {"rule_id": "owner-note", "path": "private_note", "baseline_representation": "full_private_value",
+                      "value_is_resource_specific": True,
+                      "access": {"owner": "allow", "visitor": "deny", "anonymous": "deny"}}
+        with_policy = dict(config, bola={self.DOCUMENT: {"expected_visitor_access": "allow"}}, bopla={self.DOCUMENT: {
+            "policy_id": "document-fields-v1", "context_id": "selected-owner-document",
+            "resource_binding": {"id": "1001"}, "fields": [field_rule]}})
+        _ShopApi.fixed = False
+        vulnerable, port = self.scan("shop-before", _ShopApi, spec, config)
+        _ShopApi.fixed = True
+        fixed, _ = self.scan("shop-after", _ShopApi, spec, with_policy, port=port)
+        orders = [next(item for item in json.loads(path.read_text(encoding="utf-8"))["results"]
+                       if item["endpoint"] == self.ORDER) for path in (vulnerable, fixed)]
+        self.assertEqual([item["verdict"] for item in orders], ["CONFIRMED", "SECURE"])
+        self.assertTrue(orders[0]["evidence"]["target_url"])
+        self.assertFalse(orders[1]["evidence"].get("target_url"))
+        self.assertGreaterEqual(orders[1]["evidence"]["requests_attempted"], 1)
+        comparison = self.diff(vulnerable, fixed)
+        self.assertEqual(self.finding(comparison)["status"], "resolved")
+        self.assertEqual(comparison["comparability"]["operation_changes"],
+                         [{"operation": self.DOCUMENT, "reasons": ["policy_changed"]}])
+        # Without fingerprints, nothing else shows that the orders requests used the same resources.
+        _ShopApi.fixed = False
+        unkeyed_before, unkeyed_port = self.scan("shop-plain-before", _ShopApi, spec, config, key=None)
+        _ShopApi.fixed = True
+        unkeyed_after, _ = self.scan("shop-plain-after", _ShopApi, spec, with_policy, key=None, port=unkeyed_port)
+        issue = self.finding(self.diff(unkeyed_before, unkeyed_after, "--assume-same-target", *UNKEYED_FLAGS))
+        self.assertEqual((issue["status"], issue["reasons"]), ("not_comparable", ["scope_unknown"]))
+
     # --- the built-in demo, an earlier release and the key itself -----------------------------------
 
     def test_demo_runs_and_a_v271_report_need_explicit_assumptions(self):
@@ -2061,14 +2341,15 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual((comparison["comparability"]["basis"], comparison["comparability"]["assumptions"]),
                          ("declared", ["same_target"]))
         self.assertFalse(comparison["comparability"]["fully_comparable"])
-        # A report from 2.7.1 has no context: nothing is concluded without both assumptions.
+        # A report from 2.7.1 has no context: nothing is concluded without all three assumptions.
         sample = ROOT / "examples" / "sample_result.json"
-        for flags in ([], ["--assume-same-target"], ["--assume-same-identities"]):
+        for flags in ([], ["--assume-same-target"], ["--assume-same-target", "--assume-same-identities"],
+                      ["--assume-same-target", "--assume-same-configuration"]):
             with self.subTest(flags=flags):
                 legacy = self.diff(sample, runs[1], *flags)
                 self.assertEqual(legacy["comparability"]["basis"], "evidence")
                 self.assertEqual([legacy["summary"][name] for name in CONCLUSIONS], [0, 0, 0])
-        legacy = self.diff(sample, runs[1], "--assume-same-target", "--assume-same-identities")
+        legacy = self.diff(sample, runs[1], "--assume-same-target", *UNKEYED_FLAGS)
         self.assertEqual(legacy["summary"]["persisting"], 2)
         self.assertEqual(legacy["summary"]["relying_on_assumptions"], 2)
         self.assertEqual((legacy["baseline"]["tool_version"], legacy["baseline"]["context"]), ("2.7.1", "absent"))
