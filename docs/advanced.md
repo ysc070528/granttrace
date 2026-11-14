@@ -122,6 +122,105 @@ granttrace --spec your-openapi.yaml --target https://authorized-test.example \
 
 路径显示继续脱敏并转义控制字符，避免文件名伪造日志行。NEXT 命令遇到控制字符时用 `<PATH_WITH_CONTROL_CHARACTERS>` 替代该参数；路径包含被识别为凭据、需要脱敏的片段时，用 `<PATH_REQUIRING_MANUAL_INPUT>` 替代。占位路径和 `<AUTHORIZED_TARGET_URL>` 都需先按实际位置与授权范围手工补全；不能直接当作真实路径或目标执行。
 
+## 对比两次扫描（granttrace diff）
+
+```bash
+granttrace diff baseline.json current.json --export-json comparison.json
+```
+
+离线读取两份由 `--export-json` 或 `granttrace demo` 生成的扫描报告（`report_schema_version` 2），不发送任何网络请求。确认漏洞按稳定的 Finding ID 对应，分为四类：
+
+| 状态 | 含义 |
+|---|---|
+| `new` | 当前为 CONFIRMED；基线中同一检查、同一主体为 SECURE / PUBLIC / AUTHORIZED（基线确认无漏洞，当前确认有漏洞） |
+| `persisting` | 两份报告都为 CONFIRMED |
+| `resolved` | 基线为 CONFIRMED；当前同一检查、同一主体为 SECURE / PUBLIC / AUTHORIZED |
+| `not_comparable` | 无法得出以上结论，附原因代码 |
+
+**核心规则：** 只有在两份报告被证明针对同一目标、同一组测试身份，并且该操作的规范定义、策略和资源都没有变化时，才给出 `new`、`persisting` 或 `resolved`。证明不了的部分，要么由你用命令行参数明确声明为假设，要么结论就是 `not_comparable`。`resolved` 的含义是「在相同配置下不再复现」，不是「已证明修复」。
+
+SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或缺失的结果**永远不算已修复**。同一漏洞有多条记录时，只要有一条 CONFIRMED 就按 CONFIRMED 处理，只要有一条不是确定结论就不算已修复。基线没有检查过的操作或检查上出现的确认漏洞是**首次发现**，不是已证明的回归，不计入 `new`；JSON 的 `summary.current_confirmed_not_comparable` 统计当前已确认、但没有可比基线证据的漏洞，以免它们被忽略。
+
+Finding ID 形如 `gtf_` 加 16 位十六进制，由检查类型、操作模板（如 `GET /api/users/{id}`）和主体（BOPLA 的字段规则与身份、RBAC 的角色、Mass Assignment 的字段）计算，与目标地址、端口、时间、具体资源值和请求标识无关。ID 只用于对应，是否可比较另行判断。
+
+### 让两次扫描可以被验证
+
+在两次扫描中设置同一个比较密钥，并给 `identities` 里的 owner、visitor 和每个角色填写账号 `id`：
+
+```bash
+export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+密钥至少 32 个字符，不能是重复的简单模式，像密码一样保管，不要写进配置文件或报告。不合格的密钥会让扫描在发送任何请求前以退出码 `2` 结束，错误信息不回显密钥。
+
+设置后，JSON 报告增加 `comparison_context`，里面只有带密钥的指纹（PBKDF2 派生密钥后的 HMAC-SHA256，截断为 16 位十六进制）和一个用来识别是否同一密钥的 `key_id`：
+
+| 指纹 | 覆盖内容 |
+|---|---|
+| `target` | 协议、主机、端口、基础路径 |
+| `identities` | 每个身份（含 anonymous 和角色）的 `id`、`role`、`parameters`、header 名称及非凭据的值、`auth_header_names`、角色的请求体 |
+| `credentials` | 所有凭据合并计算的一个指纹（token、身份 header 的值、配置中含已知凭据的值） |
+| `operations` | 每个操作在 OpenAPI 规范中的定义（参数、安全要求、请求体、安全方案）、`bola` / `bopla` / `readbacks` 策略与写允许清单、`parameter_values` |
+
+`diff` 只比较指纹，不需要密钥。没有密钥的人无法用枚举短 ID、资源值或目标地址的方式反推它们；BOPLA 报告也不会因此写入目标地址。`key_id` 不泄露密钥，但能让人看出两份报告使用了同一个密钥。密钥强度由你保证：派生会让每次猜测的代价提高约 20 万倍，但仍然挡不住对弱口令的离线字典攻击，所以请使用随机生成的密钥。token、cookie 和 header 的值本身从不写入：身份指纹在计算前先遮盖凭据，所以轮换凭据不会被当成「换了身份」；凭据只进入合并的 `credentials` 指纹，它是所有凭据的单一摘要，不能用来单独验证对某一个凭据的猜测。
+
+### 默认不可比较的情况与显式假设
+
+| 情况 | 原因代码 | 处理 |
+|---|---|---|
+| 目标的协议、主机、**端口**或基础路径不同 | `target_changed` | 确认是同一套部署时加 `--assume-same-target` |
+| 目标无法识别（例如 BOPLA 报告隐藏了目标且没有密钥） | `target_unknown` | 设置密钥，或加 `--assume-same-target` |
+| 没有密钥、两次密钥不同、身份没有填 `id`，或凭据发生了变化 | `identities_unverified` | 设置密钥并填写 `id`；确认是同一批账号时加 `--assume-same-identities` |
+| 身份的声明内容变化（`id`、`role`、参数、非凭据 header、角色增减） | `identities_changed` | 不可覆盖 |
+| 可能是确认漏洞的结果记录无法解析 | `unreadable_results` | 不可覆盖 |
+
+端口默认属于目标：同一主机的不同端口可能是不同的服务，只有省略的默认端口与显式写出的相同（`http://host` 等于 `http://host:80`）。本地服务每次重启使用新端口（例如 `granttrace demo`）时，需要 `--assume-same-target`。
+
+凭据变化时，「轮换了同一账号的凭据」和「换成了另一个账号的凭据」从外部无法区分，所以默认不可比较；如果你只是轮换了凭据，用 `--assume-same-identities` 声明。2.7.1 及更早的报告没有 `comparison_context`，同样需要这个声明。
+
+两个假设参数必须完整拼写，只解除各自对应的条件，不会覆盖任何已检测到的变化。使用后会以 `same_target`、`same_identities` 记录在 `comparability.assumptions`，每一条依赖它的结论也带有 `assumptions` 字段，终端输出标注 `[assumed: ...]`，并且整次比较不会被标为完全可比。只在你确实知道时使用。
+
+`comparability.notes` 还可能给出三种说明：`comparison_keys_differ`（两份报告的密钥不同，指纹未被采用）、`comparison_context_invalid`（上下文格式不合法、被截断或版本不受支持，未被采用）、`unreadable_results_ignored`（有无法解析、但不可能是确认漏洞的记录被忽略）。
+
+### 只影响单个操作的变化
+
+| 原因代码 | 含义 |
+|---|---|
+| `spec_changed` | 该操作在 OpenAPI 规范中的定义或安全方案变化 |
+| `policy_changed` | 该操作的 `bola`、`bopla`、`readbacks` 配置或写允许清单变化，或证据显示判定依据（是否要求认证、是否公开、预期访问）不同 |
+| `resources_changed` | 该操作的 `parameter_values` 变化，或证据中的请求路径、查询参数不同 |
+| `scope_unknown` | 没有密钥时，报告缺少可用来确认范围的请求路径 |
+| `context_incomplete` | `comparison_context` 缺少该操作的指纹 |
+
+即使指纹一致，证据中的请求路径和判定依据仍会被比较。这些变化记录在 `comparability.operation_changes`，只影响该操作的结论。
+
+### 针对单条结论的原因代码
+
+| 原因代码 | 含义 |
+|---|---|
+| `baseline_unverified` / `current_unverified` | 一方的结果是 SKIPPED、INCONCLUSIVE、ERROR、SUSPICIOUS 或未知判定 |
+| `not_checked_in_baseline` | 该操作在基线中存在，但这项检查或这个主体当时没有结果 |
+| `operation_not_in_baseline` | 该操作在基线中不存在，当前为首次发现 |
+| `missing_in_current` / `operation_not_in_current` | 当前报告没有这项检查、这个主体或这个操作 |
+| `subject_unknown` | 一条 CONFIRMED 记录读不出主体（字段、规则、身份或角色），无法与任何记录对应 |
+
+### fully_comparable 的含义和不能证明的事
+
+`comparability.fully_comparable` 只在以下条件全部成立时为 `true`：两份报告都有同一密钥的上下文；目标、身份声明和凭据指纹都未变化，且每个身份都有账号 `id`；没有任何操作的规范、策略或资源变化；两份报告由同一工具版本生成；所有结果记录都能解析；没有使用任何假设。
+
+指纹相等说明**声明的配置没有变化**，不等于报告可信，也不等于漏洞已经消失。每次比较的 `comparability.not_verified` 都会列出工具无法验证的两点：
+
+- `report_integrity`：报告没有签名。能修改报告文件的人可以改判定，也可以复制另一份报告的 `comparison_context`。`diff` 只保证格式不合法或被截断的上下文不会被采用。
+- `server_side_test_data`：两次扫描之间，测试账号在服务端的数据和权限可能已经变化（例如 visitor 被移出了某个组织）。这种情况下不再复现不代表其他账号也不受影响。
+
+覆盖率单独呈现，不改变漏洞状态：JSON 的 `coverage` 给出两份报告的覆盖率统计、`conclusive_lost`（基线有确定结论、当前没有的检查）和 `conclusive_gained`，覆盖率下降另行标记。
+
+### 输入和输出
+
+终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字；工具版本和生成时间只在格式合法时输出。JSON 文件只含 ASCII 字符，终端中来自报告的文字只输出可打印的 ASCII，其余转义，报告内容无法伪造终端输出。
+
+比较完成时退出码为 `0`，与是否有新增或不可比较的漏洞无关。以下情况为 `2`：输入不是合法 JSON、含重复的对象键、是 dry-run 计划或 SARIF、schema 不是 2、超过 64 MiB，或 `--export-json` 指向输入文件（包括符号链接和硬链接）。两份接近 64 MiB 的报告大约需要 1 GB 内存。
+
 ## SARIF 导出
 
 完成审计后可同时输出 HTML、JSON 与 SARIF：
