@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import secrets
 import shutil
 import socket
 import stat
@@ -226,6 +227,73 @@ def verify_yaml_plan(executable, directory, environment):
     return {"yaml_loaded": True, "requests_sent": 0, "writes_enabled": False}
 
 
+def verify_report_comparison(executable, directory, environment):
+    """Run the packaged `granttrace diff` on real demo reports: blocked, assumed, keyed and refused."""
+    def demo_report(folder):
+        reports = list((directory / folder).rglob("granttrace_report.json"))
+        require(len(reports) == 1, f"Expected exactly one demo JSON in {folder}; found {len(reports)}")
+        return reports[0]
+
+    def compare(*arguments):
+        output = directory / "comparison.json"
+        printed = run([executable, "diff", *arguments, "--export-json", output], directory, environment)
+        text = output.read_text(encoding="utf-8")
+        require(text.isascii(), "Comparison JSON is not plain ASCII")
+        return printed, json.loads(text)
+
+    active, readonly = demo_report("granttrace-demo"), demo_report("readonly")
+    # Two demo runs listen on different ports and carry no fingerprints: nothing may be concluded.
+    printed, blocked = compare(active, readonly)
+    require(
+        blocked["comparability"]["blocking"] == ["target_changed", "identities_unverified"]
+        and all(issue["status"] == "not_comparable" for issue in blocked["issues"])
+        and "NOT comparable for any finding" in printed and "--assume-same-target" in printed,
+        "Packaged diff compared reports of different targets and unverified accounts",
+    )
+    # With both assumptions stated, the BOLA finding persists; the PATCH finding was only skipped
+    # by the read-only run and must not count as fixed.
+    printed, assumed = compare(active, readonly, "--assume-same-target", "--assume-same-identities")
+    findings = {issue["check"]: (issue["status"], issue.get("reasons"), issue.get("assumptions"))
+                for issue in assumed["issues"]}
+    require(
+        findings == {"BOLA": ("persisting", None, ["same_target", "same_identities"]),
+                     "MASS_ASSIGNMENT": ("not_comparable", ["current_unverified"], None)}
+        and assumed["comparability"]["fully_comparable"] is False
+        and assumed["summary"]["resolved"] == 0 and "[assumed: same_target, same_identities]" in printed,
+        f"Packaged diff misclassified the demo findings: {findings}",
+    )
+    # Keyed fingerprints are computed and compared inside the package; the key is never written.
+    key = secrets.token_hex(32)
+    keyed_environment = dict(environment, GRANTTRACE_COMPARISON_KEY=key)
+    keyed = []
+    for folder in ("keyed-first", "keyed-second"):
+        run([executable, "demo", "--output-dir", folder], directory, keyed_environment)
+        text = demo_report(folder).read_text(encoding="utf-8")
+        context = json.loads(text).get("comparison_context") or {}
+        require(context.get("algorithm") == "pbkdf2-sha256-200000/hmac-sha256" and key not in text
+                and "127.0.0.1" not in json.dumps(context), "Packaged scan wrote an unexpected comparison context")
+        keyed.append(demo_report(folder))
+    _, moved = compare(*keyed)
+    _, same = compare(*keyed, "--assume-same-target")
+    require(
+        moved["comparability"]["basis"] == "declared" and moved["comparability"]["blocking"] == ["target_changed"]
+        and same["comparability"]["basis"] == "declared" and same["comparability"]["assumptions"] == ["same_target"]
+        and same["summary"]["persisting"] == 2 and same["comparability"]["fully_comparable"] is False,
+        "Packaged diff did not compare keyed demo reports by their fingerprints",
+    )
+    # A plan is not a scan report, and a weak key stops a run before it starts.
+    run([executable, "diff", active, directory / "portable-plan.json"], directory, environment, 2)
+    run([executable, "demo", "--output-dir", "weak-key"], directory,
+        dict(environment, GRANTTRACE_COMPARISON_KEY="short-key"), 2)
+    require(not (directory / "weak-key").exists(), "A demo ran with an unusable comparison key")
+    return {
+        "unverified_reports_not_compared": True, "assumptions_recorded_on_findings": True,
+        "skipped_result_not_counted_as_fixed": True, "keyed_basis": same["comparability"]["basis"],
+        "keyed_persisting_findings": same["summary"]["persisting"], "comparison_json_ascii_only": True,
+        "dry_run_plan_refused_exit_code": 2, "weak_comparison_key_refused_exit_code": 2,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--zip", type=Path, required=True, help="The already-built Windows portable ZIP")
@@ -261,6 +329,7 @@ def main():
             readonly = run([executable, "demo", "--read-only", "--output-dir", "readonly"], working, environment)
             readonly_result = verify_report(working / "readonly", True, readonly)
             yaml_result = verify_yaml_plan(executable, working, environment)
+            comparison_result = verify_report_comparison(executable, working, environment)
             launcher = run([cmd, "/d", "/c", "call", package / "Start-Demo.bat"], working, environment)
             launcher_result = verify_report(package / "granttrace-demo", False, launcher)
             remaining = package_processes(package)
@@ -269,6 +338,7 @@ def main():
                 "path_test": label, "extraction_path": str(package), "working_directory": str(working),
                 "version_output": version, "help_exit_code": 0,
                 "active_demo": active_result, "readonly_demo": readonly_result, "yaml_plan": yaml_result,
+                "report_comparison": comparison_result,
                 "start_demo_bat": launcher_result, "package_processes_remaining": remaining,
             })
         missing = outside / "missing exe 错误路径"
