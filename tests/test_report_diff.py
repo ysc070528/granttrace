@@ -804,6 +804,15 @@ class ComparabilityTests(unittest.TestCase):
             "baseline_verdicts": ["SKIPPED"], "current_verdicts": ["SECURE"]}])
         # A lost check counts even when the percentage went up.
         self.assertTrue(coverage(50.0, 100.0, "SECURE", "ERROR")["decreased"])
+        # Lost and gained checks are listed by operation, then check, then subject.
+        checks = ("BROKEN_AUTH", "BOLA", "BFLA", "RBAC")
+        listed = compare_reports(
+            keyed([result(check, operation, "SECURE", rbac_role="viewer") for operation in (OTHER, OP)
+                   for check in checks]),
+            keyed([result(check, operation, "SKIPPED", rbac_role="viewer") for check in checks
+                   for operation in (OP, OTHER)]))
+        self.assertEqual([(item["operation"], item["check"]) for item in listed["coverage"]["conclusive_lost"]],
+                         [(operation, check) for operation in (OP, OTHER) for check in sorted(checks)])
         moved = compare_reports(keyed([bola("SECURE"), bola("SECURE", OTHER)]),
                                 keyed([bola("SECURE"), bola("SECURE", THIRD), bola("SECURE", PATCH_OP)]))
         self.assertEqual((moved["coverage"]["operations_added"], moved["coverage"]["operations_removed"]), (2, 1))
