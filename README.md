@@ -146,6 +146,13 @@ needs.
   test accounts and configuration (set `GRANTTRACE_COMPARISON_KEY` for both
   scans), or when you state that explicitly. See
   [comparing scans](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#对比两次扫描granttrace-diff).
+- **Security gate for CI** (`granttrace diff ... --fail-on-new
+  --fail-on-coverage-decrease`): stops a pipeline on new confirmed findings, a
+  decrease in conclusive coverage or, optionally, findings that cannot be
+  compared. Exit 1 means a regression was found, 3 that the gate could not
+  verify; results that are not comparable or rely on assumptions never pass.
+  `--github-actions` adds annotations and a step summary. See the
+  [CI security gate](https://github.com/ysc070528/granttrace/blob/main/docs/ci-gate.md).
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-finding.png" alt="A confirmed BOLA finding with remediation, retest steps, a cURL template and redacted evidence" width="700">
 
@@ -164,6 +171,7 @@ described in [SECURITY.md](https://github.com/ysc070528/granttrace/blob/main/SEC
 
 - [Configuration guide](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md) (Chinese)
 - [Command line, outputs and SARIF](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md) (Chinese)
+- [Security regression gate in CI](https://github.com/ysc070528/granttrace/blob/main/docs/ci-gate.md)
 - [Parameter serialization](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md) (Chinese)
 - [Property-level checks (BOPLA)](https://github.com/ysc070528/granttrace/blob/main/docs/bopla-readonly.md) (Chinese)
 - [Remote `$ref` resolution](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)

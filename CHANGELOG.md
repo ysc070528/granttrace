@@ -27,9 +27,31 @@
     never override a detected change, and are recorded on the comparison and
     on every finding that relies on them.
   - The output holds identifiers, verdicts and reason codes only, as ASCII:
-    no evidence, response data or free text from the reports. The command
+    no evidence, response data or free text from the reports. Terminal output
+    escapes the markers a CI runner reads as workflow commands (`##[` as
+    `##\u005b`, a leading `::` as `\u003a:`), so that a role or field name in a
+    report cannot set a step output, add an annotation or stop command
+    processing in GitHub Actions; the JSON keeps the values exactly. The command
     exits 0 when the comparison completes and 2 for invalid input; existing
     scan exit codes are unchanged.
+- An optional security gate for CI on `granttrace diff`: `--fail-on-new`,
+  `--fail-on-coverage-decrease` and `--fail-on-not-comparable` exit 1 for a
+  regression shown by comparable reports and 3 when the gate cannot verify an
+  enabled condition. Without these options `diff` behaves as before.
+  - The gate fails closed. It never passes on a blocked comparison, on a
+    current report without any conclusive result, or on conclusions that rely
+    on `--assume-*` statements unless `--gate-allow-assumptions` admits them;
+    such a result is labelled as relying on assumptions. `--fail-on-new` also
+    stays unverified for a confirmed finding not shown to be in the baseline,
+    for a check verified safe in the baseline that is no longer conclusive,
+    and for access newly accepted as PUBLIC or AUTHORIZED after the
+    operation's specification, policy or resources changed.
+  - `--github-actions` writes annotations and a Markdown step summary. Report
+    text in the log is wrapped in `stop-commands` and escaped, so it cannot run
+    as a workflow command or add markup to the summary.
+  - The comparison JSON gains a `gate` object when a `--fail-on-*` option is
+    used. See `docs/ci-gate.md` and the example workflow in
+    `examples/github-actions/`.
 - With `GRANTTRACE_COMPARISON_KEY` set (at least 32 random characters), scan
   and demo JSON reports include `comparison_context`: keyed fingerprints
   (HMAC-SHA256 under a PBKDF2-derived key) of the target, the test identities,

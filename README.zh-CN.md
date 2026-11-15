@@ -115,6 +115,10 @@ granttrace --spec openapi.yaml --config config.local.json \
   只有能证明两次扫描使用相同目标、测试账号和配置时才给出结论（两次扫描设置同一个
   `GRANTTRACE_COMPARISON_KEY`），否则需要你明确声明。
   详见 [对比两次扫描](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#对比两次扫描granttrace-diff)。
+- **CI 安全门禁**（`granttrace diff ... --fail-on-new --fail-on-coverage-decrease`）：在出现新增确认漏洞、
+  确定性覆盖率下降，或（可选）无法比较的漏洞时阻断流水线。退出码 `1` 表示发现回归，`3` 表示无法核实；
+  不可比较或依赖假设的结果永远不会被当作通过。`--github-actions` 输出注解和步骤摘要。
+  详见 [CI 安全回归门禁](https://github.com/ysc070528/granttrace/blob/main/docs/ci-gate.zh-CN.md)。
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-finding.png" alt="一个确认的 BOLA 漏洞：修复方向、复验步骤、cURL 模板和脱敏证据" width="700">
 
@@ -130,6 +134,7 @@ GrantTrace 自身的漏洞请按 [SECURITY.md](https://github.com/ysc070528/gran
 
 - [配置指南](https://github.com/ysc070528/granttrace/blob/main/docs/configuration.md)
 - [命令行、输出与 SARIF](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md)
+- [CI 安全回归门禁](https://github.com/ysc070528/granttrace/blob/main/docs/ci-gate.zh-CN.md)
 - [参数序列化规则](https://github.com/ysc070528/granttrace/blob/main/docs/parameter-serialization.md)
 - [字段级授权检查（BOPLA）](https://github.com/ysc070528/granttrace/blob/main/docs/bopla-readonly.md)
 - [远程 `$ref` 解析](https://github.com/ysc070528/granttrace/blob/main/docs/remote-references.md)（英文）
