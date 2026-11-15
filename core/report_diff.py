@@ -70,7 +70,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 from urllib.parse import urlsplit
 
 from core import __version__
@@ -610,6 +610,33 @@ class _Index:
         return self.entries.get((key[0], key[1], None))
 
 
+class ResultState(NamedTuple):
+    """The verdicts one report holds for a check, operation and subject, under the comparison rules.
+
+    ``resources`` and ``policy`` are what the evidence shows of the requests and
+    of the rule the verdict was judged by; compare_reports compares them for
+    findings.
+    """
+
+    verdicts: FrozenSet[str]
+    confirmed: bool
+    conclusive: bool
+    conclusive_negative: bool
+    resources: FrozenSet[Tuple[Tuple[str, str], ...]]
+    policy: FrozenSet[Tuple[Tuple[str, str], ...]]
+
+
+def result_states(report: Mapping[str, Any]) -> Dict[Key, ResultState]:
+    """Every check result of a validated report, keyed as compare_reports keys findings.
+
+    A verdict that no request supports is neither conclusive nor conclusive
+    negative, as in compare_reports; records that cannot be read are left out.
+    """
+    return {key: ResultState(frozenset(entry.verdicts), entry.confirmed, entry.conclusive,
+                             entry.conclusive_negative, frozenset(entry.resources), frozenset(entry.policy))
+            for key, entry in _Index(report).entries.items()}
+
+
 # ---------------------------------------------------------------------------
 # Comparison
 
@@ -1102,7 +1129,9 @@ def _build_parser() -> argparse.ArgumentParser:
                 "scans and give every test identity an account id, so that the reports carry keyed fingerprints "
                 "of target, identities, specification, policy and resources and diff can verify that the declared "
                 "configuration is unchanged. Otherwise findings are not comparable unless you state the "
-                "assumptions below; each one covers only what it names."),
+                "assumptions below; each one covers only what it names. Exit codes: 0 when the comparison is done "
+                "and 2 for invalid input; with a --fail-on option, 0 when the gate passed, 1 when a regression was "
+                "found and 3 when the gate could not be verified."),
     )
     parser.add_argument("baseline", metavar="BASELINE.json", help="Earlier GrantTrace JSON report (--export-json)")
     parser.add_argument("current", metavar="CURRENT.json", help="Later GrantTrace JSON report (--export-json)")
@@ -1122,25 +1151,65 @@ def _build_parser() -> argparse.ArgumentParser:
                               "although the reports cannot show it (no comparison key or different keys). It says "
                               "nothing about the test accounts and never overrides a change the evidence shows. "
                               "Recorded in the output; use it only when you know it is true"))
+    gate = parser.add_argument_group(
+        "optional security gate",
+        "Decide whether a pipeline may continue. The gate fails closed: results that are not comparable, lack "
+        "evidence or rely on assumptions never count as verified. A pass does not show that the API is secure.")
+    gate.add_argument("--fail-on-new", action="store_true",
+                      help=("Exit 1 when a confirmed finding is new. Exit 3 when a confirmed finding cannot be shown "
+                            "to be present in the baseline, or a check the baseline verified as not vulnerable is "
+                            "no longer conclusive or is now accepted after its declarations changed"))
+    gate.add_argument("--fail-on-coverage-decrease", action="store_true",
+                      help="Exit 1 when conclusive coverage decreased; exit 3 when the reports are not comparable")
+    gate.add_argument("--fail-on-not-comparable", action="store_true",
+                      help="Exit 3 when any confirmed finding, in either report, is not comparable")
+    gate.add_argument("--gate-allow-assumptions", action="store_true",
+                      help=("Let conclusions that rely on --assume-* statements decide the gate; the result is then "
+                            "labelled as relying on them. Without it they keep the gate from passing (exit 3)"))
+    gate.add_argument("--github-actions", action="store_true",
+                      help=("Write GitHub Actions annotations for the gate and a Markdown summary to "
+                            "$GITHUB_STEP_SUMMARY; report text in the log is kept from running as workflow commands"))
     return parser
 
 
-def _checked_output(path: str, inputs: Sequence[str]) -> Path:
+def _checked_output(path: str, inputs: Sequence[str], option: str = "--export-json") -> Path:
     if not path.strip() or any(ord(character) < 32 or ord(character) == 127 for character in path):
-        raise ReportError("--export-json requires a non-empty path without control characters")
+        raise ReportError(f"{option} requires a non-empty path without control characters")
     output = Path(path).expanduser().resolve()
     for source in inputs:
         candidate = Path(source).expanduser().resolve()
         if output == candidate or (output.exists() and candidate.exists() and output.samefile(candidate)):
-            raise ReportError("--export-json must not overwrite an input report")
+            raise ReportError(f"{option} must not overwrite an input report")
     return output
+
+
+def _write_text(path: Path, text: str, mode: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open(mode, encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def diff_main(argv: Sequence[str]) -> int:
     args = _build_parser().parse_args(list(argv))
+    # Imported here: the gate builds on this module.
+    from core import report_gate
+
+    conditions = [condition for condition, enabled in (
+        ("new", args.fail_on_new), ("coverage_decrease", args.fail_on_coverage_decrease),
+        ("not_comparable", args.fail_on_not_comparable)) if enabled]
+    if args.gate_allow_assumptions and not conditions:
+        print("[ERROR] --gate-allow-assumptions needs at least one --fail-on option", file=sys.stderr)
+        return 2
     try:
         output = (_checked_output(args.export_json, (args.baseline, args.current))
                   if args.export_json is not None else None)
+        step_summary: Optional[Path] = None
+        if args.github_actions and os.environ.get("GITHUB_STEP_SUMMARY", "").strip():
+            step_summary = _checked_output(os.environ["GITHUB_STEP_SUMMARY"], (args.baseline, args.current),
+                                           "GITHUB_STEP_SUMMARY")
+            if output is not None and (step_summary == output or (
+                    output.exists() and step_summary.exists() and output.samefile(step_summary))):
+                raise ReportError("--export-json must not be the GitHub step summary file")
         reports = []
         for label, path in (("baseline", args.baseline), ("current", args.current)):
             try:
@@ -1152,18 +1221,61 @@ def diff_main(argv: Sequence[str]) -> int:
                                      assume_same_configuration=args.assume_same_configuration)
     except ReportError as exc:
         print(f"[ERROR] {_printable(exc)}", file=sys.stderr)
+        if args.github_actions:
+            print("::error title=GrantTrace security gate::The comparison could not be completed (exit 2); "
+                  "see the log.")
         return 2
+    gate: Optional[Dict[str, Any]] = None
+    if conditions:
+        gate = report_gate.evaluate_gate(comparison, result_states(reports[0]), result_states(reports[1]),
+                                         conditions=conditions, allow_assumptions=args.gate_allow_assumptions)
+        comparison["gate"] = gate
+    token = report_gate.stop_commands_token() if args.github_actions else None
+    if token is not None:
+        # Nothing printed until the token is repeated runs as a GitHub workflow command.
+        print(f"::stop-commands::{token}")
+    try:
+        written = _print_and_write(comparison, gate, output, step_summary, args.github_actions)
+    finally:
+        if token is not None:
+            print(f"::{token}::")
+    if not written:
+        if args.github_actions:
+            print("::error title=GrantTrace security gate::An output could not be written (exit 2); see the log.")
+        return 2
+    if gate is None:
+        return 0
+    if args.github_actions:
+        for line in report_gate.github_annotations(gate):
+            print(line)
+    return int(gate["exit_code"])
+
+
+def _print_and_write(comparison: Mapping[str, Any], gate: Optional[Mapping[str, Any]], output: Optional[Path],
+                     step_summary: Optional[Path], github_actions: bool) -> bool:
+    """Print the summary and write the requested files; False when a file cannot be written."""
+    from core import report_gate
+
     for line in summary_lines(comparison):
         print(line)
+    if gate is not None:
+        for line in report_gate.gate_lines(gate):
+            print(line)
     if output is not None:
         try:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            with output.open("w", encoding="utf-8") as handle:
-                # ASCII only: no bidirectional or other invisible characters reach a viewer of the file.
-                json.dump(comparison, handle, indent=2, ensure_ascii=True, allow_nan=False)
-                handle.write("\n")
+            # ASCII only: no bidirectional or other invisible characters reach a viewer of the file.
+            _write_text(output, json.dumps(comparison, indent=2, ensure_ascii=True, allow_nan=False) + "\n", "w")
         except OSError as exc:
             print(f"[ERROR] cannot write comparison JSON ({type(exc).__name__})", file=sys.stderr)
-            return 2
+            return False
         print(f"[OK] Comparison JSON: {_printable(output)}")
-    return 0
+    if github_actions:
+        if step_summary is None:
+            print("[NOTE] GITHUB_STEP_SUMMARY is not set; no step summary was written", file=sys.stderr)
+        else:
+            try:
+                _write_text(step_summary, report_gate.github_step_summary(comparison, gate), "a")
+            except OSError as exc:
+                print(f"[ERROR] cannot write the GitHub step summary ({type(exc).__name__})", file=sys.stderr)
+                return False
+    return True

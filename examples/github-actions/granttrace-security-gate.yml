@@ -1,0 +1,125 @@
+# GrantTrace security regression gate for pull requests: an example.
+#
+# Copy this file to .github/workflows/ in your repository and replace the steps
+# marked REPLACE. The job scans the base branch and the pull request against a
+# test service it starts on 127.0.0.1, then compares the two reports offline:
+#
+#   exit 0  passed: no new confirmed finding and no coverage decrease
+#   exit 1  a regression was found
+#   exit 2  invalid input or options, or an output could not be written
+#   exit 3  the gate could not be verified; the step summary says why
+#
+# Every non-zero exit fails the job. A pass does not show that the API is secure.
+#
+# Before you use it:
+# * Add the repository secret GRANTTRACE_COMPARISON_KEY with 64 random hex
+#   characters: python -c "import secrets; print(secrets.token_hex(32))".
+#   Pull requests from forks receive no secrets: their scans cannot be shown to
+#   be comparable, and the gate exits 3.
+# * Keep the GrantTrace configuration (test identities, policies, resource
+#   values) on the base branch. Both scans read it from there, so a pull request
+#   cannot change the rules it is judged by. Test accounts belong to the test
+#   service; if they are real credentials, write the configuration from a secret
+#   at run time and never commit it.
+# * Code from the pull request runs on this runner. Run the service in a
+#   container without the workspace mounted, give the comparison key only to
+#   the scan steps, and require approval for workflows from outside
+#   contributors.
+# * A pull request can edit this workflow. Make the job a required status check
+#   and protect .github/ with code owner review.
+# * Keep the trigger pull_request. pull_request_target would run code from the
+#   pull request with access to the secret.
+
+name: GrantTrace security gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: granttrace-security-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Check out the pull request
+        uses: actions/checkout@v7
+        with:
+          path: head
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install GrantTrace
+        # Pin the release you reviewed; the gate needs a release that includes it.
+        run: python -m pip install "granttrace==2.8.0"
+
+      - name: Start the base version of the API
+        working-directory: base
+        # REPLACE: build and start this version on 127.0.0.1:8080, then wait until it answers.
+        run: |
+          docker build --tag api-under-test:base .
+          docker run --detach --name api-under-test --publish 127.0.0.1:8080:8080 api-under-test:base
+          curl --silent --show-error --retry 30 --retry-connrefused --retry-delay 2 --output /dev/null \
+            http://127.0.0.1:8080/
+
+      - name: Scan the base version
+        env:
+          GRANTTRACE_COMPARISON_KEY: ${{ secrets.GRANTTRACE_COMPARISON_KEY }}
+        run: >
+          granttrace --spec base/openapi.yaml --config base/granttrace.config.json
+          --target http://127.0.0.1:8080
+          --export-json "$RUNNER_TEMP/baseline.json" -o "$RUNNER_TEMP/baseline.html"
+
+      - name: Start the pull request version of the API
+        working-directory: head
+        # REPLACE: as above, for the pull request; same address and port.
+        run: |
+          docker rm --force api-under-test
+          docker build --tag api-under-test:head .
+          docker run --detach --name api-under-test --publish 127.0.0.1:8080:8080 api-under-test:head
+          curl --silent --show-error --retry 30 --retry-connrefused --retry-delay 2 --output /dev/null \
+            http://127.0.0.1:8080/
+
+      - name: Scan the pull request version
+        env:
+          GRANTTRACE_COMPARISON_KEY: ${{ secrets.GRANTTRACE_COMPARISON_KEY }}
+        # The specification comes from the pull request, the configuration from the base branch.
+        run: >
+          granttrace --spec head/openapi.yaml --config base/granttrace.config.json
+          --target http://127.0.0.1:8080
+          --export-json "$RUNNER_TEMP/current.json" -o "$RUNNER_TEMP/current.html"
+
+      - name: Security regression gate
+        # Add --fail-on-not-comparable to also stop on findings that cannot be compared.
+        run: >
+          granttrace diff "$RUNNER_TEMP/baseline.json" "$RUNNER_TEMP/current.json"
+          --fail-on-new --fail-on-coverage-decrease --github-actions
+          --export-json "$RUNNER_TEMP/comparison.json"
+
+      - name: Keep the comparison
+        # The comparison holds identifiers, verdicts and reason codes, no evidence. The scan reports
+        # hold evidence; keep them out of artifacts unless only trusted people can read them.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: granttrace-comparison
+          path: ${{ runner.temp }}/comparison.json
+          retention-days: 14
+          if-no-files-found: ignore
