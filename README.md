@@ -139,6 +139,13 @@ needs.
 - **JSON** (`--export-json`): every result with its evidence, for automation.
 - **SARIF 2.1.0** (`--export-sarif`): confirmed findings only, for GitHub code
   scanning. See [SARIF export](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#sarif-导出).
+- **Comparison** (`granttrace diff BASELINE.json CURRENT.json`): compares two
+  JSON reports offline and lists confirmed findings as new, persisting, resolved
+  or not comparable. A skipped or inconclusive result never counts as fixed.
+  Findings are only compared when both scans provably used the same target,
+  test accounts and configuration (set `GRANTTRACE_COMPARISON_KEY` for both
+  scans), or when you state that explicitly. See
+  [comparing scans](https://github.com/ysc070528/granttrace/blob/main/docs/advanced.md#对比两次扫描granttrace-diff).
 
 <img src="https://raw.githubusercontent.com/ysc070528/granttrace/main/docs/assets/report-finding.png" alt="A confirmed BOLA finding with remediation, retest steps, a cURL template and redacted evidence" width="700">
 
