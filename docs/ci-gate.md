@@ -133,14 +133,20 @@ Prefer the comparison key. In CI, keep it in a secret.
 
 ## GitHub Actions
 
+The GitHub Actions runner reads every line a step prints, on stdout and stderr,
+and runs `::command::` at the start of a line and the legacy `##[command]`
+anywhere in a line. A report's role and field names are free text, so the
+terminal output of `granttrace diff` escapes these markers in every mode, with
+or without `--github-actions`: `##[` is printed as `##\u005b`, and the first
+colon of `::` at the start of a line as `\u003a`. This is the only change to
+the printed text, and only text containing these markers is affected; JSON,
+step summaries and annotations keep the values exactly.
+
 `--github-actions` adds, on top of the normal output:
 
-- **Protected log.** Everything taken from the reports is printed between
-  `::stop-commands::` and its random token, so that no text in a report runs as
-  a workflow command. Without `--github-actions` the log is not protected:
-  report text such as a role or field name could be read by the runner as a
-  command (`##[...]` works anywhere in a line). Use `--github-actions` whenever
-  `granttrace diff` runs in GitHub Actions.
+- **A second guard for the log.** Everything taken from the reports is printed
+  between `::stop-commands::` and its random token, so the runner ignores
+  commands there even if a future change missed an escape.
 - **Annotations.** An error for each regression, a warning for each item that
   could not be verified, at most 9 of each, then one line with the result:
   error for failed or not verified, warning for a pass that relies on

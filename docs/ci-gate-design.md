@@ -124,7 +124,7 @@
 | R5 | 被测改动修改判定依据（规范 `security`、策略），把越权变成 PUBLIC / AUTHORIZED | 回归被「声明」掩盖 | `accepted_after_declaration_change`；文档要求配置取自受保护的基线分支 | 两次扫描都使用被篡改的配置时无法发现，需要配置来自可信来源 |
 | R6 | 基线不可信（报告未签名，伪造的基线把漏洞变成 `persisting`） | `--fail-on-new` 放行 | 文档要求基线由受信任的工作流产生，不从 PR 文件读取；建议同时使用 `--fail-on-vuln` | 报告完整性无法验证，`comparability.not_verified` 始终列出 |
 | R7 | PR 代码与门禁运行在同一个 runner 上，可修改报告文件 | 门禁被绕过 | 文档要求被测服务运行在容器中、不挂载工作区，密钥只给扫描步骤，外部贡献者的 PR 需审批后运行 | 无法在工具内消除 |
-| R8 | 报告文字注入 GitHub 工作流命令（行首 `::`；旧格式 `##[` 在行内任意位置有效，包括仍被处理的 `set-output`）或 Markdown | 伪造注解、篡改步骤输出、钓鱼链接 | `--github-actions` 用 `stop-commands` 包裹全部报告文字；注解与摘要转义 | **既有问题**：不加 `--github-actions` 时 `diff` 的默认输出不受保护，主体（字段、角色名）可含 `##[`。为不改变默认行为本次不修改，文档要求在 Actions 中使用 `--github-actions`，修复方案另行确认 |
+| R8 | 报告文字注入 GitHub 工作流命令（行首 `::`；旧格式 `##[` 在行内任意位置有效，包括仍被处理的 `set-output`）或 Markdown | 伪造注解、篡改步骤输出、钓鱼链接 | 终端输出在任何模式下转义 `##[` 和行首 `::`（`safe_log_line`）；`--github-actions` 另用 `stop-commands` 包裹全部报告文字；注解与摘要转义 | 已修复（合并前审查发现默认输出不受保护）。兼容性例外：含这两种标记的文字在终端中以 `\uXXXX` 形式显示，JSON 不变 |
 | R9 | 比较密钥泄露（fork PR 无法读取 secrets；`pull_request_target` 运行 PR 代码会泄露） | 指纹可被伪造 | 示例使用 `pull_request`、`permissions: contents: read`、`persist-credentials: false`，密钥只在扫描步骤；缺少密钥时门禁返回 `3` 而不是放行 | 使用者自行修改工作流 |
 | R10 | 输出过大 | 摘要被截断、注解不显示 | 注解每级 10 条，摘要 100 行，终端门禁条目 50 行，完整内容在 JSON | 无 |
 | R11 | Windows 与 Python 3.9 | 便携版不可用 | 不新增依赖；只用 3.9 可用的语法；输出全部为 ASCII；便携版验证脚本增加门禁步骤 | 无 |

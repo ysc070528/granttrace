@@ -55,7 +55,9 @@ not masked and is fingerprinted with the value it is configured in.
 
 The comparison output holds identifiers, verdicts and enumerated reason codes
 only: no evidence, response data, URLs, credentials or free text from the
-reports.
+reports. Terminal output is printable ASCII for text from a report, and never
+contains a marker that a CI runner reads as a workflow command (see
+safe_log_line); the JSON keeps the values exactly.
 """
 
 from __future__ import annotations
@@ -1010,6 +1012,30 @@ def _ascii(value: Any) -> str:
     return "".join(character if " " <= character <= "~" else f"\\u{ord(character):04x}" for character in str(value))
 
 
+# The start of a line, then whitespace other than a line break, then "::": a GitHub Actions workflow command.
+_LINE_COMMAND = re.compile(r"(\A|[\r\n])([^\S\r\n]*)::")
+
+
+def safe_log_line(line: str) -> str:
+    """Terminal output that a CI runner cannot read as a workflow command.
+
+    The GitHub Actions runner reads every line a step writes, on stdout and
+    stderr, and runs ``::command::`` at the start of a line (after leading
+    whitespace) and the legacy ``##[command]`` anywhere in a line. Text from a
+    report, such as an RBAC role or a field name, could otherwise set a step
+    output, add an annotation or stop command processing. ``##[`` is printed as
+    ``##\\u005b`` and the first colon of a leading ``::`` as ``\\u003a``, in the
+    notation used for other escaped characters. Anything else is returned
+    unchanged, and escaping twice changes nothing.
+    """
+    return _LINE_COMMAND.sub(r"\1\2\\u003a:", line.replace("##[", "##\\u005b"))
+
+
+def _emit(line: str, error: bool = False) -> None:
+    """Print one line of diff output, on stdout or stderr, through safe_log_line."""
+    print(safe_log_line(line), file=sys.stderr if error else sys.stdout)
+
+
 _NOTE_TEXT = {
     "comparison_keys_differ": "the reports were made with different comparison keys; keyed fingerprints "
                               "were not used",
@@ -1198,7 +1224,7 @@ def diff_main(argv: Sequence[str]) -> int:
         ("new", args.fail_on_new), ("coverage_decrease", args.fail_on_coverage_decrease),
         ("not_comparable", args.fail_on_not_comparable)) if enabled]
     if args.gate_allow_assumptions and not conditions:
-        print("[ERROR] --gate-allow-assumptions needs at least one --fail-on option", file=sys.stderr)
+        _emit("[ERROR] --gate-allow-assumptions needs at least one --fail-on option", error=True)
         return 2
     try:
         output = (_checked_output(args.export_json, (args.baseline, args.current))
@@ -1220,7 +1246,7 @@ def diff_main(argv: Sequence[str]) -> int:
                                      assume_same_identities=args.assume_same_identities,
                                      assume_same_configuration=args.assume_same_configuration)
     except ReportError as exc:
-        print(f"[ERROR] {_printable(exc)}", file=sys.stderr)
+        _emit(f"[ERROR] {_printable(exc)}", error=True)
         if args.github_actions:
             print("::error title=GrantTrace security gate::The comparison could not be completed (exit 2); "
                   "see the log.")
@@ -1257,25 +1283,25 @@ def _print_and_write(comparison: Mapping[str, Any], gate: Optional[Mapping[str, 
     from core import report_gate
 
     for line in summary_lines(comparison):
-        print(line)
+        _emit(line)
     if gate is not None:
         for line in report_gate.gate_lines(gate):
-            print(line)
+            _emit(line)
     if output is not None:
         try:
             # ASCII only: no bidirectional or other invisible characters reach a viewer of the file.
             _write_text(output, json.dumps(comparison, indent=2, ensure_ascii=True, allow_nan=False) + "\n", "w")
         except OSError as exc:
-            print(f"[ERROR] cannot write comparison JSON ({type(exc).__name__})", file=sys.stderr)
+            _emit(f"[ERROR] cannot write comparison JSON ({type(exc).__name__})", error=True)
             return False
-        print(f"[OK] Comparison JSON: {_printable(output)}")
+        _emit(f"[OK] Comparison JSON: {_printable(output)}")
     if github_actions:
         if step_summary is None:
-            print("[NOTE] GITHUB_STEP_SUMMARY is not set; no step summary was written", file=sys.stderr)
+            _emit("[NOTE] GITHUB_STEP_SUMMARY is not set; no step summary was written", error=True)
         else:
             try:
                 _write_text(step_summary, report_gate.github_step_summary(comparison, gate), "a")
             except OSError as exc:
-                print(f"[ERROR] cannot write the GitHub step summary ({type(exc).__name__})", file=sys.stderr)
+                _emit(f"[ERROR] cannot write the GitHub step summary ({type(exc).__name__})", error=True)
                 return False
     return True

@@ -116,12 +116,15 @@ exit "$code"
 
 ## GitHub Actions
 
+GitHub Actions 的 runner 会读取步骤打印的每一行（stdout 和 stderr），执行行首的 `::命令::` 和行内任意位置的旧格式
+`##[命令]`。报告中的角色名、字段名是自由文本，所以无论是否使用 `--github-actions`，`granttrace diff` 的终端输出都会转义
+这两种标记：`##[` 输出为 `##\u005b`，行首 `::` 的第一个冒号输出为 `\u003a`。这是对输出文字的唯一改动，只影响含有这些
+标记的文字；JSON、步骤摘要和注解保持原值。
+
 `--github-actions` 在正常输出之外增加：
 
-- **受保护的日志**：所有来自报告的内容都打印在 `::stop-commands::` 与其随机令牌之间，报告中的任何文字都不会被
-  当作工作流命令执行。不加 `--github-actions` 时日志不受保护：报告中的文字（例如角色名、字段名）可能被 runner
-  当作命令解析（旧格式 `##[...]` 在行内任意位置都有效）。在 GitHub Actions 中运行 `granttrace diff` 时，请始终加上
-  `--github-actions`。
+- **日志的第二道防护**：所有来自报告的内容都打印在 `::stop-commands::` 与其随机令牌之间，即使将来某处漏掉了转义，
+  runner 也不会执行其中的命令。
 - **注解**：每个回归一条 error，每个无法核实的条目一条 warning，各最多 9 条；最后一条给出结果：失败或无法核实为
   error，依赖假设的通过为 warning，已核实的通过为 notice。
 - **步骤摘要**：向 `$GITHUB_STEP_SUMMARY` 追加 Markdown 摘要：结果、各条件、最多 100 个条目。来自报告的文字经过编码，

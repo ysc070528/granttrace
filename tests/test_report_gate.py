@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from unittest.mock import patch
 
 import api_sentinel
+import github_runner
 import test_report_diff as diff_tests
 from core import report_gate
 from core.report_diff import compare_reports, finding_id, result_states, summary_lines
@@ -547,51 +548,9 @@ class CommandLineTests(unittest.TestCase):
 # GitHub Actions
 
 
-RUNNER_COMMANDS = {"set-output", "save-state", "add-mask", "add-path", "set-env", "add-matcher", "remove-matcher",
-                   "debug", "warning", "error", "notice", "group", "endgroup", "echo", "stop-commands",
-                   "internal-set-repo-path"}
-
-
-def _unescape(value: str) -> str:
-    return value.replace("%0D", "\r").replace("%0A", "\n").replace("%3A", ":").replace("%2C", ",").replace("%25", "%")
-
-
 def runner_commands(log: str) -> List[Tuple[str, str]]:
-    """The workflow commands the GitHub Actions runner would run for these log lines, as (command, data).
-
-    Follows the runner: a `::command::data` line after leading whitespace, the
-    legacy `##[command]data` anywhere in a line, and `::stop-commands::TOKEN`
-    until `::TOKEN::`.
-    """
-    executed: List[Tuple[str, str]] = []
-    token: Optional[str] = None
-    for line in log.splitlines():
-        registered = RUNNER_COMMANDS | ({token} if token else set())
-        command: Optional[Tuple[str, str]] = None
-        trimmed = line.lstrip()
-        if trimmed.startswith("::") and trimmed.find("::", 2) > 0:
-            end = trimmed.find("::", 2)
-            name = trimmed[2:end].split(" ", 1)[0]
-            if name in registered:
-                command = (name, _unescape(trimmed[end + 2:]))
-        if command is None and "##[" in line:
-            start = line.index("##[")
-            close = line.find("]", start)
-            if close > 0:
-                name = line[start + 3:close].split(" ", 1)[0]
-                if name in registered:
-                    command = (name, line[close + 1:])
-        if command is None:
-            continue
-        if token is not None:
-            if command[0].lower() == token.lower():
-                executed.append(("resume", ""))
-                token = None
-            continue
-        if command[0] == "stop-commands":
-            token = command[1]
-        executed.append(command)
-    return executed
+    """The workflow commands the GitHub Actions runner would run for this output, as (command, data)."""
+    return [(command.name, command.data) for command in github_runner.runner_commands(log)]
 
 
 HOSTILE = (
@@ -642,12 +601,12 @@ class GitHubActionsTests(unittest.TestCase):
         self.assertNotEqual(executed[0][1], again[0][1])
         self.assertRegex(executed[0][1], r"^granttrace-[0-9a-f]{32}$")
 
-    def test_the_default_output_is_not_protected_and_github_mode_is(self):
-        # Documented limitation of the unchanged default output: report text reaches the log as it is.
+    def test_the_default_output_is_inert_and_github_mode_adds_stop_commands(self):
         baseline, current = self.hostile_pair()
         old, new = write(self.folder, "baseline.json", baseline), write(self.folder, "current.json", current)
-        _, plain, _ = run_diff([old, new])
-        self.assertIn("set-output", [name for name, _ in runner_commands(plain)])
+        for options in ((), ("--fail-on-new",)):
+            _, plain, _ = run_diff([old, new, *options])
+            self.assertEqual(runner_commands(plain), [])
         _, protected, _ = run_diff([old, new, "--github-actions"])
         self.assertEqual([name for name, _ in runner_commands(protected)], ["stop-commands", "resume"])
 

@@ -220,7 +220,7 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 
 ### 输入和输出
 
-终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字；工具版本和生成时间只在格式合法时输出。JSON 文件只含 ASCII 字符，终端中来自报告的文字只输出可打印的 ASCII，其余转义，报告内容无法伪造终端输出。在 GitHub Actions 中运行时请加 `--github-actions`：runner 会把日志中的 `##[...]` 等文字当作工作流命令解析，这个参数让来自报告的文字只作为普通文本输出（见 [CI 安全回归门禁](ci-gate.zh-CN.md#github-actions)）。
+终端摘要，以及可选的 JSON（`comparison_schema_version` 1）。只包含 Finding ID、检查、操作模板、主体、判定和原因代码，不复制证据、响应、URL、凭据或报告中的说明文字；工具版本和生成时间只在格式合法时输出。JSON 文件只含 ASCII 字符，终端中来自报告的文字只输出可打印的 ASCII，其余转义，报告内容无法伪造终端输出。CI runner 会把日志中的工作流命令标记当作指令执行，因此终端输出中的 `##[` 写作 `##\u005b`，行首 `::` 的第一个冒号写作 `\u003a`；这是唯一的兼容性例外，只影响含有这些标记的文字，JSON 保持原值（见 [CI 安全回归门禁](ci-gate.zh-CN.md#github-actions)）。
 
 不加门禁参数时，比较完成即返回退出码 `0`，与是否有新增或不可比较的漏洞无关。要让 CI 在新增漏洞、覆盖率下降或无法比较时阻断，使用 `--fail-on-new`、`--fail-on-coverage-decrease`、`--fail-on-not-comparable`（退出码 `1` 表示发现回归，`3` 表示无法核实），见 [CI 安全回归门禁](ci-gate.zh-CN.md)。以下情况为 `2`：输入不是合法 JSON、含重复的对象键、是 dry-run 计划或 SARIF、schema 不是 2、超过 64 MiB，或 `--export-json` 指向输入文件（包括符号链接和硬链接）。两份接近 64 MiB 的报告大约需要 1 GB 内存。
 

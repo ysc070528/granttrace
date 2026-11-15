@@ -288,6 +288,7 @@ def verify_report_comparison(executable, directory, environment):
         "Packaged diff did not compare keyed demo reports by their fingerprints",
     )
     gate_result = verify_security_gate(executable, directory, environment, active, readonly, keyed)
+    log_result = verify_inert_log(executable, directory, environment)
     # A plan is not a scan report, and a weak key stops a run before it starts.
     run([executable, "diff", active, directory / "portable-plan.json"], directory, environment, 2)
     run([executable, "demo", "--output-dir", "weak-key"], directory,
@@ -299,8 +300,30 @@ def verify_report_comparison(executable, directory, environment):
         "skipped_result_not_counted_as_fixed": True, "keyed_basis": same["comparability"]["basis"],
         "keyed_persisting_findings": same["summary"]["persisting"], "comparison_json_ascii_only": True,
         "dry_run_plan_refused_exit_code": 2, "weak_comparison_key_refused_exit_code": 2,
-        "security_gate": gate_result,
+        "security_gate": gate_result, "workflow_command_markers_escaped": log_result,
     }
+
+
+def verify_inert_log(executable, directory, environment):
+    """Report text that looks like a GitHub Actions workflow command is printed escaped by the packaged diff."""
+    payload = "##[set-output name=gate;]passed"
+
+    def report(verdict):
+        return {"tool_version": "2.8.0", "report_schema_version": 2, "target": "http://127.0.0.1:8000", "stats": {},
+                "results": [{"endpoint": "GET /api/items/{id}", "check": "RBAC", "verdict": verdict,
+                             "evidence": {"rbac_role": payload, "requests_attempted": 3}}]}
+
+    paths = []
+    for name, verdict in (("inert-baseline.json", "SECURE"), ("inert-current.json", "CONFIRMED")):
+        (directory / name).write_text(json.dumps(report(verdict)), encoding="utf-8")
+        paths.append(directory / name)
+    codes = {}
+    for label, options, expected in (("default", [], 0), ("gate", ["--fail-on-new"], 3)):
+        printed = run([executable, "diff", *paths, *options], directory, environment, expected)
+        require("[role:##\\u005bset-output name=gate;]passed]" in printed and "##[" not in printed,
+                f"Packaged diff printed a workflow command marker from a report ({label})")
+        codes[label] = expected
+    return {"exit_codes": codes, "printed_as": "##\\u005b"}
 
 
 def verify_security_gate(executable, directory, environment, active, readonly, keyed):

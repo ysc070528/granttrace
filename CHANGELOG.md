@@ -27,7 +27,11 @@
     never override a detected change, and are recorded on the comparison and
     on every finding that relies on them.
   - The output holds identifiers, verdicts and reason codes only, as ASCII:
-    no evidence, response data or free text from the reports. The command
+    no evidence, response data or free text from the reports. Terminal output
+    escapes the markers a CI runner reads as workflow commands (`##[` as
+    `##\u005b`, a leading `::` as `\u003a:`), so that a role or field name in a
+    report cannot set a step output, add an annotation or stop command
+    processing in GitHub Actions; the JSON keeps the values exactly. The command
     exits 0 when the comparison completes and 2 for invalid input; existing
     scan exit codes are unchanged.
 - An optional security gate for CI on `granttrace diff`: `--fail-on-new`,
