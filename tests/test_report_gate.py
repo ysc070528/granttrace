@@ -154,6 +154,30 @@ class ConditionTests(unittest.TestCase):
                                keyed([result("BROKEN_AUTH", OP, after), anchor()], endpoints=spec), "new")
                 self.assertEqual(decided["exit_code"], 0)
 
+    def test_without_fingerprints_the_evidence_decides_whether_a_declaration_changed(self):
+        # Reports compared on stated assumptions: only the evidence can show what changed, and evidence
+        # without request URLs cannot show that nothing did.
+        def check(verdict: str, path: Optional[str]) -> Dict[str, Any]:
+            evidence = {"target_url": "http://127.0.0.1:8000" + path} if path else {}
+            return result("BROKEN_AUTH", OP, verdict, **evidence)
+        cases = {"no request URLs": (None, None, 3), "same request": ("/api/items/1", "/api/items/1", 0),
+                 "other request": ("/api/items/1", "/api/items/2", 3)}
+        for name, (before, after, expected) in cases.items():
+            with self.subTest(case=name):
+                decided = gate(report([check("SECURE", before), anchor()]), report([check("PUBLIC", after), anchor()]),
+                               "new", allow=True, **UNKEYED)
+                self.assertEqual(decided["exit_code"], expected)
+                if expected:
+                    self.assertEqual(reasons(decided, "new", "unverified"), ["accepted_after_declaration_change"])
+
+    def test_items_name_the_subject_of_a_check(self):
+        role = "role:auditor"
+        decided = gate(keyed([result("RBAC", OP, "SECURE", rbac_role="auditor"), anchor()]),
+                       keyed([result("RBAC", OP, "ERROR", rbac_role="auditor"), anchor()]), "new")
+        item = part(decided, "new")["unverified"][0]
+        self.assertEqual((item["reason"], item["subject"], item["finding_id"]),
+                         ("no_longer_verified", role, finding_id("RBAC", OP, role)))
+
     def test_coverage_decrease_fails_with_exit_1(self):
         stats = {"conclusive_coverage_pct": 80.0}
         decided = gate(keyed([bola("SECURE")], stats=stats),
@@ -677,6 +701,21 @@ class GitHubActionsTests(unittest.TestCase):
         self.assertTrue(text.startswith("## GrantTrace report comparison\n"))
         self.assertIn(f"| new | {finding_id('BOLA', OP)} | BOLA | GET /api/items/{{id}} | - | - |", text)
         self.assertEqual([name for name, _ in runner_commands(stdout)], ["stop-commands", "resume"])
+
+    def test_step_summary_lists_a_coverage_percentage_and_shortens_long_text(self):
+        long_role = "r" * 300
+        baseline = keyed([result("RBAC", OP, "SECURE", rbac_role=long_role), anchor()],
+                         stats={"conclusive_coverage_pct": 100.0})
+        current = keyed([result("RBAC", OP, "CONFIRMED", rbac_role=long_role), anchor()],
+                        stats={"conclusive_coverage_pct": 50.0})
+        code, _, _ = self.run_github(baseline, current, "--fail-on-new", "--fail-on-coverage-decrease")
+        self.assertEqual(code, 1)
+        text = self.summary.read_text(encoding="utf-8")
+        self.assertIn("- Conclusive coverage: 100.0% -> 50.0% (decreased)", text)
+        self.assertIn("| REGRESSION | coverage_decrease | coverage_pct_decreased | - | - | "
+                      "conclusive coverage 100.0% -> 50.0% | - |", text)
+        self.assertIn("| role&#58;" + "r" * 115 + "&#46;&#46;&#46; |", text)
+        self.assertNotIn("r" * 121, text)
 
     def test_step_summary_is_bounded(self):
         many = [result("BOLA", f"GET /api/item{index}/{{id}}", "SECURE") for index in range(150)]
