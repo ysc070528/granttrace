@@ -1,15 +1,20 @@
 # Changelog
 
-## Unreleased
+## 2.8.0 - 2026-11-15
+
+Adds an offline comparison of two scan reports and an optional security
+regression gate for CI. Detectors, evidence standards, scan exit codes and the
+HTML, SARIF and JSON report formats are unchanged from 2.7.1 unless
+`GRANTTRACE_COMPARISON_KEY` is set.
 
 ### Added
 
 - `granttrace diff BASELINE.json CURRENT.json [--export-json PATH]
   [--assume-same-target] [--assume-same-identities]
-  [--assume-same-configuration]` compares two JSON scan reports offline. Confirmed findings are matched by a stable finding ID
-  (check, operation template and, for BOPLA, RBAC and mass assignment, the
-  field or role) and classified as new, persisting, resolved or not
-  comparable.
+  [--assume-same-configuration]` compares two JSON scan reports offline.
+  Confirmed findings are matched by a stable finding ID (check, operation
+  template and, for BOPLA, RBAC and mass assignment, the field or role) and
+  classified as new, persisting, resolved or not comparable (#96).
   - A finding is resolved only when the same check on the same subject is now
     SECURE, PUBLIC or AUTHORIZED; SKIPPED, INCONCLUSIVE, ERROR, SUSPICIOUS or
     missing results are never treated as fixed. A finding is new only when the
@@ -20,24 +25,23 @@
     which do not record request counts, are exempt.
   - No conclusion is drawn unless both reports are shown to cover the same
     target (the port included), the same test identities and, for the
-    operation, the same specification, policy and resources. Reports without
-    keyed fingerprints, including those from 2.7.1 and earlier, are not
-    comparable by default; `--assume-same-target`, `--assume-same-identities`
-    and `--assume-same-configuration` each state one missing part explicitly,
+    operation, the same specification, policy and resources.
+    `--assume-same-target`, `--assume-same-identities` and
+    `--assume-same-configuration` each state one missing part explicitly,
     never override a detected change, and are recorded on the comparison and
     on every finding that relies on them.
   - The output holds identifiers, verdicts and reason codes only, as ASCII:
-    no evidence, response data or free text from the reports. Terminal output
-    escapes the markers a CI runner reads as workflow commands (`##[` as
-    `##\u005b`, a leading `::` as `\u003a:`), so that a role or field name in a
-    report cannot set a step output, add an annotation or stop command
-    processing in GitHub Actions; the JSON keeps the values exactly. The command
-    exits 0 when the comparison completes and 2 for invalid input; existing
-    scan exit codes are unchanged.
+    no evidence, response data or free text from the reports.
+- With `GRANTTRACE_COMPARISON_KEY` set (at least 32 random characters), scan
+  and demo JSON reports include `comparison_context`: keyed fingerprints
+  (HMAC-SHA256 under a PBKDF2-derived key) of the target, the test identities,
+  all credentials together, and each operation's specification, policy and
+  resource values, so that `diff` can verify that two scans used the same
+  configuration (#96).
 - An optional security gate for CI on `granttrace diff`: `--fail-on-new`,
   `--fail-on-coverage-decrease` and `--fail-on-not-comparable` exit 1 for a
   regression shown by comparable reports and 3 when the gate cannot verify an
-  enabled condition. Without these options `diff` behaves as before.
+  enabled condition (#97).
   - The gate fails closed. It never passes on a blocked comparison, on a
     current report without any conclusive result, or on conclusions that rely
     on `--assume-*` statements unless `--gate-allow-assumptions` admits them;
@@ -46,19 +50,67 @@
     for a check verified safe in the baseline that is no longer conclusive,
     and for access newly accepted as PUBLIC or AUTHORIZED after the
     operation's specification, policy or resources changed.
-  - `--github-actions` writes annotations and a Markdown step summary. Report
-    text in the log is wrapped in `stop-commands` and escaped, so it cannot run
-    as a workflow command or add markup to the summary.
+  - `--github-actions` writes annotations and a Markdown step summary.
   - The comparison JSON gains a `gate` object when a `--fail-on-*` option is
-    used. See `docs/ci-gate.md` and the example workflow in
-    `examples/github-actions/`.
-- With `GRANTTRACE_COMPARISON_KEY` set (at least 32 random characters), scan
-  and demo JSON reports include `comparison_context`: keyed fingerprints
-  (HMAC-SHA256 under a PBKDF2-derived key) of the target, the test identities,
-  all credentials together, and each operation's specification, policy and
-  resource values. No token, header value or cookie is written. Without the
-  key, reports contain no fingerprints and are unchanged.
-  `report_schema_version` stays 2.
+    used. See `docs/ci-gate.md` (`docs/ci-gate.zh-CN.md`) and the example
+    workflow in `examples/github-actions/`.
+
+### Compatibility
+
+- Without `GRANTTRACE_COMPARISON_KEY`, scans and the demo produce the same
+  console, HTML, JSON and SARIF output and exit codes as 2.7.1; the output
+  snapshots are unchanged. `--help` gains one line naming `granttrace diff`.
+- With the key set, JSON reports gain the top-level `comparison_context`;
+  `report_schema_version` stays 2, so a consumer that rejects unknown keys
+  must accept it. A key shorter than 32 characters or with fewer than 8
+  distinct characters stops a scan or the demo with exit code 2 before any
+  request, without echoing the key; `--dry-run` does not read it.
+- `granttrace diff` is new: exit code 0 when the comparison is done and 2 for
+  invalid input; with a `--fail-on-*` option 0, 1, 2 or 3. Exit code 3 is new
+  and only the gate returns it. The comparison JSON has
+  `comparison_schema_version` 1.
+- Reports from 2.7.1 and earlier have no fingerprints. They can be compared,
+  but their findings are not comparable unless the missing parts are stated
+  with `--assume-*` options, and the gate does not pass on them without
+  `--gate-allow-assumptions`.
+
+### Security
+
+- Terminal output of `granttrace diff` escapes the markers a CI runner reads
+  as workflow commands in every mode: the bracket of `##[` is printed as
+  `\u005b` and the first colon of a leading `::` as `\u003a`. A role or
+  field name in a report therefore cannot set a step output, add an
+  annotation, mask log text or stop command processing in GitHub Actions.
+  Only text containing these markers looks different; the JSON keeps the
+  values exactly. Found and fixed before release (#97); no released version
+  contains `diff`.
+- `--github-actions` additionally prints report text between
+  `::stop-commands::` and a random token, escapes annotation data and
+  entity-encodes report text in the step summary.
+- Comparison keys are stretched with PBKDF2 (200,000 iterations) before
+  HMAC-SHA256. Credentials are never written to a report or fingerprinted one
+  by one: identity fingerprints mask them, and all credentials together enter
+  one combined fingerprint.
+
+### Known limitations
+
+- Reports are not signed. Anyone who can edit a report can change verdicts or
+  copy another report's `comparison_context`; a forged baseline that lists a
+  vulnerability as confirmed makes it persisting, and `--fail-on-new` lets
+  persisting findings through. Use a baseline the change under test cannot
+  influence.
+- Changes to test data on the server between the scans are not visible:
+  resolved means no longer reproduced with this configuration.
+- A comparison key someone can guess can be found offline; use a random key.
+  Scan options such as read-only mode, timeouts or the response-size limit
+  are not fingerprinted.
+- Without the key, every conclusion rests on `--assume-*` statements that the
+  reports cannot check.
+- A passing gate does not show that the API is secure. In CI, code from a
+  pull request runs on the same runner as the gate; `docs/ci-gate.md`
+  describes the setup the gate relies on.
+- The terminal escaping covers the GitHub Actions command syntax; other CI
+  systems' log commands, such as Azure Pipelines `##vso[`, are not escaped.
 
 ## 2.7.1 - 2026-11-11
 
