@@ -104,6 +104,16 @@ jobs:
       - name: Verify JSON and YAML scans and restoration
         run: python scripts/verify_examples.py
 
+      - name: Verify the optional security gate on real scans
+        run: python scripts/verify_ci_gate.py --output dist/ci-gate.json
+
+      - name: Run the security gate with GitHub Actions output
+        if: matrix.python-version == '3.12'
+        run: >
+          granttrace diff dist/ci-gate/baseline.json dist/ci-gate/current.json
+          --fail-on-new --fail-on-coverage-decrease --fail-on-not-comparable
+          --github-actions --export-json dist/ci-gate/comparison.json
+
       - name: Verify installed wheel outside source checkout
         run: python scripts/verify_install.py
 
@@ -123,6 +133,8 @@ jobs:
             dist/authorization-authoritative.json
             dist/authorization-generic-http.json
             dist/business-scenarios.json
+            dist/ci-gate.json
+            dist/ci-gate/
             dist/install-verification.json
             dist/mock-validation/
             dist/demo-validation/
