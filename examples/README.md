@@ -64,3 +64,11 @@ creates two test accounts in it and fills a configuration drafted with
 lets crAPI's gateway start without its LLM chatbot, and `prepare_config.py`
 creates the test users and their objects and fills a configuration drafted with
 `--init-config`. Run them only against a crAPI instance you started yourself.
+
+## GitHub Actions
+
+[`github-actions/granttrace-security-gate.yml`](github-actions/granttrace-security-gate.yml)
+is an example pull request workflow for the security gate of `granttrace diff`:
+it scans the base branch and the pull request against a service the job starts
+locally and fails on new confirmed findings or a decrease in conclusive
+coverage. Read [the CI gate guide](../docs/ci-gate.md) before you adapt it.
