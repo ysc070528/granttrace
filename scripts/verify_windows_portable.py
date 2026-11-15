@@ -309,7 +309,7 @@ def verify_inert_log(executable, directory, environment):
     payload = "##[set-output name=gate;]passed"
 
     def report(verdict):
-        return {"tool_version": "2.8.0", "report_schema_version": 2, "target": "http://127.0.0.1:8000", "stats": {},
+        return {"tool_version": VERSION, "report_schema_version": 2, "target": "http://127.0.0.1:8000", "stats": {},
                 "results": [{"endpoint": "GET /api/items/{id}", "check": "RBAC", "verdict": verdict,
                              "evidence": {"rbac_role": payload, "requests_attempted": 3}}]}
 

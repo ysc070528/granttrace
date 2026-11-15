@@ -1,10 +1,11 @@
-# GrantTrace 2.7.1 Windows 便携包
+# GrantTrace 2.8.0 Windows 便携包
 
-分发文件为 `GrantTrace-v2.7.1-Windows-x64.zip`。用户解压整个 ZIP 后双击
+分发文件为 `GrantTrace-v2.8.0-Windows-x64.zip`。用户解压整个 ZIP 后双击
 `Start-Demo.bat` 即可运行内置 demo，无需安装 Python 或修改系统 PATH。
-程序版本为 `GrantTrace 2.7.1`，是 2.7.0 的维护版本：没有配置 identities 时拒绝扫描
-本机以外的目标，并修正命令行说明和文档；检测器与证据标准不变，详见 [CHANGELOG](../CHANGELOG.md)。
-内置 demo 的行为与 2.7.0 相同。
+程序版本为 `GrantTrace 2.8.0`，新增离线报告对比 `granttrace.exe diff` 和可选的 CI 安全回归门禁
+（`--fail-on-*`），见 [对比两次扫描](advanced.md#对比两次扫描granttrace-diff) 和
+[CI 安全回归门禁](ci-gate.zh-CN.md)；检测器与证据标准不变，详见 [CHANGELOG](../CHANGELOG.md)。
+未设置 `GRANTTRACE_COMPARISON_KEY` 时，内置 demo 的行为与 2.7.1 相同。
 推荐 Windows 10 / 11（64 位）。启动器自动打开 HTML 并打印确切路径；报告保存在
 解压目录的 `granttrace-demo/session-*/run-*/`，每次运行使用新的目录。
 
@@ -42,8 +43,9 @@ $version = .\dist\windows-build-env\Scripts\python.exe scripts/source_version.py
 - `dist/windows-portable-build.json`：记录源码 commit、工具版本、EXE / ZIP 大小与哈希。
 - `dist/windows-portable-verification.json`：记录实际验证结果，供维护者复核。
 
-验证时使用 ZIP 解压后的程序，确认 `--version` 输出 `GrantTrace 2.7.1`，
-`--help` 可用，内置 demo 能生成 HTML / JSON 报告，关闭本机服务并完整恢复数据。
+验证时使用 ZIP 解压后的程序，确认 `--version` 输出 `GrantTrace 2.8.0`，
+`--help` 可用，内置 demo 能生成 HTML / JSON 报告，关闭本机服务并完整恢复数据；
+`diff` 能比较两次 demo 报告，门禁按条件返回退出码 0、1、2、3，来自报告的工作流命令标记在输出中被转义。
 每次重新构建后，维护者仍应在含空格和中文的目录人工双击 `Start-Demo.bat`，确认正常完成且报告可以打开。
 自动验证会实际将 ZIP 解压到仓库外的空格、中文路径，从空目录启动程序；
 子进程 PATH 仅保留 Windows 系统目录，并清除 Python / 虚拟环境变量。
@@ -65,7 +67,7 @@ CI 为避免打开浏览器设置 `GRANTTRACE_DEMO_NO_OPEN=1`；正常双击仍�
 
 这些步骤用于维护者验证构建产物，不会替换已经提供的 Release 附件。
 
-构建与验收结果记录在 [VERIFICATION.md](../VERIFICATION.md)。2.6.0、2.7.0 与 2.7.1 的发布准备均在 Linux 上进行，
+构建与验收结果记录在 [VERIFICATION.md](../VERIFICATION.md)。2.6.0、2.7.0、2.7.1 与 2.8.0 的发布准备均在 Linux 上进行，
 没有本地 Windows 构建；便携包由 Windows x64 portable CI 在发布提交上构建并自动验收，
 Release 附件取自该次运行的 artifact。2.5.3 的历史本地准备输出曾位于 `dist/v2.5.3-windows/`。
 自动 smoke 通过 `GRANTTRACE_DEMO_NO_OPEN=1`

@@ -6,6 +6,8 @@ recursive-include docs *.md
 include docs/assets/report-preview.png docs/assets/report-finding.png
 include README.zh-CN.md
 include examples/README.md examples/sample_report.html examples/sample_result.json
+include examples/github-actions/granttrace-security-gate.yml
+recursive-include tests/data *.json
 recursive-include examples/vampi *.py
 recursive-include examples/crapi *.py *.yml
 global-exclude __pycache__ *.py[cod] *.local.json

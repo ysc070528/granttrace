@@ -13,6 +13,7 @@ Use this checklist for the reviewed release commit. Record results in
 - [ ] Run Mypy and Ruff.
 - [ ] Check branch-aware coverage is at least 80%.
 - [ ] Run business scenarios and JSON / YAML example verification.
+- [ ] Check `granttrace diff` and its CI gate on real scans (`scripts/verify_ci_gate.py`).
 - [ ] Build wheel / sdist and run `twine check --strict` on both.
 - [ ] Check packaged README / PyPI long description and distribution contents.
 - [ ] Verify a fresh installation outside the source checkout.

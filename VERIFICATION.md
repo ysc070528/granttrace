@@ -3,6 +3,61 @@
 Detailed historical release verification records are archived in
 [release verification history](docs/history/release-verification-history.md).
 
+## v2.8.0 pre-release acceptance - 2026-11-15
+
+Status: **accepted for release; v2.8.0 is not published.** Release candidate:
+commit `1908513` (head of PR #98: main `662fbb2`, the merge of #97, plus the
+release preparation `74be398` and the test fixture fix `1908513`); the commit
+after it adds only this record. PyPI's latest is 2.7.1; there is no `v2.8.0`
+tag or Release.
+
+Environment: Linux x86_64 container; CPython **3.9.25**, **3.10.20**,
+**3.11.18**, **3.12.3**, **3.13.18** and **3.14.6**; PyYAML **6.0.3**, pytest
+**9.2.0** (**8.4.2** on 3.9), coverage **7.17.3** (**7.16.2** on 3.10, **7.10.7**
+on 3.9), Ruff **0.17.5**, Mypy **2.4.1**, build **1.6.1**, Twine **7.0.0**,
+setuptools **84.2.1**, wheel **0.48.0**, pip-audit **2.10.1**. The Windows package
+was built and checked by the GitHub-hosted `windows-2025` runner; no Windows host
+was used locally.
+
+| Check | Result |
+|---|---|
+| CI on main after #97 (`662fbb2`) | GrantTrace CI [run 43685707185](https://github.com/ysc070528/granttrace/actions/runs/43685707185), CodeQL [run 43685707058](https://github.com/ysc070528/granttrace/actions/runs/43685707058) and Windows x64 portable [run 43685707070](https://github.com/ysc070528/granttrace/actions/runs/43685707070): all passed |
+| CI on the candidate (`1908513`) | 9 of 9 passed: Ruff, Mypy, tests on 3.9 / 3.12 / 3.14 and runtime dependency audit ([run 43686949140](https://github.com/ysc070528/granttrace/actions/runs/43686949140)), Windows x64 portable ([run 43686949120](https://github.com/ysc070528/granttrace/actions/runs/43686949120)), Analyze Python ([run 43686949141](https://github.com/ysc070528/granttrace/actions/runs/43686949141)) and CodeQL. On the first candidate `74be398` the GrantTrace CI failed ([run 43686375296](https://github.com/ysc070528/granttrace/actions/runs/43686375296)): the diff compatibility test read the regenerated example as a 2.7.1 report; `1908513` gives it the 2.7.1 release's report as a fixture |
+| Full regression suite | pytest: 1472 tests passed on 3.9.25 (pytest 8); 10525 passed, subtests counted, on 3.10.20, 3.11.18, 3.12.3, 3.13.18 and 3.14.6. Full unittest (1472 tests) passed on all six |
+| Branch-aware coverage | 91.04% on 3.10 to 3.14 and 90.95% on 3.9 (unittest under coverage); required minimum 80%. `core/report_gate.py` alone: 100% with its tests |
+| Mypy / Ruff | No Mypy issues in 34 source files; Ruff passed |
+| Acceptance scripts | On each of the six interpreters: PR42 adversarial (28 tests); PR43 integration (source `1908513`); authorization coverage, authoritative and generic HTTP; business scenarios 6 / 6 (0 false positives, false negatives or inconclusive results); JSON / YAML examples; and the new `verify_ci_gate.py` on real scans of the bundled mock (a reintroduced BOLA exits 1; unchanged, persisting and fixed exit 0 verified; a failing endpoint exits 3 for `--fail-on-new` and 1 for coverage; an unreachable target exits 3; unkeyed scans exit 3, 3 and, with the allowance, 1) |
+| Runtime dependency audit | `pip-audit --strict` on the candidate: no known vulnerabilities (PyYAML 6.0.3) |
+| Generated examples | Regenerated without `GRANTTRACE_COMPARISON_KEY`; they declare 2.8.0 and have no `comparison_context`. Against the 2.7.1 files only the version, generation time, loopback port, result order and the User-Agent's version differ: 5 operations, 2 confirmed, 100% conclusive coverage, identical stats |
+| Wheel / sdist | Isolated `python -m build` from `git archive` of `1908513`; `twine check --strict` passed for both. Wheel: 45 files (2.7.1: 43), the new ones `core/report_diff.py` and `core/report_gate.py`; no tests, caches or local configurations. Sdist: 212 entries (2.7.1: 196); new are the two modules, the diff / gate docs and audit, `scripts/verify_ci_gate.py`, the new tests and fixture and the example workflow; none is missing. All 39 wheel source files and 186 non-generated sdist files are byte-identical to the commit. Metadata: `Version: 2.8.0`, the unchanged `Summary`, `Requires-Python: >=3.9`, `Requires-Dist: PyYAML>=6.0`, `License-Expression: Apache-2.0`; the long description covers `diff` and the gate |
+| Tests from the sdist | As for 2.7.1, the sdist does not ship `tests/snapshots/`, `packaging/` or `.github/`, so the tests reading them fail when run from it (2.7.1: 3, 2.8.0: 4, the new one reading `.github/workflows/test.yml`); all others pass |
+| Clean installations | The wheel in new virtual environments on CPython 3.9.25, 3.10.20, 3.11.18, 3.12.3, 3.13.18 and 3.14.6, and the sdist on 3.13.18, each outside the checkout, with one acceptance script through the installed `granttrace` command: `GrantTrace 2.8.0`, `core` from `site-packages`; the demo exits 0 (BOLA and mass assignment confirmed, rollback verified, database restored, server stopped), writes `comparison_context` only with a key and never the key; a weak key stops the demo and a real scan with exit 2 before any request; a dry run does not read the key; a non-loopback scan without identities is refused with exit 2. `scripts/verify_install.py --wheel` with the built wheel passed on 3.9.25, 3.10.20, 3.13.18 and 3.14.6 (run from the base interpreter on 3.9 and 3.10, whose uv standalone builds cannot create a venv inside a venv) |
+| `granttrace diff` (installed) | Real scans of the bundled mock through the installed command: new, persisting, resolved and not comparable; `--assume-same-identities` alone leaves `configuration_unverified`; with `--assume-same-configuration` the finding is new and both assumptions are recorded on it; a changed port blocks with `target_changed` until `--assume-same-target`. Plans, SARIF and missing files exit 2, `--export-json` cannot overwrite an input, and the comparison JSON holds no tokens, URLs or key |
+| CI gate (installed) | Exit 0: unchanged, persisting and fixed, verified. Exit 1: new finding; coverage lost; a regression on allowed assumptions, labelled `verified: false`. Exit 2: `--gate-allow-assumptions` alone; a missing report. Exit 3: unkeyed reports; assumptions not allowed; unreachable target; a failing endpoint (`no_longer_verified`). `--github-actions` prints only its stop / resume pair and annotations and writes the step summary |
+| Workflow command injection | Role names with `##[set-output ...]`, `##[error]`, `##[stop-commands]`, `##[add-mask]` and `::set-output` run nothing in the default, gate, `--github-actions` and gate + `--github-actions` modes of the installed command, checked with the runner model in `tests/github_runner.py`; the marker is shown as `##\u005b`. The 250 hostile report pairs and runner-model tests of `tests/test_workflow_command_injection.py` pass on all six interpreters |
+| 2.7.1 compatibility | Without a key, the 2.7.1 and 2.8.0 wheels scanning the same mock give identical exit codes, console output, JSON, HTML and SARIF (read-only and `--allow-write-tests`), after normalising port, paths, version and times. A genuine 2.7.1 report compares with a 2.8.0 report only with the three assumptions |
+| Publishing workflow | `release.yml` accepts v2.8.0 for manual runs and defaults to it. Its validation step, run with the GitHub API and `git ls-remote` mocked: a manual run for v2.8.0 before an official Release fails on the Release lookup; non-main refs, tags outside the list, drafts and prereleases are refused; after the official Release both the manual and the `release` path resolve version 2.8.0. It runs only on `release: published` and manual dispatch, so merging does not publish |
+| Version consistency | `pyproject.toml`, `core.__version__`, CLI, HTML and JSON reports and the HTTP User-Agent say 2.8.0. The Windows build and verification scripts, the Windows workflow's ZIP and artifact names (`GrantTrace-v2.8.0-Windows-x64`) and the packaged README and launcher derive it through `scripts/source_version.py`; the release-version guard found and the preparation removed a copied `"2.8.0"` in the Windows verifier |
+| Windows x64 portable | Built from `1908513` (clean tree) in run 43686949120 on Windows Server 2025 with Python 3.14.5 and PyInstaller 6.22.3: `GrantTrace-v2.8.0-Windows-x64.zip`, 10,811,812 bytes, SHA256 `271d2e7702e12ef8e084bead30bbf0c992a2c8e79f4167c0dc15137d0c130bad`; `granttrace.exe` 3,198,262 bytes, SHA256 `aad252f4efe8a97a778caea3bfd56afb24e7c2e2bd6c2341f6121cf2441af737`. `scripts/verify_windows_portable.py` passed: extraction to paths with spaces and Chinese characters outside the checkout, no Python on the child PATH, `--version` and `--help`, active and read-only demos, an offline YAML plan, `diff` on demo reports (blocked, assumed, keyed), the gate's exit codes 0, 1, 2 and 3 and step summary, escaped workflow-command markers, `Start-Demo.bat`, the loopback port closed and no package process left. The artifact host is not reachable from this environment, so the ZIP was not downloaded and rehashed here, and no one double-clicked it on a clean Windows machine |
+| Secrets | A pattern scan of the 33 files changed since v2.7.1 found no keys, tokens or JWTs; the example reports and the 2.7.1 fixture hold no bearer tokens |
+| Documentation | 31 Markdown files, 160 relative and same-repository links and anchors: 0 problems. 61 external links reachable from this environment returned HTTP 200; the others are blocked here by policy (third-party repositories, Actions run pages, some documentation hosts), not reported broken. The README quick start (draft, validation, dry run with 0 requests, refusal without identities) and the CI gate examples, including treating exit 3 as a warning, behave as documented with the installed 2.8.0 |
+
+Local candidate hashes, built from `1908513` in the container:
+
+```text
+2277410ca7ba746d917306075b2e5487a074304e99704842780b59e96cfacb57  granttrace-2.8.0-py3-none-any.whl
+0e3d884da914869767f99c9ce39b2c9cfce11dd8bfc8d12132014d03cfcb2c88  granttrace-2.8.0.tar.gz
+```
+
+The publishing workflow builds the uploaded distributions from the tag. The
+Release's Windows ZIP and `SHA256SUMS.txt` come from the Windows workflow run on
+the release commit itself; their hashes differ from the builds above because the
+build records its source commit.
+
+Still to do: CI on the release commit, then the tag, the GitHub Release with the
+Windows assets, PyPI publishing and the post-release checks in the
+[release checklist](docs/release-checklist.md), including a clean Windows machine.
+
 ## v2.7.1 post-release verification - 2026-11-13
 
 Status: **v2.7.1 is published. The PyPI distributions and the official Windows

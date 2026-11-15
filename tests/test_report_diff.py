@@ -2342,7 +2342,8 @@ class EndToEndTests(unittest.TestCase):
                          ("declared", ["same_target"]))
         self.assertFalse(comparison["comparability"]["fully_comparable"])
         # A report from 2.7.1 has no context: nothing is concluded without all three assumptions.
-        sample = ROOT / "examples" / "sample_result.json"
+        # tests/data/report-2.7.1.json is the 2.7.1 release's examples/sample_result.json, unchanged.
+        sample = ROOT / "tests" / "data" / "report-2.7.1.json"
         for flags in ([], ["--assume-same-target"], ["--assume-same-target", "--assume-same-identities"],
                       ["--assume-same-target", "--assume-same-configuration"]):
             with self.subTest(flags=flags):
