@@ -33,8 +33,9 @@ GitHub 只显示其 HTML 源码，请下载原始文件后用浏览器打开。
 - **默认安全。** 扫描只读。路径、operationId 或描述带有副作用语义的 GET 在请求前跳过，
   对外部目标的写入一律拒绝。
 - **只读 POST 需由你声明。** 查询类 POST（search、lookup、query 等）只有在你声明 `read_only: true`
-  并提供请求体后才会跨身份比较；其路径、operationId 或 summary 必须表明读取动作且不得表明修改，
-  否则不发送任何请求。这些检查只能降低风险，不能证明 POST 没有副作用。
+  并提供请求体后才会跨身份比较；其路径、operationId 或 summary 必须表明读取动作且不得表明修改
+  （包括 getOrCreate、findOrInsert 这类组合名称），请求体也不得要求写入（GraphQL mutation、upsert
+  标志、改写 HTTP 方法等），否则不发送任何请求。这些检查只能降低风险，不能证明 POST 没有副作用。
 - **敏感字段线索。** 开启 `detect_sensitive_exposure` 后，Visitor 收到的未脱敏、名称敏感的 Owner 字段
   （电话、薪资、凭据等）作为线索报告；只有在对象级越权已确认时才会确认，绝不仅凭字段名确认。
 - **角色矩阵。** 可选的 `identities.roles` 只在配置了 `required_role` 的操作上探测。低权限角色只有拿到

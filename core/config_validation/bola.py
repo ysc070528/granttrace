@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.bopla import validate_bopla_policy
 from core.config_validation.base import ConfigIssue, ValidationSummary, ValidatorBase
 from core.evidence import safe_diagnostic_value
 from core.models import parse_operation_key
+from core.scan_safety import read_only_body_risk
 from core.transactions import path_parts
 
 
@@ -238,6 +239,36 @@ class BolaChecks(ValidatorBase):
         return None
 
     @classmethod
+    def _validate_read_only_bodies(cls, ep_key: Any, policy: Dict[str, Any], issues: List[ConfigIssue]) -> None:
+        """A declared read-only POST body must not itself ask for a write.
+
+        Checked only when the POST is declared read-only, for bodies that are
+        otherwise valid payloads; the message names the kind of write request,
+        never a key or value of the body.
+        """
+        if policy.get("read_only") is not True:
+            return  # Nothing is sent without the declaration; the existing warning covers it.
+        bodies: List[Tuple[str, Any]] = []
+        if "body" in policy and cls._payload_problem(policy["body"]) is None:
+            bodies.append(("body", policy["body"]))
+        identity_bodies = policy.get("identity_bodies")
+        if isinstance(identity_bodies, dict):
+            for key in cls.IDENTITY_BODY_KEYS:
+                if key in identity_bodies and cls._payload_problem(identity_bodies[key]) is None:
+                    bodies.append((f"identity_bodies.{key}", identity_bodies[key]))
+        for location, body in bodies:
+            risk = read_only_body_risk(body)
+            if risk:
+                issues.append(ConfigIssue(
+                    path=f"bola.{ep_key}.{location}",
+                    message=risk["safety_reason"].replace("; no request was sent", "")
+                    + "; a POST whose body requests a state change is never audited as read-only",
+                    expected="a body that only selects or filters the data to read",
+                    actual="state-changing request body (value not shown)",
+                    suggestion="Remove the write request from the body, or do not declare this POST read_only",
+                ))
+
+    @classmethod
     def _validate_read_only_post(
         cls, ep_key: Any, is_valid: bool, method: str, policy: Dict[str, Any], issues: List[ConfigIssue],
     ) -> None:
@@ -318,6 +349,7 @@ class BolaChecks(ValidatorBase):
                             ))
         if not is_valid or method != "POST":
             return
+        cls._validate_read_only_bodies(ep_key, policy, issues)
         if policy.get("read_only") is True and not any(key in policy for key in cls.POST_BODY_KEYS):
             issues.append(ConfigIssue(
                 path=f"bola.{ep_key}.body",

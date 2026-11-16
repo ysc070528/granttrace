@@ -43,7 +43,9 @@ the raw file and open it in a browser.
 - **Read-only POST, only when you vouch for it.** A query-style POST (search,
   lookup, query...) is compared across identities only after you declare
   `read_only: true` and give the request body. Its path, operationId or summary
-  must name a read action and must not name a mutation; otherwise nothing is
+  must name a read action and must not name a mutation, including a compound
+  such as getOrCreate or findOrInsert, and the body must not ask for a write
+  (a GraphQL mutation, an upsert flag, a method override); otherwise nothing is
   sent. These checks reduce risk but cannot prove a POST has no side effects.
 - **Sensitive-field leads.** With `detect_sensitive_exposure`, unmasked
   sensitive-looking Owner fields (phone, salary, credentials...) that reach the
