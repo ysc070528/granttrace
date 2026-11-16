@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from core.config_validation.base import ConfigIssue, ValidationSummary, ValidatorBase
 from core.evidence import safe_diagnostic_value
+from core.identity_auth import SpecAuth, isolation_problems
 from core.scan_safety import method_override_risk, read_only_body_risk
 
 # Identity and role headers are sent with every request, reads included.
@@ -24,6 +25,7 @@ class IdentityChecks(ValidatorBase):
         issues: List[ConfigIssue],
         summary: ValidationSummary,
         spec_auth_names: Optional[Set[str]] = None,
+        spec_auth: Optional[SpecAuth] = None,
     ) -> None:
         if not isinstance(identities, dict):
             issues.append(
@@ -112,9 +114,11 @@ class IdentityChecks(ValidatorBase):
                             all_custom_names.add(n.strip().lower())
 
         # Cross-identity effective authentication verification
+        if spec_auth is None:
+            spec_auth = SpecAuth(header_names=frozenset(name.lower() for name in spec_auth_names or ()))
         if all(k in identities and isinstance(identities[k], dict) for k in ("owner", "visitor", "anonymous")):
             cls._validate_identity_authentication_integrity(
-                identities, issues, custom_names=all_custom_names, spec_names=spec_auth_names
+                identities, issues, custom_names=all_custom_names, spec_auth=spec_auth
             )
 
     RESERVED_ROLE_NAMES = frozenset({"owner", "visitor", "anonymous", "roles"})
@@ -457,88 +461,27 @@ class IdentityChecks(ValidatorBase):
                         )
 
     @classmethod
-    def _extract_effective_auth_material(
-        cls,
-        identity_name: str,
-        identity: Dict[str, Any],
-        custom_names: Optional[Iterable[str]] = None,
-        spec_names: Optional[Iterable[str]] = None,
-    ) -> Tuple[Tuple[str, str], ...]:
-        combined_custom: Set[str] = set()
-        if custom_names:
-            combined_custom.update(str(k).lower() for k in custom_names if isinstance(k, str))
-        for k in (identity.get("auth_header_names") or []):
-            if isinstance(k, str) and k.strip():
-                combined_custom.add(k.strip().lower())
-
-        headers: Dict[str, str] = {}
-        for k, v in (identity.get("headers") or {}).items():
-            if isinstance(v, str):
-                headers[str(k).strip().lower()] = str(v).strip()
-        token = identity.get("token")
-        if isinstance(token, str) and token.strip():
-            headers["authorization"] = token.strip()
-
-        material = []
-        for key, value in headers.items():
-            if cls.is_auth_header(key, combined_custom, spec_names) and value:
-                normalized = value
-                if key == "authorization" and " " in normalized:
-                    scheme, credential = normalized.split(None, 1)
-                    normalized = scheme.lower() + " " + credential.strip()
-                material.append((key, normalized))
-        return tuple(sorted(material))
-
-    @classmethod
     def _validate_identity_authentication_integrity(
         cls,
         identities: Dict[str, Any],
         issues: List[ConfigIssue],
         custom_names: Optional[Iterable[str]] = None,
-        spec_names: Optional[Iterable[str]] = None,
+        spec_auth: Optional[SpecAuth] = None,
     ) -> None:
-        owner_mat = cls._extract_effective_auth_material("owner", identities["owner"], custom_names, spec_names)
-        visitor_mat = cls._extract_effective_auth_material("visitor", identities["visitor"], custom_names, spec_names)
-        anon_mat = cls._extract_effective_auth_material("anonymous", identities["anonymous"], custom_names, spec_names)
+        """The identity credential rules the auditor applies at construction and to each request."""
+        spec = spec_auth or SpecAuth()
+        custom = [str(name) for name in custom_names or () if isinstance(name, str)]
 
-        if not owner_mat:
-            issues.append(
-                ConfigIssue(
-                    path="identities.owner",
-                    message="Owner identity has no effective authentication material (token, Authorization, or custom auth header)",
-                    expected="non-empty authentication credentials",
-                    actual="empty auth material",
-                )
-            )
-        if not visitor_mat:
-            issues.append(
-                ConfigIssue(
-                    path="identities.visitor",
-                    message="Visitor identity has no effective authentication material (token, Authorization, or custom auth header)",
-                    expected="non-empty authentication credentials",
-                    actual="empty auth material",
-                )
-            )
-        if owner_mat and visitor_mat and owner_mat == visitor_mat:
-            issues.append(
-                ConfigIssue(
-                    path="identities.visitor",
-                    message="Owner and visitor must use distinct effective authentication credentials to verify authorization boundaries",
-                    expected="distinct credentials from owner",
-                    actual="identical auth material to owner (redacted)",
-                )
-            )
-        if anon_mat:
-            auth_header_keys = [k for k, _ in anon_mat]
-            issues.append(
-                ConfigIssue(
-                    path="identities.anonymous",
-                    message="Anonymous identity must not define authentication credentials or auth headers",
-                    expected="empty authentication material",
-                    # Never leak token value!
-                    actual=f"credentials configured under: {auth_header_keys}",
-                )
-            )
+        def is_auth_header(name: str) -> bool:
+            return cls.is_auth_header(name, custom, spec.header_names)
+
+        for problem in isolation_problems(identities, spec, is_auth_header, custom):
+            issues.append(ConfigIssue(
+                path=problem.path,
+                message=problem.message,
+                expected="distinct, non-empty authentication credentials for each identity and none for anonymous",
+                actual=problem.actual or "value omitted",
+            ))
 
         # Anonymous structure constraints
         anon = identities.get("anonymous", {})
@@ -570,3 +513,51 @@ class IdentityChecks(ValidatorBase):
                         actual=f"{len(anon['headers'])} header(s) configured",
                     )
                 )
+
+    @classmethod
+    def _validate_parameter_value_credentials(
+        cls,
+        parameter_values: Any,
+        identities: Any,
+        spec_auth: SpecAuth,
+        issues: List[ConfigIssue],
+    ) -> None:
+        """Credentials the specification declares do not belong to Anonymous or to shared values.
+
+        Anonymous requests omit them, and a session cookie is one identity's
+        credential: a common or operation-wide value would be sent by every
+        identity, or not at all.
+        """
+        if not isinstance(parameter_values, dict):
+            return
+        custom = {str(name).strip().lower() for identity in (identities.values() if isinstance(identities, dict) else ())
+                  if isinstance(identity, dict) and isinstance(identity.get("auth_header_names"), list)
+                  for name in identity["auth_header_names"] if isinstance(name, str)}
+        declared = set(spec_auth.header_names) | custom
+
+        def credential(name: Any, cookies_only: bool) -> bool:
+            lowered = str(name).strip().lower()
+            return lowered in spec_auth.cookie_names or (not cookies_only and lowered in declared)
+
+        for operation, entry in parameter_values.items():
+            if not isinstance(entry, dict):
+                continue
+            scopes = [("anonymous", entry.get("anonymous"), False), ("common", entry.get("common"), True)]
+            scopes.append(("", {name: value for name, value in entry.items()
+                                if name not in {"common", "owner", "visitor", "anonymous"}}, True))
+            for scope, values, cookies_only in scopes:
+                if not isinstance(values, dict):
+                    continue
+                for name in values:
+                    if not credential(name, cookies_only):
+                        continue
+                    path = ".".join(part for part in ("parameter_values", str(operation), scope, str(name)) if part)
+                    issues.append(ConfigIssue(
+                        path=path,
+                        message=("Anonymous requests never send authentication credentials; remove this value"
+                                 if scope == "anonymous" else
+                                 "A session cookie is one identity's credential; configure it per identity under "
+                                 "identities.*.parameters, not as a value shared by every identity"),
+                        expected="no credential" if scope == "anonymous" else "an identity-specific session cookie",
+                        actual="credential value (redacted)",
+                    ))

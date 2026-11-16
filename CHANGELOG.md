@@ -62,6 +62,39 @@
   "Initializes the session"). A POST path segment named `init` is therefore
   refused as well. Abbreviations are not applied to concrete path values, so an
   id such as `rm-101` is still sent.
+- Owner and visitor, or two roles, that send the same value for an
+  authentication cookie, Authorization or an `auth_header_names` header are
+  refused, also when a second cookie or a different bearer token makes the
+  rest of their credentials differ. Previously `SESSIONID=<same>; theme=dark`
+  and `SESSIONID=<same>; theme=light` passed validation and every visitor
+  request authenticated as the owner, so BOLA was confirmed falsely.
+- Roles are held to the identity rules: each role needs its own credentials,
+  different from every other role's, and every authenticated identity must
+  send the same kinds of declared credentials (`apiKey` scheme headers and
+  cookies, and `auth_header_names`). Previously a role without credentials,
+  or without the header the API requires, was probed unauthenticated and its
+  401 recorded as a SECURE denial, and a role reusing the privileged role's
+  credentials was confirmed as an RBAC violation.
+- Anonymous may not carry a session cookie or a declared credential in
+  `identities.anonymous.parameters` or `parameter_values.*.anonymous`, and a
+  session cookie may not be a `common` or operation-wide value.
+- These identity rules are applied by configuration validation, by
+  `APISentinelAuditor` construction and again before each request, so an
+  identity changed after construction sends nothing (`INCONCLUSIVE` or
+  `ERROR`, "no request was sent"). Messages name identities, headers and
+  cookies, never values.
+
+### Fixed
+
+- Session cookie authentication works from the specification to the wire. An
+  `apiKey` `in: cookie` scheme that a security requirement uses is drafted by
+  `--init-config` for owner and visitor under `identities.*.parameters`;
+  configuration validation and the Python API accept such a session cookie as
+  the identity's authentication; and it is sent with every request of that
+  identity, roles included, whether or not the operation declares the cookie.
+  Previously the drafted cookie-only configuration failed validation ("no
+  effective authentication material"), and an RBAC role probe on an operation
+  that declares an authentication cookie failed with `KeyError`.
 
 ## 2.8.0 - 2026-11-15
 
