@@ -248,17 +248,24 @@ POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantT
    `getOrInitializeSession`、`findOrInsertRow`、`getAndSet`、`getOrPut`、`getOrRefreshToken`、
    `getOrRotateKey`、`searchAndArchive`、`computeIfAbsent`、
    `createTableIfNotExists` 这类在资源不存在时会写入的名称一律拒绝，camelCase、snake_case、kebab-case、
-   点分写法及路径段（`/carts/get-or-create`）同样适用；summary 或 description 写成 "Get or create a cart"、
-   "Returns the cart, or creates one if none exists" 也会拒绝。GET 与 HEAD 遵循同一组合规则。
-   `getOrDefault`、`findOrFail`、`searchByNameOrEmail`、`searchOrders` 这类名称不受影响；
-5. 请求体本身不得要求写入：GraphQL `mutation`、表示写操作的 `action` / `op` / `operationName`
-   （含 JSON Patch 的 `op: replace`）、改写 HTTP 方法的 `_method: DELETE` 或 `X-HTTP-Method-Override`、
-   为 `true` 的 `upsert`、`createIfMissing`、`auto_create`、`save_search` 等标志，以及设为 `false` 的
-   `dry_run`。离线验证会报错并给出原因（不回显请求体内容），扫描前即停止。
+   点分写法及路径段（`/carts/get-or-create`）同样适用，读取动作与写入之间隔着资源名或修饰词
+   （`getNextAndDequeue`、`fetchMessagesAndAck`、`getOrAutoCreate`）、名称中夹带零宽字符或组合附加符号时也会拒绝；
+   summary 或 description 写成 "Get or create a cart"、"Returns the cart, or creates one if none exists"、
+   "If the cart does not exist, a new one is created" 也会拒绝。GET 与 HEAD 遵循同一组合规则。
+   `getOrDefault`、`findOrFail`、`searchByNameOrEmail`、`searchOrders`、"View or export a report" 这类名称不受影响；
+5. 请求体本身不得要求写入：GraphQL `mutation`（含逗号、注释等忽略符号的写法）、表示写操作的
+   `action` / `op` / `mode` / `operationName`（含 JSON Patch 的 `op: replace`、`cart.create`、`users:delete`）、
+   改写 HTTP 方法的 `_method: DELETE` 或 `X-HTTP-Method-Override`、为 `true` 的 `upsert`、`createIfMissing`、
+   `auto_create`、`save_search` 等标志，以及设为 `false` 的 `dry_run`，以字符串形式内嵌的 JSON 同样检查。
+   `create_by`、`update_time`、`delete_flag` 这类以动词开头的数据字段不算写入开关。离线验证会报错并给出原因
+   （不回显请求体内容），扫描前即停止；
+6. 请求的查询字符串不得包含同样的写入开关（`?upsert=true`、`?create=1`、`?_method=DELETE`、`?dry_run=false`）。
+   规范中的默认值、必填参数生成值和 `parameter_values` 填入的值都在发送前检查，GET 与只读 POST 同样适用
+   （结果信号 `query`）；`?page=2`、`?include_deleted=true`、`?store=1` 不受影响。
 
 任一条件不满足即记录 `SKIPPED` 或 `INCONCLUSIVE`，请求数为 0。拒绝原因写明命中的规则（例如"读取动作与
 条件写入组合"），不回显规范或请求体原文。operationId 或路径中出现 ASCII 与非 ASCII 字母混写的单词
-（如用西里尔字母冒充的 `getOrCrеate`）时，因无法检查其中的动作词，同样拒绝。这些规则只能拦截明显的写操作，
+（如把 `getOrCreate` 中的 e 换成形似的西里尔字母）时，因无法检查其中的动作词，同样拒绝。这些规则只能拦截明显的写操作，
 **不能证明** POST 没有副作用；只为确认无副作用的操作声明 `read_only`。POST 遇到 429/503 不会重试。
 
 ```json
@@ -290,12 +297,14 @@ POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantT
 
 - 没有读取动作、单独表示"读取即消费"的名称，如 `pollMessages`、`receiveMessages`、`consumeEvents`、
   `markAsRead`（这些词也常是名词：`PullRequests_List`、`PollResults_Get`）；路径或 summary 带读取动作时仍会发送；
-- 读取动作与写入动词之间隔着其他词的组合，如 `getNextAndDequeue`；
-- 被动语态或条件句描述的写入，如 "If no cart exists, one is created"、"Each search increments the quota"；
-- 查询字符串中的写入开关（`parameter_values` 填入的 `?upsert=true`、`?_method=DELETE`），请求前只检查路径；
+- 中间隔着词、且写入动词也常作名词的组合，如 `getNextAndLock`、`findExpiredAndClaim`；
+- 没有任何分隔的全小写或全大写名称，如 `getorcreatecart`、`GETORCREATECART`（无法可靠切分单词）；
+- 不以"资源不存在"为条件的写入描述，如 "Each search increments the quota"；
+- "export" 按读取（下载）处理：`queryAndExport`、"Search or export reports" 不会拒绝；
+- 过滤条件中的动作字段，如 `{"filter": {"action": "delete"}}`、`?action=delete`，会按写入拒绝（保守处理）；
 - 幂等（`Idempotency-Key`、PUT 语义）不代表只读，GrantTrace 从不据此放行；
 - 角色请求体和身份请求头中的方法改写只在配置验证（CLI 扫描前必经）中检查；直接以库方式构造
-  `APISentinelAuditor` 时不会再检查（操作的 `body` / `identity_bodies` 在扫描时仍会检查）。
+  `APISentinelAuditor` 时不会再检查（操作的 `body` / `identity_bodies` 和所有请求的查询字符串在扫描时仍会检查）。
 
 ### 2. 敏感字段线索（BOPLA 启发式）
 

@@ -8,28 +8,41 @@
   resource is missing. Compounds such as getOrCreateCart, findOrCreateUser,
   fetchOrGenerateKey, getOrInitializeSession, findOrInsertRow, getAndSet,
   getOrPut, getOrRefreshToken, getOrRotateKey, searchAndArchive,
+  getNextAndDequeue, fetchMessagesAndAck, getOrAutoCreate, compareAndSet,
   computeIfAbsent and createTableIfNotExists are refused before any
   request, in camelCase, snake_case, kebab-case and dotted operationIds, in
   path segments and in concrete path values, for GET and HEAD as well as for
   declared read-only POSTs. A summary or description such as "Get or create a
-  cart" or "Returns the cart, or creates one if none exists" is refused too.
-  Previously these were sent because only a leading verb or a verb after
-  "and", "then" or "also" was recognized. Names such as getOrDefault,
-  findOrFail, searchByNameOrEmail and searchOrders are unaffected.
+  cart", "Returns the cart, or creates one if none exists" or "If the cart does
+  not exist, a new one is created" is refused too. Previously these were sent
+  because only a leading verb or a verb after "and", "then" or "also" was
+  recognized. Names such as getOrDefault, findOrFail, searchByNameOrEmail and
+  searchOrders, and "View or export a report", are unaffected.
 - A declared read-only POST whose own body asks for a write (a GraphQL
-  mutation, an `action`, `op` or `operationName` naming a write, a `_method` or
-  `X-HTTP-Method-Override` of PUT, PATCH or DELETE, a true `upsert`,
-  `createIfMissing`, `auto_create` or `save_search`-style flag, or a dry-run
-  switch turned off) now fails configuration validation; nothing is sent. The
-  message names the kind of request, never a body key or value.
+  mutation, also written with commas or comments, an `action`, `op`, `mode` or
+  `operationName` naming a write, also namespaced as in `cart.create`, a
+  `_method` or `X-HTTP-Method-Override` of PUT, PATCH or DELETE, a true
+  `upsert`, `createIfMissing`, `auto_create` or `save_search`-style flag, or a
+  dry-run switch turned off, also inside JSON sent as a string) now fails
+  configuration validation; nothing is sent. Data fields named after a verb
+  (`create_by`, `update_time`, `delete_flag`) are not write flags. The message
+  names the kind of request, never a body key or value.
+- The query string of every request is checked before it is sent: the same
+  write switches (`?upsert=true`, `?create=1`, `?_method=DELETE`,
+  `?dry_run=false`), whether they come from a specification default, a
+  generated required value or `parameter_values`, refuse the request with
+  signal `query`, for GET as well as for read-only POST. Ordinary query data
+  such as `?page=2`, `?include_deleted=true` and `?store=1` is unaffected.
 - Configuration validation refuses an identity or role header that overrides
   the HTTP method (`X-HTTP-Method-Override`, `X-HTTP-Method`,
   `X-Method-Override`) to anything but GET or HEAD: these headers are sent with
   every request, so they would turn reads into writes. Role bodies, which
   replace the Owner body on read-only POST role probes, get the same body check
   as `body` and `identity_bodies`.
-- Identifiers are normalized (NFKC) and split after acronyms (getORCreate)
-  before the check. A declared read-only POST whose operationId or path mixes
+- Identifiers are normalized (NFKC), stripped of invisible format characters
+  and combining marks (a zero-width space inside "Create" no longer hides the
+  word) and split after acronyms (getORCreate) before the check. A declared
+  read-only POST whose operationId or path mixes
   ASCII and non-ASCII letters in one word is refused (`identifier_script`),
   because a look-alike letter would hide the action word.
 - Declared read-only POSTs also refuse operationIds and path segments that

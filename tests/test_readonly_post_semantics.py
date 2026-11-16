@@ -28,7 +28,7 @@ import api_sentinel
 from core.auditor import APISentinelAuditor
 from core.config_validator import ConfigValidator
 from core.models import Verdict
-from core.scan_safety import post_path_risk, read_only_body_risk, read_only_risk
+from core.scan_safety import post_path_risk, read_only_body_risk, read_only_risk, read_path_risk
 
 
 def post(path: str, operation_id: Any = None, summary: Optional[str] = None,
@@ -112,7 +112,7 @@ class NamingVariantTests(unittest.TestCase):
 
     def test_spellings_of_get_or_create_are_all_refused(self):
         for operation_id in ("get_or_create_cart", "GET_OR_CREATE_CART", "get-or-create-cart", "GetOrCreateCart",
-                             "getORCreateCart", "get.or.create", "Get Or Create Cart", "getOr​CreateCart"):
+                             "getORCreateCart", "get.or.create", "Get Or Create Cart", "getOr\u200bCreateCart"):
             with self.subTest(operation_id=operation_id):
                 self.assertEqual(signal(post("/carts/search", operation_id)), "operation_id")
 
@@ -156,11 +156,11 @@ class MissingOrUnusualOperationIdTests(unittest.TestCase):
         self.assertEqual(signal(post("/carts/search", full_width)), "operation_id")
 
     def test_ascii_words_with_look_alike_letters_are_refused(self):
-        # A Cyrillic "е" in "Create" would drop the action word from the ASCII word split.
-        risk = read_only_risk(post("/carts/search", "getOrCrеateCart"))
+        # A Cyrillic "\u0435" in "Create" would drop the action word from the ASCII word split.
+        risk = read_only_risk(post("/carts/search", "getOrCr\u0435ateCart"))
         self.assertEqual(risk["safety_signal"], "identifier_script")
         self.assertIn("non-ASCII", risk["safety_reason"])
-        self.assertEqual(signal(post("/carts/sеarch")), "identifier_script")
+        self.assertEqual(signal(post("/carts/s\u0435arch")), "identifier_script")
         # Words written wholly in another script are not look-alikes.
         self.assertIsNone(read_only_risk(post("/orders/search", "searchOrders", "查询订单")))
 
@@ -550,6 +550,196 @@ class LoopbackScanTests(unittest.TestCase):
         self.assertEqual(plan["POST /carts/lookup"]["safety_signal"], "operation_id")
         self.assertNotIn("safety_blocked", plan["POST /products/search"])
         self.assertEqual(_RecordingApi.requests, [])
+
+
+class ExportIsAReadTests(unittest.TestCase):
+    """Round 2: "export" was treated as a write and refused ordinary report downloads.
+
+    On ad125aa these GET and POST operations were scanned; 05a649d refused them.
+    """
+
+    def test_export_and_view_alternatives_are_reads(self):
+        for method, path, summary in (
+                ("GET", "/reports/{id}", "View or export a report"),
+                ("GET", "/invoices/{id}", "Preview or export the invoice PDF"),
+                ("GET", "/audit", "List or export audit events"),
+                ("GET", "/reports/{id}", "Returns the report as JSON or exports the CSV file"),
+                ("GET", "/messages/{id}", "View or mark the read state"),
+                ("POST", "/reports/search", "Search or export reports")):
+            with self.subTest(method=method, summary=summary):
+                self.assertIsNone(read_only_risk({"method": method, "path": path, "summary": summary,
+                                                  "description": summary}))
+        for operation_id in ("viewOrExportReport", "getAndExportCsv", "searchAndExport"):
+            with self.subTest(operation_id=operation_id):
+                self.assertIsNone(read_only_risk({"method": "GET", "path": "/reports", "operation_id": operation_id}))
+
+
+class RoundTwoIdentifierTests(unittest.TestCase):
+    """Round 2: compounds with a modifier or an unambiguous queue verb, and invisible characters."""
+
+    def test_queue_verbs_and_modifiers_are_refused(self):
+        for operation_id in ("getNextAndDequeue", "fetchMessagesAndAck", "listJobsAndAcknowledge", "pollAndConsume",
+                             "getOrAutoCreate", "findOrLazyInit", "getOrMaybeCreate", "findOrForceInsert",
+                             "compareAndSet", "compareAndSwap", "getOrOverwrite"):
+            with self.subTest(operation_id=operation_id):
+                self.assertEqual(signal(post("/x/search", operation_id)), "operation_id")
+                self.assertEqual(signal({"method": "GET", "path": "/x", "operation_id": operation_id}), "operation_id")
+
+    def test_invisible_and_combining_characters_cannot_hide_the_action_word(self):
+        for operation_id in ("getOrCre\u200bateCart", "getOrCre\xadateCart", "getOrCre\u2060ateCart",
+                             "getOrCre\ufeffateCart", "getOrCre\u0332ateCart"):
+            with self.subTest(operation_id=ascii(operation_id)):
+                self.assertEqual(signal(post("/carts/search", operation_id)), "operation_id")
+                self.assertEqual(signal({"method": "GET", "path": "/x", "operation_id": operation_id}), "operation_id")
+
+    def test_nouns_next_to_queue_verbs_are_not_refused(self):
+        for operation_id in ("getAckOrNack", "listAcksAndNacks", "getConsumerGroups", "compareVersions",
+                             "getConsumerOrProducer", "listAcquisitions"):
+            with self.subTest(operation_id=operation_id):
+                self.assertIsNone(read_only_risk(post("/x/search", operation_id)))
+
+
+class RoundTwoGraphQLTests(unittest.TestCase):
+    """Round 2: GraphQL ignores commas, comments and a byte order mark; variables may nest parentheses."""
+
+    def test_mutations_with_ignored_tokens_or_nested_arguments_are_refused(self):
+        for document in ("mutation, { a }", "mutation # comment\n{ a }", "mutation\ufeff{ a }",
+                         "mutation M,($id: ID!,) , { a(id: $id) }",
+                         "mutation M($id: ID! @deprecated(reason: \"x\")) { a(id: $id) }",
+                         "mutation M($s: String = \"a)b\") { a(s: $s) }",
+                         "# header\nmutation\n# between\n{ a }",
+                         "query Q { x }\nmutation M @live { y }"):
+            with self.subTest(document=document):
+                self.assertIsNotNone(read_only_body_risk({"query": document}))
+
+    def test_text_that_mentions_mutation_is_not_refused(self):
+        for text in ("mutation testing", "mutation (genetics)", "query { mutationCount }", "Mutation { a }",
+                     "{ a(text: \"mutations\") }", "#mutation\nquery { a }"):
+            with self.subTest(text=text):
+                self.assertIsNone(read_only_body_risk({"query": text}))
+
+    def test_pathological_documents_are_checked_quickly(self):
+        started = time.monotonic()
+        for document in ("mutation" + "#" * 65000, ("mutation(" * 7000), "mutation " + "," * 65000 + "x",
+                         "mutation M(" + "(" * 30000, "{" + "mutation#" * 7000, "{" + "mutation " * 7000,
+                         "{\"" + "\\\"" * 30000, "{" + "\"\"\"" * 20000, "{ " + "mutation" + " ," * 30000 + "x"):
+            read_only_body_risk({"query": document})
+        self.assertLess(time.monotonic() - started, 2.0)
+
+
+class RoundTwoBodyTests(unittest.TestCase):
+    """Round 2: nested JSON text, write modes and namespaced actions; data fields named after verbs."""
+
+    def test_more_writing_bodies_are_refused(self):
+        for body in ({"request": "{\"action\": \"delete\"}"}, {"payload": "[{\"op\": \"remove\", \"path\": \"/a\"}]"},
+                     {"upsert": 1.0}, {"mode": "upsert"}, {"write_mode": "overwrite"}, {"actions": ["create"]},
+                     {"operations": [{"op": "add"}]}, {"action": "cart.create"}, {"op": "users:delete"},
+                     {"operationType": "mutation"}):
+            with self.subTest(body=body):
+                self.assertIsNotNone(read_only_body_risk(body))
+
+    def test_data_fields_named_after_verbs_are_not_write_flags(self):
+        # Audit columns and soft-delete markers are common filters, as are ids under noun-like keys.
+        for body in ({"filter": {"create_by": 1}}, {"create_time": "2026-01-01"}, {"delete_flag": 1},
+                     {"del_flag": 0}, {"is_delete": 0}, {"update_user": 1}, {"store": 1}, {"store_id": 7},
+                     {"register": 2}, {"mode": "insensitive"}, {"filter": "{\"status\": \"open\"}"},
+                     {"action": "view_details"}, {"commit": "4f2a9c1"},
+                     {"where": [{"field": "name", "op": "startsWith", "value": "a"}]}, {"op": "starts_with"}):
+            with self.subTest(body=body):
+                self.assertIsNone(read_only_body_risk(body))
+        self.assertIsNotNone(read_only_body_risk({"store": True}))
+
+
+class QueryStringWriteTests(unittest.TestCase):
+    """Round 2 (boundary B): a query string can ask for a write; every request URL is checked."""
+
+    def test_query_write_switches_are_refused_at_request_time(self):
+        for url in ("http://127.0.0.1/carts/lookup?upsert=true", "http://127.0.0.1/carts/lookup?create=1",
+                    "http://127.0.0.1/x/search?_method=DELETE", "http://127.0.0.1/items/1?commit=true",
+                    "http://127.0.0.1/x/search?dry_run=false", "http://127.0.0.1/x/search?action=delete",
+                    "http://127.0.0.1/graphql?query=mutation%7Ba%7D", "http://127.0.0.1/x?createIfMissing=yes",
+                    "http://127.0.0.1/x?page=2&auto_create=true"):
+            with self.subTest(url=url):
+                risk = read_path_risk(url)
+                self.assertIsNotNone(risk)
+                self.assertEqual(risk["safety_signal"], "query")
+                self.assertNotIn("upsert", risk["safety_reason"])
+
+    def test_ordinary_query_data_is_not_refused(self):
+        for url in ("http://127.0.0.1/records/1001?redirect=%252fopaque%252fcreate_report&data=..%2f",
+                    "http://127.0.0.1/x?page=1&size=10", "http://127.0.0.1/x?include_deleted=true",
+                    "http://127.0.0.1/x?store=1", "http://127.0.0.1/x?create_time=2026-01-01",
+                    "http://127.0.0.1/x?q=mutation%20testing", "http://127.0.0.1/x?sort=updated_at&action=view",
+                    "http://127.0.0.1/x?delete_flag=1", "http://127.0.0.1/x?field=name&op=startsWith&value=a"):
+            with self.subTest(url=url):
+                self.assertIsNone(read_path_risk(url))
+
+
+class PassiveWriteDescriptionTests(unittest.TestCase):
+    """Round 2 (boundary C): a description that creates the resource when it is missing."""
+
+    def test_existence_conditional_writes_are_refused(self):
+        for description in ("If the cart does not exist, a new one is created.", "A cart is created if none exists.",
+                            "If no session exists, one is initialized automatically.",
+                            "If it does not exist, the server creates it.",
+                            "When the profile doesn't exist yet it will be generated."):
+            with self.subTest(description=description):
+                self.assertEqual(signal(post("/carts/lookup", "lookupCart", "Look up a cart", description)),
+                                 "description")
+                self.assertEqual(signal({"method": "GET", "path": "/carts/{id}", "operation_id": "getCart",
+                                         "description": description}), "description")
+
+    def test_descriptions_of_missing_or_created_data_are_not_refused(self):
+        for description in ("Returns 404 if the order does not exist or was created by another user.",
+                            "Returns orders that are created by the caller.", "If no issues exist, an empty list is returned.",
+                            "Returns 404 if the item is not found.", "Lists stores; stores that do not exist are skipped."):
+            with self.subTest(description=description):
+                self.assertIsNone(read_only_risk(post("/orders/search", "searchOrders", "Search orders", description)))
+
+
+class QueryStringLoopbackTests(unittest.TestCase):
+    """End to end: a query default that asks for a write sends nothing, for GET and for read-only POST."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingApi)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.target = f"http://127.0.0.1:{cls.server.server_address[1]}"
+        folder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(folder.cleanup)
+        flag = {"name": "upsert", "in": "query", "schema": {"type": "boolean", "default": True}}
+        create = {"name": "create", "in": "query", "required": True, "schema": {"type": "boolean", "enum": [True]}}
+        spec = {"openapi": "3.0.3", "info": {"title": "F-8 query", "version": "1"}, "security": [{"bearer": []}],
+                "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
+                "paths": {"/carts/lookup": {"post": _operation("lookupCart", parameters=[flag])},
+                          "/folders/{id}": {"get": _operation("getFolder", parameters=ID + [create])},
+                          "/users/{id}": {"get": _operation("getUser", parameters=ID)}}}
+        cls.spec_path = Path(folder.name) / "spec.json"
+        cls.spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def test_query_write_switches_send_nothing(self):
+        with _RecordingApi.lock:
+            _RecordingApi.requests = []
+        identities = {"owner": {"id": "1001", "token": "Bearer OWNER_TOKEN_F8"},
+                      "visitor": {"id": "1002", "token": "Bearer VISITOR_TOKEN_F8"}, "anonymous": {}}
+        auditor = APISentinelAuditor(str(self.spec_path), self.target, request_delay=0, identities_config=identities,
+                                     bola_config={"POST /carts/lookup": {"read_only": True,
+                                                                         "body": {"cart": "c-1"}}})
+        with redirect_stdout(io.StringIO()):
+            auditor.run()
+        sent = {(method, path) for method, path, _, _ in _RecordingApi.requests}
+        self.assertNotIn(("POST", "/carts/lookup"), sent)
+        self.assertFalse(any(path.startswith("/folders/") for _, path in sent))
+        self.assertIn(("GET", "/users/1001"), sent)
+        results = {item["endpoint"]: item for item in auditor.results}
+        for key in ("POST /carts/lookup", "GET /folders/{id}"):
+            self.assertEqual(results[key]["evidence"]["safety_signal"], "query")
+            self.assertEqual(results[key]["evidence"]["requests_attempted"], 0)
 
 
 if __name__ == "__main__":
