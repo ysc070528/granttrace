@@ -293,6 +293,11 @@ POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantT
 身份或角色的 `headers` 中把方法改写为 GET/HEAD 以外的 `X-HTTP-Method-Override`、`X-HTTP-Method`、
 `X-Method-Override` 会被离线验证拒绝：这些头随该身份的每个请求发送，会把读取变成写入。
 
+同样的规则不依赖 CLI：直接在 Python 中构造 `APISentinelAuditor` 时，带方法改写头的身份、要求写入的角色请求体会在
+构造时以 `ValueError` 拒绝；构造之后再修改身份、或以其他方式传入的请求，在发送前由传输层再检查一次——带方法改写头的任何请求、
+查询字符串要求写入的 GET / HEAD / POST、请求体要求写入的 POST 都不会建立连接，结果记为 `ERROR`，原因写明
+"no request was sent"，不计入已发送的请求。
+
 以下情况**不会**被识别，声明 `read_only` 前须人工确认：
 
 - 没有读取动作、单独表示"读取即消费"的名称，如 `pollMessages`、`receiveMessages`、`consumeEvents`、
@@ -302,9 +307,7 @@ POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantT
 - 不以"资源不存在"为条件的写入描述，如 "Each search increments the quota"；
 - "export" 按读取（下载）处理：`queryAndExport`、"Search or export reports" 不会拒绝；
 - 过滤条件中的动作字段，如 `{"filter": {"action": "delete"}}`、`?action=delete`，会按写入拒绝（保守处理）；
-- 幂等（`Idempotency-Key`、PUT 语义）不代表只读，GrantTrace 从不据此放行；
-- 角色请求体和身份请求头中的方法改写只在配置验证（CLI 扫描前必经）中检查；直接以库方式构造
-  `APISentinelAuditor` 时不会再检查（操作的 `body` / `identity_bodies` 和所有请求的查询字符串在扫描时仍会检查）。
+- 幂等（`Idempotency-Key`、PUT 语义）不代表只读，GrantTrace 从不据此放行。
 
 ### 2. 敏感字段线索（BOPLA 启发式）
 

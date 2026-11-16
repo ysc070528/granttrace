@@ -29,6 +29,7 @@ from core.parameters import (
     serialize_query_parameter,
 )
 from core.parser import OpenAPIParser
+from core.scan_safety import method_override_risk, read_only_body_risk
 
 
 class RequestBuilderMixin:
@@ -120,6 +121,7 @@ class RequestBuilderMixin:
                 continue
             if not isinstance(identity.get("headers", {}), dict):
                 raise ValueError(f"identity '{name}' headers must be an object")
+        self._validate_read_only_identity_material()
         fingerprints = {}
         for name in ("owner", "visitor", "anonymous"):
             material = []
@@ -136,6 +138,30 @@ class RequestBuilderMixin:
             raise ValueError("owner and visitor must use distinct, non-empty effective authentication material")
         if fingerprints["anonymous"]:
             raise ValueError("anonymous identity must not define authentication material")
+
+    def _validate_read_only_identity_material(self) -> None:
+        """Apply the read-only rules of configuration validation to identities given in Python.
+
+        The CLI validates the configuration first; an auditor built directly
+        from Python did not, so these headers and bodies were sent. Identity
+        headers ride on every request, GET included, and a role body replaces
+        the Owner body on read-only POST role probes. The rules are those of
+        core.scan_safety; values are never repeated in the error. The
+        transport applies the same rules again to each request it sends.
+        """
+        for name, identity in self.identities.items():
+            entries = list(identity.items()) if name == "roles" else [(None, identity)]
+            for role_name, entry in entries:
+                label = f"role '{role_name}'" if role_name is not None else f"identity '{name}'"
+                headers = entry.get("headers") or {}
+                if any(method_override_risk(str(key), str(value)) for key, value in headers.items()):
+                    raise ValueError(f"{label} has a header that overrides the HTTP method to one that can change "
+                                     "state; identity headers are sent with every request")
+                body = entry.get("body") if role_name is not None else None
+                risk = read_only_body_risk(body) if body is not None else None
+                if risk:
+                    raise ValueError(f"{label} has a request body that asks for a write; role bodies are sent "
+                                     f"only to read-only POST operations ({risk['safety_reason']})")
 
     def _collect_auth_secret_values(self) -> Set[str]:
         secrets: Set[str] = set()

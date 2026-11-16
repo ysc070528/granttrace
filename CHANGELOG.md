@@ -39,6 +39,16 @@
   every request, so they would turn reads into writes. Role bodies, which
   replace the Owner body on read-only POST role probes, get the same body check
   as `body` and `identity_bodies`.
+- These rules no longer depend on the CLI. An `APISentinelAuditor` built
+  directly from Python refuses such identity headers and role bodies when it
+  is constructed (`ValueError`), and the HTTP transport refuses, before any
+  connection, every request with such a header, every GET, HEAD or POST whose
+  query string asks for a write and every POST with a body that asks for a
+  write, so identities changed after construction are covered too.
+  A refused request is recorded as `ERROR` with "no request was sent" and is
+  not counted as attempted. Previously a program that skipped configuration
+  validation sent `X-HTTP-Method-Override: DELETE` on every GET and a role's
+  GraphQL mutation on the read-only POST role probe.
 - Identifiers are normalized (NFKC), stripped of invisible format characters
   and combining marks (a zero-width space inside "Create" no longer hides the
   word) and split after acronyms (getORCreate) before the check. A declared

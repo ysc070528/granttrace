@@ -22,6 +22,38 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 
 from core import __version__
 from core.models import HTTPResult
+from core.scan_safety import method_override_risk, query_write_risk, read_only_body_risk
+
+# The methods the auditor uses to read; PATCH and PUT are the separately gated writes.
+_READ_METHODS = frozenset({"GET", "HEAD", "POST"})
+
+
+def request_refusal(method: str, url: str, headers: Mapping[str, str], data: Optional[Any]) -> Optional[str]:
+    """Why a request must not leave this transport, or None.
+
+    The same rules as configuration validation and the auditor's request check
+    (core.scan_safety), applied to the request actually about to be sent, so
+    they hold however the auditor was built and whatever changed after it was
+    built: no request may carry a header that overrides the HTTP method to one
+    that can change state; no read request (GET, HEAD, or POST, which the
+    auditor sends only to operations declared read-only) may carry a query
+    string that asks for a write; and no POST may carry a body that asks for a
+    write. PATCH and PUT, the writes of the separately gated mass-assignment
+    check, keep their bodies and queries.
+    """
+    if any(method_override_risk(str(name), str(value)) for name, value in headers.items()):
+        return ("Read-only safety policy blocked a request with a header that overrides the HTTP method "
+                "to one that can change state; no request was sent")
+    method = str(method).upper()
+    if method in _READ_METHODS:
+        query = query_write_risk(url)
+        if query:
+            return query["safety_reason"]
+    if method == "POST" and data is not None:
+        risk = read_only_body_risk(data)
+        if risk:
+            return risk["safety_reason"]
+    return None
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -127,9 +159,15 @@ class HttpTransport:
         """Send one request without throttling; the caller calls ``throttle`` first.
 
         ``on_attempt`` runs just before the request leaves, ``on_response`` once a
-        response (including an HTTP error status) has arrived.
+        response (including an HTTP error status) has arrived. A request that
+        ``request_refusal`` rejects is returned as a failed result before either
+        runs: no connection is opened and nothing is counted as attempted.
         """
         try:
+            # Inside the try: a check that cannot run fails closed, like a failed send.
+            refusal = request_refusal(method, url, headers, data)
+            if refusal:
+                return HTTPResult(status=0, body="", error=refusal)
             request_headers = {
                 "accept": "application/json",
                 "user-agent": f"GrantTrace/{__version__}",
