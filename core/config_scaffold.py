@@ -299,7 +299,8 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
             "set identities.*.token to 'Bearer <test credential>'; for a session cookie, fill the drafted "
             "identities.*.parameters value (each identity's own session, sent with every request); for custom "
             "authentication, use identities.*.headers and auth_header_names. Every identity, roles included, "
-            "must send the same kinds of credentials. Keep anonymous credentials empty.",
+            "must send each credential that every security requirement includes. Ordinary cookies (theme, "
+            "language) are no authentication. Keep anonymous credentials empty.",
             "Replace every resource placeholder with an existing resource belonging to the named test "
             "identity. Parameter values are JSON values of the declared type, not Python list/boolean text. "
             "Fill optional query parameters deliberately when needed; do not guess resource ownership.",

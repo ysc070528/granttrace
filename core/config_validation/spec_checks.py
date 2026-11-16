@@ -230,24 +230,26 @@ class SpecChecks(ValidatorBase):
             return SpecAuth()
         try:
             if spec_path is not None:
-                schemes = OpenAPIParser(
+                parser = OpenAPIParser(
                     spec_path,
                     remote_ref_config=remote_ref_config,
                     offline=offline,
-                ).get_security_schemes()
+                )
+                schemes = parser.get_security_schemes()
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.
                 with tempfile.TemporaryDirectory(prefix="granttrace-auth-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    schemes = OpenAPIParser(
+                    parser = OpenAPIParser(
                         str(source),
                         remote_ref_config=remote_ref_config,
                         offline=offline,
-                    ).get_security_schemes()
+                    )
+                    schemes = parser.get_security_schemes()
         except RemoteRefOfflineBlockedError:
             raise
         except (OSError, TypeError, ValueError, RuntimeError):
             raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
-        return SpecAuth.from_schemes(schemes)
+        return SpecAuth.from_spec(schemes, parser.raw_spec)

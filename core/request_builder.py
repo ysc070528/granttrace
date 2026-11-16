@@ -79,7 +79,7 @@ class RequestBuilderMixin:
         cached = getattr(self, "_spec_auth_cache", None)
         if cached is not None and cached[0] is self.parser:
             return cached[1]
-        spec = SpecAuth.from_schemes(self.parser.get_security_schemes())
+        spec = SpecAuth.from_spec(self.parser.get_security_schemes(), self.parser.raw_spec)
         self._spec_auth_cache = (self.parser, spec)
         return spec
 

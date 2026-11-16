@@ -58,6 +58,7 @@ class _Api(BaseHTTPRequestHandler):
     seen: List[Dict[str, Any]] = []
     lock = threading.Lock()
     require_all = False
+    session_only = False  # Only the session cookie authenticates (an ordinary cookie or a token does not).
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -69,6 +70,8 @@ class _Api(BaseHTTPRequestHandler):
         by_token = next((name for name, value in TOKENS.items() if auth == value), None)
         if cls.require_all:
             return by_session if by_session and by_session == by_token else None
+        if cls.session_only:
+            return by_session
         return by_session or by_key or by_token
 
     def _answer(self) -> None:
@@ -126,7 +129,8 @@ def _spec(declare_cookie: bool = False, schemes: Optional[Dict[str, Any]] = None
 
 MIXED_SCHEMES = {"bearer": {"type": "http", "scheme": "bearer"},
                  "cookieAuth": {"type": "apiKey", "in": "cookie", "name": COOKIE}}
-MIXED_SECURITY = [{"bearer": [], "cookieAuth": []}]
+MIXED_SECURITY = [{"bearer": [], "cookieAuth": []}]  # Bearer AND Cookie
+OR_SECURITY = [{"bearer": []}, {"cookieAuth": []}]  # Bearer OR Cookie
 
 
 def _session(name: str) -> Dict[str, Any]:
@@ -173,6 +177,7 @@ class _Loopback(unittest.TestCase):
         with _Api.lock:
             _Api.seen = []
         _Api.require_all = False
+        _Api.session_only = False
 
     def write_spec(self, spec: Dict[str, Any], name: str = "spec.json") -> Path:
         path = self.folder / name
@@ -327,6 +332,10 @@ class ValidationTests(unittest.TestCase):
                 admin={"role": "administrator", "token": TOKENS["admin"], **_session("admin")},
                 viewer={"role": "viewer", "token": TOKENS["viewer"], **_session("viewer")}),
                 _spec(schemes=MIXED_SCHEMES, security=MIXED_SECURITY)),
+            "Bearer or Cookie, identities authenticating differently": (_identities(
+                owner={"id": "1001", "token": TOKENS["owner"]},
+                admin={"role": "administrator", "token": TOKENS["admin"]}),
+                _spec(schemes=MIXED_SCHEMES, security=OR_SECURITY)),
         }
         for name, (identities, spec) in cases.items():
             with self.subTest(name=name):
@@ -346,10 +355,13 @@ class ValidationTests(unittest.TestCase):
                 owner={"id": "1001", "token": TOKENS["owner"], **_session("owner")},
                 visitor={"id": "1002", "token": TOKENS["visitor"], **_session("owner")}),
                 _spec(schemes=MIXED_SCHEMES, security=MIXED_SECURITY), ["identities.visitor"]),
-            "visitor without the session cookie": (_identities(
+            "visitor without the session cookie the specification requires": (_identities(
                 roles=False, visitor={"id": "1002", "token": TOKENS["visitor"]}),
-                _spec(schemes=MIXED_SCHEMES, security=[{"bearer": []}, {"cookieAuth": []}]),
+                _spec(schemes=MIXED_SCHEMES, security=[{"cookieAuth": []}]),
                 ["identities.visitor"]),
+            "visitor without the bearer token Bearer + Cookie requires": (_identities(
+                roles=False, owner={"id": "1001", "token": TOKENS["owner"], **_session("owner")}),
+                _spec(schemes=MIXED_SCHEMES, security=MIXED_SECURITY), ["identities.visitor"]),
             "anonymous identity with a session cookie": (_identities(anonymous=_session("owner")), _spec(),
                                                          ["identities.anonymous"]),
             "role without credentials": (_identities(viewer={"role": "viewer"}), _spec(),
@@ -367,7 +379,7 @@ class ValidationTests(unittest.TestCase):
         }
         for name, (identities, spec, expected) in cases.items():
             with self.subTest(name=name):
-                paths = self.paths(identities, spec)
+                paths = self.paths(identities, spec, bola=RBAC)
                 for path in expected:
                     self.assertIn(path, paths)
 
@@ -588,6 +600,153 @@ class RequestGuardCompatibilityTests(_Loopback):
                                 {"cookie": f"{COOKIE}={SESSIONS['owner']}"}, {"query": "mutation { a { b } }"})
         self.assertIn("no request was sent", result.error)
         self.assertEqual(_Api.seen, [])
+
+
+BEARER_SCHEMES = {"bearer": {"type": "http", "scheme": "bearer"}}
+BFLA = {"GET /admin/settings": {"required_role": "administrator", "owner_role": "administrator",
+                                "visitor_role": "user", "private_data_paths": ["signing_key"]}}
+
+
+class OrdinaryCookieTests(_Loopback):
+    """A cookie that is not a credential (theme, language) does not authenticate an identity."""
+
+    THEME_ONLY = {"owner": {"id": "1001", "headers": {"Cookie": "theme=dark"}},
+                  "visitor": {"id": "1002", "headers": {"Cookie": "theme=light"}}, "anonymous": {}}
+
+    def validation_paths(self, identities: Dict[str, Any], spec: Dict[str, Any], bola: Any = None) -> List[str]:
+        result = ConfigValidator.validate({"identities": identities, **({"bola": bola} if bola else {})}, spec)
+        return sorted(issue.path for issue in result.errors)
+
+    def test_theme_cookies_are_no_credentials_when_the_specification_requires_a_session(self):
+        self.assertIn("identities.owner", self.validation_paths(self.THEME_ONLY, _spec()))
+        self.assertIn("identities.visitor", self.validation_paths(self.THEME_ONLY, _spec()))
+        with self.assertRaises(ValueError) as caught:
+            self.auditor(self.THEME_ONLY, bola={})
+        self.assertIn("no effective authentication material", str(caught.exception))
+        self.assertEqual(_Api.seen, [])
+
+    def test_theme_cookies_are_no_credentials_without_a_cookie_scheme(self):
+        spec = _spec(schemes=BEARER_SCHEMES, security=[{"bearer": []}])
+        identities = {"owner": {"id": "9001", "token": TOKENS["admin"]},
+                      "visitor": {"id": "1002", "headers": {"Cookie": "theme=light"}}, "anonymous": {}}
+        # A visitor that cannot authenticate would read as a clean BFLA denial: SECURE.
+        self.assertIn("identities.visitor", self.validation_paths(identities, spec, BFLA))
+        with self.assertRaises(ValueError):
+            self.auditor(identities, spec, bola=BFLA)
+        roles = dict(self.THEME_ONLY, owner={"id": "1001", "token": TOKENS["owner"]},
+                     visitor={"id": "1002", "token": TOKENS["visitor"]},
+                     roles={"admin": {"role": "administrator", "token": TOKENS["admin"]},
+                            "viewer": {"role": "viewer", "headers": {"Cookie": "theme=light"}}})
+        self.assertIn("identities.roles.viewer", self.validation_paths(roles, spec, RBAC))
+        with self.assertRaises(ValueError):
+            self.auditor(roles, spec)
+        self.assertEqual(_Api.seen, [])
+
+    def test_a_theme_cookie_next_to_a_session_adds_nothing_and_may_be_shared(self):
+        identities = _identities(
+            owner={"id": "1001", "headers": {"Cookie": f"{COOKIE}={SESSIONS['owner']}; theme=dark"}},
+            visitor={"id": "1002", "headers": {"Cookie": f"{COOKIE}={SESSIONS['visitor']}; theme=dark"}})
+        self.assertEqual(self.validation_paths(identities, _spec(), RBAC), [])
+        _Api.session_only = True
+        auditor = self.auditor(identities)
+        self.run_scan(auditor)
+        self.assert_isolated({"owner", "visitor", "admin", "viewer", None})
+        self.assertEqual(self.rbac(auditor, "viewer")["verdict"], "SECURE")
+
+    def test_anonymous_still_sends_no_identity_cookie(self):
+        with self.assertRaises(ValueError) as caught:
+            self.auditor(_identities(anonymous={"headers": {"Cookie": "theme=dark"}}))
+        self.assertIn("anonymous", str(caught.exception))
+
+    def test_a_late_theme_only_role_is_not_probed(self):
+        _Api.session_only = True
+        auditor = self.auditor(_identities())
+        auditor.identities["roles"]["viewer"] = {"role": "viewer", "headers": {"Cookie": "theme=light"}}
+        self.run_scan(auditor)
+        self.assertEqual(self.rbac(auditor, "viewer")["verdict"], "ERROR")
+        self.assertEqual([item["who"] for item in _Api.seen if item["path"] == "/admin/settings"].count(None), 1)
+
+
+class SecurityRequirementTests(_Loopback):
+    """OpenAPI security: alternatives are OR, the schemes of one alternative are AND.
+
+    A credential that every alternative of every requirement includes is
+    mandatory: every authenticated identity sends it, or none does. Where the
+    specification offers alternatives, identities may authenticate differently.
+    """
+
+    def validation(self, identities: Dict[str, Any], spec: Dict[str, Any], bola: Any = RBAC):
+        return ConfigValidator.validate({"identities": identities, "bola": bola}, spec)
+
+    def both(self, name: str, role: Optional[str] = None) -> Dict[str, Any]:
+        entry: Dict[str, Any] = {"token": TOKENS[name], **_session(name)}
+        if role:
+            entry["role"] = role
+        else:
+            entry["id"] = ACCOUNTS[name][0]
+        return entry
+
+    def complete(self) -> Dict[str, Any]:
+        return _identities(owner=self.both("owner"), visitor=self.both("visitor"),
+                           admin=self.both("admin", "administrator"), viewer=self.both("viewer", "viewer"))
+
+    def test_and_requires_every_scheme_of_the_alternative(self):
+        spec = _spec(schemes=MIXED_SCHEMES, security=MIXED_SECURITY)
+        self.assertEqual(self.validation(self.complete(), spec).errors, [])
+        for name, change, path, missing in (
+                ("viewer without bearer", {"viewer": {"role": "viewer", **_session("viewer")}},
+                 "identities.roles.viewer", "Authorization"),
+                ("viewer without session", {"viewer": {"role": "viewer", "token": TOKENS["viewer"]}},
+                 "identities.roles.viewer", COOKIE),
+                ("visitor without bearer", {"visitor": {"id": "1002", **_session("visitor")}},
+                 "identities.visitor", "Authorization")):
+            with self.subTest(name=name):
+                identities = self.complete()
+                target = identities["roles"] if "viewer" in change else identities
+                target.update(change)
+                errors = self.validation(identities, spec).errors
+                self.assertIn(path, [issue.path for issue in errors])
+                self.assertTrue(any(missing in issue.message for issue in errors if issue.path == path))
+                with self.assertRaises(ValueError):
+                    self.auditor(identities, spec)
+                self.assertEqual(_Api.seen, [])
+
+    def test_or_accepts_either_scheme_and_identities_may_differ(self):
+        spec = _spec(schemes=MIXED_SCHEMES, security=OR_SECURITY)
+        identities = _identities(owner={"id": "1001", "token": TOKENS["owner"]},
+                                 admin={"role": "administrator", "token": TOKENS["admin"]})
+        self.assertEqual(self.validation(identities, spec).errors, [])
+        auditor = self.auditor(identities, spec)
+        self.run_scan(auditor)
+        self.assert_isolated({"owner", "visitor", "admin", "viewer", None})
+        owner_requests = [item for item in _Api.seen if item["who"] == "owner"]
+        self.assertTrue(owner_requests and all(COOKIE not in item["jar"] for item in owner_requests))
+        visitor_requests = [item for item in _Api.seen if item["who"] == "visitor"]
+        self.assertTrue(visitor_requests and all(item["auth"] is None for item in visitor_requests))
+        self.assertEqual(self.rbac(auditor, "viewer")["verdict"], "SECURE")
+
+    def test_a_credential_is_mandatory_only_when_every_requirement_includes_it(self):
+        # /users/{id} accepts either; /admin/settings needs both: neither credential is mandatory everywhere.
+        spec = _spec(schemes=MIXED_SCHEMES, security=OR_SECURITY)
+        spec["paths"]["/admin/settings"]["get"]["security"] = MIXED_SECURITY
+        mixed = _identities(owner={"id": "1001", "token": TOKENS["owner"]})
+        self.assertEqual(self.validation(mixed, spec, bola={}).errors, [])
+        # A public operation (security: []) does not make a required session optional elsewhere.
+        spec = _spec()
+        spec["paths"]["/admin/settings"]["get"]["security"] = []
+        errors = self.validation(_identities(viewer={"role": "viewer", "token": TOKENS["viewer"]}), spec).errors
+        self.assertIn("identities.roles.viewer", [issue.path for issue in errors])
+
+    def test_a_late_missing_bearer_stops_the_role_probe_before_transmission(self):
+        _Api.require_all = True
+        spec = _spec(schemes=MIXED_SCHEMES, security=MIXED_SECURITY)
+        auditor = self.auditor(self.complete(), spec)
+        auditor.identities["roles"]["viewer"].pop("token")
+        self.run_scan(auditor)
+        record = self.rbac(auditor, "viewer")
+        self.assertEqual(record["verdict"], "ERROR")
+        self.assertIn("no request was sent", record["reason"])
+        self.assertFalse(any(SESSIONS["viewer"] in json.dumps(item["jar"]) for item in _Api.seen))
 
 
 class ScaffoldTests(unittest.TestCase):

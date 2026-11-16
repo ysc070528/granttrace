@@ -69,12 +69,21 @@
   and `SESSIONID=<same>; theme=light` passed validation and every visitor
   request authenticated as the owner, so BOLA was confirmed falsely.
 - Roles are held to the identity rules: each role needs its own credentials,
-  different from every other role's, and every authenticated identity must
-  send the same kinds of declared credentials (`apiKey` scheme headers and
-  cookies, and `auth_header_names`). Previously a role without credentials,
-  or without the header the API requires, was probed unauthenticated and its
-  401 recorded as a SECURE denial, and a role reusing the privileged role's
+  different from every other role's. A credential that every alternative of
+  every security requirement includes (Authorization, an `apiKey` header or
+  session cookie) is sent by every authenticated identity or by none, and so
+  is a header listed in `auth_header_names`; where the specification offers
+  alternatives (`[{bearerAuth: []}, {sessionAuth: []}]`), identities may
+  authenticate differently. Previously a role without credentials, or without
+  the credential the API requires, was probed unauthenticated and its 401
+  recorded as a SECURE denial, and a role reusing the privileged role's
   credentials was confirmed as an RBAC violation.
+- A cookie that is no credential (a theme, a language) no longer
+  authenticates an identity: only the session cookies the specification
+  declares count, or, without one, cookies named like a credential. An owner,
+  visitor or role with only such cookies was accepted and sent unauthenticated
+  requests, and a visitor or role refused that way was recorded as a SECURE
+  BFLA or RBAC denial. Anonymous may not have a Cookie header of its own.
 - Anonymous may not carry a session cookie or a declared credential in
   `identities.anonymous.parameters` or `parameter_values.*.anonymous`, and a
   session cookie may not be a `common` or operation-wide value.
