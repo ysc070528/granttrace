@@ -695,16 +695,24 @@ def _display_target(args: argparse.Namespace, auditor: APISentinelAuditor) -> st
     return sanitize_url(args.target, secret_values=auditor.secret_values())
 
 
+def _preserve_spec_metadata(source: Dict[str, Any], sanitized: Dict[str, Any]) -> Dict[str, Any]:
+    if "endpoint" in source:
+        sanitized["endpoint"] = source["endpoint"]
+    if "operation_id" in source:
+        sanitized["operation_id"] = source["operation_id"]
+    return sanitized
+
+
 def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
                     elapsed: float, comparison_key: Optional[str] = None) -> None:
     """Write the HTML report and the optional JSON and SARIF exports."""
     with PROPERTY_EVIDENCE_LOCK:
         report_stats = dict(auditor.stats)
         report_results = (list(auditor.results) if not auditor.bopla_config else [
-            sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
+            _preserve_spec_metadata(item, sanitize_property_record(item, auditor.secret_values(), omit_responses=True))
             for item in auditor.results])
         report_findings = (list(auditor.findings) if not auditor.bopla_config else [
-            sanitize_property_record(item, auditor.secret_values(), omit_responses=True)
+            _preserve_spec_metadata(item, sanitize_property_record(item, auditor.secret_values(), omit_responses=True))
             for item in auditor.findings])
     _ensure_parent(args.output)
     reproduction_secrets = set(auditor.secret_values())
@@ -754,7 +762,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
                     parameter_values=auditor.parameter_values,
                     bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
                     readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                    secret_values=auditor.secret_values(),
+                    secret_values=auditor.config_secret_values(),
                 )
             json.dump(
                 json_payload,
@@ -769,7 +777,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
             results=report_results,
             target_url=report_target,
             output_path=args.export_sarif,
-            secret_values=auditor.secret_values(),
+            secret_values=auditor.config_secret_values(),
             spec_path=spec_path,
         )
         print("[OK] SARIF report: " + sanitize_log_text(

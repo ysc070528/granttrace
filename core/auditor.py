@@ -26,7 +26,13 @@ from core.authorization import AuthorizationEvidence
 from core.bopla import BOPLAEvidence, validate_bopla_policy
 from core.config_validator import ConfigValidator
 from core.diff import ResponseDiffEngine
-from core.evidence import body_sha256, sanitize_body, sanitize_evidence
+from core.evidence import (
+    body_sha256,
+    sanitize_body,
+    sanitize_evidence,
+    sanitize_operation_key,
+    sanitize_text,
+)
 from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
 from core.generator import SmartDataGenerator
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
@@ -144,7 +150,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             "anonymous": {"id": None, "token": None, "parameters": {}},
         }
         self._validate_identities()
-        self._secret_values = self._collect_auth_secret_values()
+        configured_secrets = frozenset(self._collect_auth_secret_values())
+        self._configured_secrets: FrozenSet[str] = configured_secrets
+        self._secret_values: Set[str] = set(configured_secrets) | self._collect_sensitive_config_values()
         self._auth_parser = self.parser
         self._auth_parser_lock = threading.Lock()
 
@@ -222,6 +230,21 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         """
         return frozenset(self._secret_values)
 
+    def config_secret_values(self) -> FrozenSet[str]:
+        """Return the immutable snapshot of configuration-derived authentication secrets.
+
+        Unlike ``secret_values()``, this snapshot never absorbs live HTTP response
+        values discovered during a scan, so configuration fingerprints remain
+        stable when server responses change.
+        """
+        self._ensure_parser_auth()
+        current = frozenset(self._collect_auth_secret_values())
+        if not current <= self._configured_secrets:
+            with self._result_lock:
+                self._configured_secrets = self._configured_secrets | current
+                self._secret_values = self._secret_values | current
+        return current
+
     def _publish_secret_values(self, values: Set[str]) -> None:
         """Replace the published secret set; never mutate a shared snapshot.
 
@@ -239,7 +262,14 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             else:
                 for collection in (self.results, self.findings):
                     for record in collection:
+                        has_ep, keep_ep = "endpoint" in record, record.get("endpoint")
+                        has_op_id, keep_op_id = "operation_id" in record, record.get("operation_id")
                         safe = sanitize_evidence(record, self.include_sensitive_evidence, self._secret_values)
+                        if isinstance(safe, dict):
+                            if has_ep:
+                                safe["endpoint"] = keep_ep
+                            if has_op_id:
+                                safe["operation_id"] = keep_op_id
                         self._replace_evidence_in_place(record, safe)
 
     def _ensure_parser_auth(self) -> None:
@@ -253,17 +283,42 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 return
             parser.get_security_schemes()
             self._validate_identities()
-            secrets = self._secret_values.union(self._collect_auth_secret_values())
+            auth_secrets = self._collect_auth_secret_values()
+            sensitive_cfg = self._collect_sensitive_config_values()
+            configured_secrets = frozenset(self._configured_secrets.union(auth_secrets))
+            secrets = self._secret_values.union(auth_secrets).union(sensitive_cfg)
             with self._result_lock:
+                self._configured_secrets = configured_secrets
                 self._secret_values = secrets
                 # A previously ordinary value may now be an authentication
                 # secret. Scrub earlier observations and retained aliases too.
                 if self.bopla_config:
+                    for collection in (self.results, self.findings):
+                        for record in collection:
+                            if isinstance(record.get("endpoint"), str):
+                                record["endpoint"] = sanitize_operation_key(record["endpoint"], configured_secrets)
+                            if isinstance(record.get("operation_id"), str):
+                                record["operation_id"] = sanitize_text(
+                                    record["operation_id"], secret_values=configured_secrets
+                                )
                     self._redact_property_history()
                 else:
                     for collection in (self.results, self.findings):
                         for record in collection:
+                            has_ep = isinstance(record.get("endpoint"), str)
+                            keep_ep = sanitize_operation_key(record["endpoint"], configured_secrets) if has_ep else None
+                            has_op_id = isinstance(record.get("operation_id"), str)
+                            keep_op_id = (
+                                sanitize_text(record["operation_id"], secret_values=configured_secrets)
+                                if has_op_id
+                                else None
+                            )
                             safe = sanitize_evidence(record, self.include_sensitive_evidence, secrets)
+                            if isinstance(safe, dict):
+                                if has_ep:
+                                    safe["endpoint"] = keep_ep
+                                if has_op_id:
+                                    safe["operation_id"] = keep_op_id
                             self._replace_evidence_in_place(record, safe)
             self._auth_parser = parser
 

@@ -68,7 +68,7 @@ class ModuleBoundaryTests(unittest.TestCase):
                                   "is_request_metadata_key", "denial_body_is_clean")),
             (AuthorizationEvidence, ("assess", "valid", "private_values", "clean_denial")),
             (SmartDataGenerator, ("parameter_schema", "is_resource_identifier")),
-            (APISentinelAuditor, ("secret_values", "identity_headers")),
+            (APISentinelAuditor, ("secret_values", "config_secret_values", "identity_headers")),
         ):
             for name in names:
                 with self.subTest(owner=owner.__name__, name=name):

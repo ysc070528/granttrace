@@ -17,6 +17,8 @@ from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlencode, urlsplit, urlunsplit
 
+from core.models import parse_operation_key
+
 MAX_TEXT_CHARS = 4096
 MAX_DEPTH = 12
 MAX_CONTAINER_ITEMS = 100
@@ -75,16 +77,36 @@ def _normalized_key(key: str) -> str:
     return re.sub(r"[\s.-]+", "_", key.lower())
 
 
+AUTH_CREDENTIAL_KEYS = frozenset({
+    "authorization", "password", "passwd", "pwd", "secret", "cookie", "token",
+    "api_key", "apikey", "private_key", "jwt", "sid", "auth", "bearer", "ticket",
+})
+_AUTH_CREDENTIAL_SUBSTRINGS = (
+    "password", "passwd", "secret", "token", "apikey", "privatekey",
+    "authorization", "cookie", "session", "credential", "jwt",
+)
+
+
 @lru_cache(maxsize=4096)
-def _is_sensitive_key(key: str) -> bool:
+def is_auth_credential_key(key: str) -> bool:
+    """Whether a field or parameter name identifies authentication material rather than business PII."""
+    normalized = _normalized_key(key)
+    compact = normalized.replace("_", "")
+    return normalized in AUTH_CREDENTIAL_KEYS or any(token in compact for token in _AUTH_CREDENTIAL_SUBSTRINGS)
+
+
+@lru_cache(maxsize=4096)
+def is_sensitive_key(key: str) -> bool:
     key = _normalized_key(key)
     compact = key.replace("_", "")
-    return key in SENSITIVE_KEYS or compact in {"fullname", "firstname", "lastname", "phonenumber"} or any(
-        token in compact for token in (
-            "password", "passwd", "secret", "token", "apikey", "privatekey", "authorization", "cookie",
-            "session", "credential",
-        )
+    return (
+        key in SENSITIVE_KEYS
+        or compact in {"fullname", "firstname", "lastname", "phonenumber"}
+        or is_auth_credential_key(key)
     )
+
+
+_is_sensitive_key = is_sensitive_key
 
 
 def body_sha256(body: str) -> str:
@@ -98,9 +120,9 @@ def _secret_variants(secret_values: Iterable[str]) -> tuple[str, ...]:
         secret_values = (secret_values,)
     values = {str(value) for value in secret_values if value}
     for value in tuple(values):
-        match = re.fullmatch(r"(?i)(?:Bearer|Basic)\s+(.+)", value)
+        match = re.fullmatch(r"(?i)(?:Bearer|Basic|Token)\s+(.+)", value)
         if match:
-            values.add(match.group(1))
+            values.add(match.group(1).strip())
         # Cookies are supplied as complete headers, but applications may echo
         # just one cookie's credential. Only split a complete cookie-shaped
         # string; retain the original secret even when parsing fails.
@@ -295,6 +317,52 @@ def sanitize_url(url: str, include_sensitive: bool = False,
                  secret_values: Iterable[str] = ()) -> str:
     sanitizer = _Sanitizer(include_sensitive, secret_values)
     return sanitizer._limit_text(sanitizer.url(url))
+
+
+def sanitize_operation_key(value: Any, secret_values: Iterable[str] = ()) -> Any:
+    """Sanitize an OpenAPI '<METHOD> /<path>' template without corrupting HTTP verbs or placeholders."""
+    if not isinstance(value, str) or not value:
+        return value
+    secrets = tuple(str(item) for item in secret_values if isinstance(item, str) and item)
+    valid, method, path, _, _ = parse_operation_key(value.strip())
+    if not valid:
+        return sanitize_text(value, secret_values=secrets)
+    placeholders: list[tuple[str, str]] = []
+    combined = path + "\0" + "\0".join(secrets)
+    salt = 0
+    while f"__GT_TPL_{salt}_" in combined:
+        salt += 1
+
+    def mask_placeholder(match: re.Match[str]) -> str:
+        raw_token = match.group(0)
+        inner = raw_token[1:-1]
+        safe_inner = sanitize_text(inner, secret_values=secrets)
+        raw_matched = any(secret == raw_token for secret in secrets)
+        restored = (
+            "{[REDACTED]}"
+            if raw_matched and safe_inner == inner
+            else "{" + quote(safe_inner, safe="[]_-.~") + "}"
+            if safe_inner != inner
+            else raw_token
+        )
+        marker = f"__GT_TPL_{salt}_{len(placeholders)}__"
+        placeholders.append((marker, restored))
+        return marker
+
+    masked_path = re.sub(r"\{[^{}]+\}", mask_placeholder, path)
+    sanitized_full = sanitize_url("http://granttrace.invalid" + masked_path, secret_values=secrets)
+    if sanitized_full == "[URL OMITTED]":
+        safe_path = "/[REDACTED]"
+    else:
+        try:
+            safe_path = urlsplit(sanitized_full).path or "/[REDACTED]"
+        except ValueError:
+            safe_path = "/[REDACTED]"
+    for marker, restored in placeholders:
+        safe_path = safe_path.replace(marker, restored)
+    if not safe_path.startswith("/"):
+        safe_path = "/" + safe_path
+    return f"{method} {safe_path}"
 
 
 def sanitize_text(text: str, include_sensitive: bool = False, secret_values: Iterable[str] = ()) -> str:

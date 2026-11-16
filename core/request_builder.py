@@ -14,11 +14,12 @@ because tests and the hash-pinned write transaction call them by these names.
 
 from __future__ import annotations
 
+import math
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.config_validator import ConfigValidator
-from core.evidence import _is_sensitive_key
+from core.evidence import is_auth_credential_key, is_sensitive_key
 from core.generator import SmartDataGenerator
 from core.parameters import (
     ParameterSerializationError,
@@ -164,78 +165,160 @@ class RequestBuilderMixin:
                                      f"only to read-only POST operations ({risk['safety_reason']})")
 
     def _collect_auth_secret_values(self) -> Set[str]:
+        """Collect static authentication credentials from configuration and security schemes.
+
+        Business PII fields (such as ``name``, ``email`` or ``ssn``) are excluded so
+        they never masquerade as credentials in ``comparison_context``.
+        """
+        return self._collect_config_secrets(include_business_pii=False)
+
+    def _collect_sensitive_config_values(self) -> Set[str]:
+        """Collect all configured credentials and sensitive PII for output redaction only."""
+        return self._collect_config_secrets(include_business_pii=True)
+
+    def _collect_config_secrets(self, *, include_business_pii: bool) -> Set[str]:
         secrets: Set[str] = set()
 
-        def _collect_from_param(p_name: str, p_val: Any) -> None:
-            is_sensitive_param = (
-                self._is_auth_header(p_name)
-                or self._is_auth_cookie(p_name)
-                or _is_sensitive_key(p_name)
+        def add_scalar(raw: Any, *, is_cookie: bool = False) -> None:
+            if raw is None or isinstance(raw, bool):
+                return
+            if isinstance(raw, float) and not math.isfinite(raw):
+                return
+            if not isinstance(raw, (str, int, float)):
+                return
+            text = str(raw)
+            if not text:
+                return
+            secrets.add(text)
+            scheme_match = re.match(r"(?i)^(?:bearer|basic|token)\s+(.+)$", text.strip())
+            if scheme_match and scheme_match.group(1).strip():
+                secrets.add(scheme_match.group(1).strip())
+            if is_cookie:
+                for part in text.split(";"):
+                    if "=" in part:
+                        c_val = part.split("=", 1)[1].strip().strip('"')
+                        if c_val:
+                            secrets.add(c_val)
+
+        def collect_all_scalars(node: Any, depth: int, seen: Set[int], *, is_cookie: bool = False) -> None:
+            if depth > 20:
+                return
+            if isinstance(node, (dict, list, tuple)):
+                obj_id = id(node)
+                if obj_id in seen:
+                    return
+                next_seen = seen | {obj_id}
+                items = node.values() if isinstance(node, dict) else node
+                for child in items:
+                    collect_all_scalars(child, depth + 1, next_seen, is_cookie=is_cookie)
+            else:
+                add_scalar(node, is_cookie=is_cookie)
+
+        def walk_structured(
+            node: Any,
+            matcher: Callable[[str], bool],
+            depth: int = 0,
+            seen: Optional[Set[int]] = None,
+        ) -> None:
+            if depth > 20:
+                return
+            active_seen = set() if seen is None else seen
+            if isinstance(node, dict):
+                obj_id = id(node)
+                if obj_id in active_seen:
+                    return
+                next_seen = active_seen | {obj_id}
+                for raw_key, child in node.items():
+                    key_str = str(raw_key)
+                    if matcher(key_str):
+                        collect_all_scalars(
+                            child,
+                            depth + 1,
+                            next_seen,
+                            is_cookie=key_str.strip().lower() == "cookie" or self._is_auth_cookie(key_str),
+                        )
+                    elif isinstance(child, (dict, list, tuple)):
+                        walk_structured(child, matcher, depth + 1, next_seen)
+            elif isinstance(node, (list, tuple)):
+                obj_id = id(node)
+                if obj_id in active_seen:
+                    return
+                next_seen = active_seen | {obj_id}
+                for child in node:
+                    if isinstance(child, (dict, list, tuple)):
+                        walk_structured(child, matcher, depth + 1, next_seen)
+
+        def param_matcher(name: str) -> bool:
+            is_auth = (
+                self._is_auth_header(name)
+                or self._is_auth_cookie(name)
+                or self._is_auth_query_parameter(name)
+                or is_auth_credential_key(name)
             )
-            if is_sensitive_param:
-                if isinstance(p_val, (str, int, float)) and str(p_val):
-                    secrets.add(str(p_val))
-                elif isinstance(p_val, list):
-                    for item in p_val:
-                        if isinstance(item, (str, int, float)) and str(item):
-                            secrets.add(str(item))
-                elif isinstance(p_val, dict):
-                    for k, v in p_val.items():
-                        if isinstance(v, (str, int, float)) and str(v):
-                            secrets.add(str(v))
-            elif isinstance(p_val, dict):
-                for k, v in p_val.items():
-                    if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
-                        if isinstance(v, (str, int, float)) and str(v):
-                            secrets.add(str(v))
-                        elif isinstance(v, list):
-                            for item in v:
-                                if isinstance(item, (str, int, float)) and str(item):
-                                    secrets.add(str(item))
+            return is_auth or (include_business_pii and is_sensitive_key(name))
+
+        def body_matcher(name: str) -> bool:
+            return is_auth_credential_key(name) or (include_business_pii and is_sensitive_key(name))
 
         for identity_name, identity in self.identities.items():
             if identity_name == "roles" and isinstance(identity, dict):
                 for role_name, role_data in identity.items():
-                    if isinstance(role_data, dict):
-                        for key, value in self.identity_headers(role_name).items():
-                            # Roles cannot declare auth_header_names: every role
-                            # header is identity material and is redacted.
-                            if value:
-                                secrets.add(value)
-                                if key.lower() == "authorization" and " " in value:
-                                    secrets.add(value.split(" ", 1)[1])
-                                if key.lower() == "cookie":
-                                    for part in value.split(";"):
-                                        if "=" in part:
-                                            c_val = part.split("=", 1)[1].strip().strip('"')
-                                            if c_val:
-                                                secrets.add(c_val)
-                        for p_name, p_val in role_data.get("parameters", {}).items():
-                            _collect_from_param(p_name, p_val)
+                    if not isinstance(role_data, dict):
+                        continue
+                    for key, value in self.identity_headers(role_name).items():
+                        # Roles cannot declare auth_header_names: every role
+                        # header is identity material and is redacted.
+                        if value:
+                            add_scalar(value, is_cookie=key.lower() == "cookie")
+                    if isinstance(role_data.get("parameters"), dict):
+                        walk_structured(role_data["parameters"], param_matcher)
+                    if role_data.get("body") is not None:
+                        walk_structured(role_data["body"], body_matcher)
+                continue
+            if not isinstance(identity, dict):
                 continue
             for key, value in self.identity_headers(identity_name).items():
-                if self._is_auth_header(key):
-                    secrets.add(value)
-                    if key.lower() == "authorization" and " " in value:
-                        secrets.add(value.split(" ", 1)[1])
-                    if key.lower() == "cookie":
-                        for part in value.split(";"):
-                            if "=" in part:
-                                c_val = part.split("=", 1)[1].strip().strip('"')
-                                if c_val:
-                                    secrets.add(c_val)
-            for p_name, p_val in identity.get("parameters", {}).items():
-                _collect_from_param(p_name, p_val)
+                if self._is_auth_header(key) and value:
+                    add_scalar(value, is_cookie=key.lower() == "cookie")
+            if isinstance(identity.get("parameters"), dict):
+                walk_structured(identity["parameters"], param_matcher)
+            if identity.get("body") is not None:
+                walk_structured(identity["body"], body_matcher)
 
-        for conf in self.parameter_values.values():
-            if isinstance(conf, dict):
-                for sub_key, sub_val in conf.items():
-                    if isinstance(sub_val, dict):
-                        for p_name, p_val in sub_val.items():
-                            _collect_from_param(p_name, p_val)
+        for conf in (getattr(self, "parameter_values", None) or {}).values():
+            if not isinstance(conf, dict):
+                continue
+            for sub_key, sub_val in conf.items():
+                if sub_key in {"common", "owner", "visitor", "anonymous"} and isinstance(sub_val, dict):
+                    walk_structured(sub_val, param_matcher)
+                else:
+                    walk_structured({sub_key: sub_val}, param_matcher)
+
+        for policy in (getattr(self, "bola_config", None) or {}).values():
+            if not isinstance(policy, dict):
+                continue
+            if policy.get("body") is not None:
+                walk_structured(policy["body"], body_matcher)
+            identity_bodies = policy.get("identity_bodies")
+            if isinstance(identity_bodies, dict):
+                for body_val in identity_bodies.values():
+                    if body_val is not None:
+                        walk_structured(body_val, body_matcher)
+
+        for rb in (getattr(self, "readback_config", None) or {}).values():
+            if not isinstance(rb, dict):
+                continue
+            if isinstance(rb.get("parameters"), dict):
+                walk_structured(rb["parameters"], param_matcher)
+            rb_params = rb.get("parameter_values")
+            if isinstance(rb_params, dict):
+                for sub_key, sub_val in rb_params.items():
+                    if sub_key in {"common", "owner", "visitor", "anonymous"} and isinstance(sub_val, dict):
+                        walk_structured(sub_val, param_matcher)
                     else:
-                        p_name, p_val = sub_key, sub_val
-                        _collect_from_param(p_name, p_val)
+                        walk_structured({sub_key: sub_val}, param_matcher)
+            if rb.get("baseline_payload") is not None:
+                walk_structured(rb["baseline_payload"], body_matcher)
 
         return secrets
 
@@ -350,7 +433,7 @@ class RequestBuilderMixin:
                     )
                 emitted_cookies.add(c_name)
                 cookie_pairs.append((c_name, c_val))
-                if is_auth_cookie or _is_sensitive_key(name):
+                if is_auth_cookie or is_sensitive_key(name):
                     discovered_secrets.add(c_val)
                     if isinstance(val, (str, int, float)) and str(val):
                         discovered_secrets.add(str(val))
@@ -447,7 +530,7 @@ class RequestBuilderMixin:
     def _header_secret_values(self, name: str, val: Any, hdr_val: str, is_auth_hdr: bool) -> Set[str]:
         """Values of a header parameter that must be redacted from evidence."""
         secrets: Set[str] = set()
-        if is_auth_hdr or _is_sensitive_key(name):
+        if is_auth_hdr or is_sensitive_key(name):
             secrets.add(hdr_val)
             if isinstance(val, (str, int, float)) and str(val):
                 secrets.add(str(val))
@@ -461,7 +544,7 @@ class RequestBuilderMixin:
                         secrets.add(str(v))
         elif isinstance(val, dict):
             for k, v in val.items():
-                if self._is_auth_header(k) or self._is_auth_cookie(k) or _is_sensitive_key(k):
+                if self._is_auth_header(k) or self._is_auth_cookie(k) or is_sensitive_key(k):
                     if isinstance(v, (str, int, float)) and str(v):
                         secrets.add(str(v))
         return secrets

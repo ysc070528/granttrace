@@ -73,9 +73,10 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 from core import __version__
+from core.evidence import is_auth_credential_key, sanitize_operation_key
 from core.models import parse_operation_key
 
 COMPARISON_SCHEMA_VERSION = 1
@@ -244,6 +245,26 @@ def _declares_account(identity: Any) -> bool:
     return isinstance(value, (str, int)) and not isinstance(value, bool) and bool(str(value).strip())
 
 
+def _declared_auth_parameter_names(security_schemes: Any, identity_map: Mapping[Any, Any]) -> Set[str]:
+    names: Set[str] = {"access_token"}
+    if isinstance(security_schemes, Mapping):
+        for bucket in ("components", "definitions"):
+            schemes = security_schemes.get(bucket)
+            if isinstance(schemes, Mapping):
+                for scheme in schemes.values():
+                    if isinstance(scheme, Mapping) and isinstance(scheme.get("name"), str) and scheme["name"].strip():
+                        names.add(scheme["name"].strip().lower())
+    for identity_name, identity_data in identity_map.items():
+        if identity_name == "roles" or not isinstance(identity_data, Mapping):
+            continue
+        custom = identity_data.get("auth_header_names")
+        if isinstance(custom, list):
+            for entry in custom:
+                if isinstance(entry, str) and entry.strip():
+                    names.add(entry.strip().lower())
+    return names
+
+
 def build_comparison_context(
     *,
     key: str,
@@ -281,6 +302,84 @@ def build_comparison_context(
     """
     validate_comparison_key(key)
     secrets = tuple(sorted({value for value in secret_values if isinstance(value, str) and value}))
+    identity_map = identities if isinstance(identities, Mapping) else {}
+    scheme_names = _declared_auth_parameter_names(security_schemes, identity_map)
+
+    def is_credential_param_key(name: Any) -> bool:
+        return isinstance(name, str) and (
+            is_auth_credential_key(name) or name.strip().lower() in scheme_names
+        )
+
+    def mask_param_tree(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            masked_map: Dict[str, Any] = {}
+            for raw_k, item in value.items():
+                k_str = str(raw_k)
+                if is_credential_param_key(k_str):
+                    masked_map[k_str] = _mask(item, secrets)
+                else:
+                    masked_map[k_str] = mask_param_tree(item)
+            return masked_map
+        if isinstance(value, (list, tuple)):
+            return [mask_param_tree(item) for item in value]
+        return _mask(value, ())
+
+    def mask_operation_params(value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            return _mask(value, secrets)
+        result: Dict[str, Any] = {}
+        for sub_key, sub_val in value.items():
+            sub_str = str(sub_key)
+            if sub_str in {"common", "owner", "visitor", "anonymous"} and isinstance(sub_val, Mapping):
+                result[sub_str] = mask_param_tree(sub_val)
+            elif is_credential_param_key(sub_str):
+                result[sub_str] = _mask(sub_val, secrets)
+            else:
+                result[sub_str] = mask_param_tree(sub_val)
+        return result
+
+    def extract_credential_param_tree(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            kept: Dict[str, Any] = {}
+            for raw_k, item in value.items():
+                k_str = str(raw_k)
+                if is_credential_param_key(k_str):
+                    kept[k_str] = item
+                elif isinstance(item, (Mapping, list, tuple)):
+                    nested = extract_credential_param_tree(item)
+                    if nested:
+                        kept[k_str] = nested
+            return kept
+        if isinstance(value, (list, tuple)):
+            items = [extract_credential_param_tree(item) for item in value if isinstance(item, (Mapping, list, tuple))]
+            return [item for item in items if item]
+        return None
+
+    def extract_operation_credential_params(section: Any) -> Any:
+        if not isinstance(section, Mapping):
+            return {}
+        extracted: Dict[str, Any] = {}
+        for op_name, op_val in section.items():
+            if not isinstance(op_val, Mapping):
+                continue
+            op_kept: Dict[str, Any] = {}
+            for sub_key, sub_val in op_val.items():
+                sub_str = str(sub_key)
+                if sub_str in {"common", "owner", "visitor", "anonymous"} and isinstance(sub_val, Mapping):
+                    nested = extract_credential_param_tree(sub_val)
+                    if nested:
+                        op_kept[sub_str] = nested
+                elif is_credential_param_key(sub_str):
+                    op_kept[sub_str] = sub_val
+                elif isinstance(sub_val, (Mapping, list, tuple)):
+                    nested = extract_credential_param_tree(sub_val)
+                    if nested:
+                        op_kept[sub_str] = nested
+            if op_kept:
+                extracted[str(op_name)] = op_kept
+        return extracted
 
     def fingerprint(kind: str, value: Any) -> Optional[str]:
         try:
@@ -296,10 +395,11 @@ def build_comparison_context(
         names: List[Any] = raw_names if isinstance(raw_names, list) else []
         try:
             material = {
-                # The account id and role are compared exactly; everything else is masked for credentials.
+                # The account id, role and non-credential resource parameters are compared
+                # exactly; credential fields are masked so rotation stays credentials_changed.
                 "id": data.get("id") if isinstance(data.get("id"), (str, int)) else None,
                 "role": data.get("role") if isinstance(data.get("role"), str) else None,
-                "parameters": _mask(data.get("parameters") or {}, secrets),
+                "parameters": mask_param_tree(data.get("parameters") or {}),
                 "headers": {str(name).strip().lower(): _mask(value, secrets) for name, value in headers.items()},
                 "auth_header_names": sorted(str(name).strip().lower() for name in names),
                 "body": _mask(data.get("body"), secrets),
@@ -308,7 +408,6 @@ def build_comparison_context(
             return None
         return fingerprint("identity", material)
 
-    identity_map = identities if isinstance(identities, Mapping) else {}
     declared: Dict[str, Any] = {name: identity_fingerprint(identity_map.get(name))
                                 for name in ("owner", "visitor", "anonymous")}
     accounts = [name for name in ("owner", "visitor") if _declares_account(identity_map.get(name))]
@@ -332,9 +431,19 @@ def build_comparison_context(
     bopla = _by_operation(bopla_config)
     readbacks = _by_operation(readback_config)
     allowlisted = {operation for operation in map(_canonical_operation, write_allowlist or ()) if operation}
+    raw_operations = sorted(set(definitions) | set(parameters) | set(bola) | set(bopla) | set(readbacks) | allowlisted)
+    grouped_operations: Dict[str, List[str]] = {}
+    for raw_op in raw_operations:
+        safe_op = _canonical_operation(sanitize_operation_key(raw_op, secrets)) if secrets else raw_op
+        if safe_op is not None:
+            grouped_operations.setdefault(safe_op, []).append(raw_op)
+
     operations: Dict[str, Dict[str, Optional[str]]] = {}
-    for operation in sorted(set(definitions) | set(parameters) | set(bola) | set(bopla) | set(readbacks)
-                            | allowlisted):
+    for safe_op, matching_raw_ops in sorted(grouped_operations.items()):
+        if len(matching_raw_ops) != 1:
+            operations[safe_op] = {name: None for name, _ in _OPERATION_FINGERPRINTS}
+            continue
+        operation = matching_raw_ops[0]
         try:
             material = {
                 "definition": _mask({"endpoint": definitions.get(operation), "security_schemes": security_schemes},
@@ -342,12 +451,12 @@ def build_comparison_context(
                 "policy": _mask({"bola": bola.get(operation), "bopla": bopla.get(operation),
                                  "readback": readbacks.get(operation),
                                  "write_allowlisted": operation in allowlisted}, secrets),
-                "resources": _mask(parameters.get(operation), secrets),
+                "resources": mask_operation_params(parameters.get(operation)),
             }
         except RecursionError:
-            operations[operation] = {name: None for name, _ in _OPERATION_FINGERPRINTS}
+            operations[safe_op] = {name: None for name, _ in _OPERATION_FINGERPRINTS}
             continue
-        operations[operation] = {name: fingerprint(name, material[name]) for name, _ in _OPERATION_FINGERPRINTS}
+        operations[safe_op] = {name: fingerprint(name, material[name]) for name, _ in _OPERATION_FINGERPRINTS}
     identity_of_target = target_identity(target)
     everyone = {str(name): data for name, data in identity_map.items() if name != "roles"}
     if isinstance(roles, Mapping):
@@ -358,9 +467,11 @@ def build_comparison_context(
             "identities": {name: {"token": data.get("token"), "headers": data.get("headers")}
                            for name, data in everyone.items() if isinstance(data, Mapping)},
             "configured": _redacted_strings({
-                "identities": {name: {"parameters": data.get("parameters"), "body": data.get("body")}
+                "identities": {name: {"parameters": extract_credential_param_tree(data.get("parameters")),
+                                      "body": data.get("body")}
                                for name, data in everyone.items() if isinstance(data, Mapping)},
-                "parameter_values": parameter_values, "bola": bola_config, "bopla": bopla_config,
+                "parameter_values": extract_operation_credential_params(parameter_values),
+                "bola": bola_config, "bopla": bopla_config,
                 "readbacks": readback_config}, secrets)}, ()))
     except RecursionError:
         credentials_hash = None
@@ -520,15 +631,189 @@ def _subjects(check: str, verdict: str, evidence: Mapping[str, Any]) -> List[Tup
     return [(None, verdict, False)]
 
 
+_REDACTION_MARKER_RE = re.compile(r"\[(?:(?:EMAIL|PHONE|SSN|PRIVATE KEY) )?REDACTED\]|\[URL OMITTED\]")
+_TYPED_PII_MARKERS = frozenset({
+    "[EMAIL REDACTED]", "[PHONE REDACTED]", "[SSN REDACTED]", "[PRIVATE KEY REDACTED]",
+})
+
+
 def _url_scope(value: Any) -> Optional[str]:
     """Path and query of an evidence URL; the target itself is compared separately."""
     if not isinstance(value, str) or not value:
         return None
+    if value == "[URL OMITTED]":
+        return "[URL OMITTED]"
     try:
         parts = urlsplit(value)
     except ValueError:
         return None
     return parts.path + (("?" + parts.query) if parts.query else "")
+
+
+def _decode_preserving_encoded_slash(text: str) -> str:
+    guarded = re.sub(r"%2[fF]", "\0SLASH\0", text)
+    return unquote(guarded).replace("\0SLASH\0", "%2F")
+
+
+def _url_path_redacted(value: Any) -> bool:
+    """Whether a URL or URL scope carries any output-redaction marker."""
+    if not isinstance(value, str) or not value:
+        return False
+    if value == "[URL OMITTED]":
+        return True
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        _REDACTION_MARKER_RE.search(unquote(parts.path)) is not None
+        or _REDACTION_MARKER_RE.search(unquote_plus(parts.query)) is not None
+    )
+
+
+def _wildcard_nonempty_match(parts: Sequence[str], text: str) -> bool:
+    """Linear-time match of literal ``parts`` separated by non-empty wildcards (no regex backtracking)."""
+    wildcards = len(parts) - 1
+    if wildcards <= 0:
+        return len(parts) == 1 and text == parts[0]
+    if len(text) < sum(len(part) for part in parts) + wildcards:
+        return False
+    if not text.startswith(parts[0]) or not text.endswith(parts[-1]):
+        return False
+    pos = len(parts[0])
+    end = len(text) - len(parts[-1])
+    for middle in parts[1:-1]:
+        pos += 1  # Each redaction marker stands for at least one character.
+        if not middle:
+            continue
+        found = text.find(middle, pos, end)
+        if found < 0:
+            return False
+        pos = found + len(middle)
+    return end - pos >= 1
+
+
+def _segments_compatible(left: str, right: str) -> bool:
+    left_red = _REDACTION_MARKER_RE.search(left) is not None
+    right_red = _REDACTION_MARKER_RE.search(right) is not None
+    if not left_red and not right_red:
+        return left == right
+    if left_red and not right_red:
+        return _wildcard_nonempty_match(_REDACTION_MARKER_RE.split(left), right)
+    if right_red and not left_red:
+        return _wildcard_nonempty_match(_REDACTION_MARKER_RE.split(right), left)
+    if left in _TYPED_PII_MARKERS and right in _TYPED_PII_MARKERS and left != right:
+        return False
+    left_parts = _REDACTION_MARKER_RE.split(left)
+    right_parts = _REDACTION_MARKER_RE.split(right)
+    if not (left_parts[0].startswith(right_parts[0]) or right_parts[0].startswith(left_parts[0])):
+        return False
+    if not (left_parts[-1].endswith(right_parts[-1]) or right_parts[-1].endswith(left_parts[-1])):
+        return False
+    return True
+
+
+def _parse_query_pairs(query: str) -> Tuple[List[Tuple[str, str]], bool]:
+    if not query:
+        return [], False
+    pairs: List[Tuple[str, str]] = []
+    for item in query.split("&"):
+        raw_name, sep, raw_val = item.partition("=")
+        name = unquote_plus(raw_name)
+        val = unquote_plus(raw_val) if sep else ""
+        if name == "_truncated_params":
+            return pairs, True
+        pairs.append((name, val))
+    return pairs, False
+
+
+def _compare_single_url_scope(left_scope: str, right_scope: str, *, declared: bool) -> Optional[str]:
+    if left_scope == "[URL OMITTED]" or right_scope == "[URL OMITTED]":
+        if (left_scope == "[URL OMITTED]") != (right_scope == "[URL OMITTED]"):
+            return "resources_changed"
+        return "scope_unknown"
+    left_redacted = _url_path_redacted(left_scope)
+    right_redacted = _url_path_redacted(right_scope)
+    if not left_redacted and not right_redacted:
+        return None if left_scope == right_scope else "resources_changed"
+    try:
+        pa = urlsplit(left_scope)
+        pb = urlsplit(right_scope)
+    except ValueError:
+        return "scope_unknown"
+    qa, trunc_a = _parse_query_pairs(pa.query)
+    qb, trunc_b = _parse_query_pairs(pb.query)
+    if trunc_a or trunc_b:
+        limit = min(len(qa), len(qb))
+        qa_cmp, qb_cmp = qa[:limit], qb[:limit]
+    else:
+        if [k for k, _ in qa] != [k for k, _ in qb]:
+            return "resources_changed"
+        qa_cmp, qb_cmp = qa, qb
+    for (ka, va), (kb, vb) in zip(qa_cmp, qb_cmp):
+        if ka != kb or not _segments_compatible(va, vb):
+            return "resources_changed"
+    segs_a = [_decode_preserving_encoded_slash(s) for s in pa.path.split("/")]
+    segs_b = [_decode_preserving_encoded_slash(s) for s in pb.path.split("/")]
+    if len(segs_a) == len(segs_b):
+        if not all(_segments_compatible(a, b) for a, b in zip(segs_a, segs_b)):
+            return "resources_changed"
+    else:
+        full_a = _decode_preserving_encoded_slash(pa.path)
+        full_b = _decode_preserving_encoded_slash(pb.path)
+        if not _segments_compatible(full_a, full_b):
+            return "resources_changed"
+    return None if declared else "scope_unknown"
+
+
+def _compare_resource_scope_tuples(
+    left_tuple: Tuple[Tuple[str, str], ...],
+    right_tuple: Tuple[Tuple[str, str], ...],
+    *,
+    declared: bool,
+) -> Optional[str]:
+    left_map = dict(left_tuple)
+    right_map = dict(right_tuple)
+    if set(left_map) != set(right_map):
+        return "resources_changed"
+    saw_unknown = False
+    for name in sorted(left_map):
+        issue = _compare_single_url_scope(left_map[name], right_map[name], declared=declared)
+        if issue == "resources_changed":
+            return "resources_changed"
+        if issue == "scope_unknown":
+            saw_unknown = True
+    return "scope_unknown" if saw_unknown else None
+
+
+def _compare_resource_scope_sets(
+    left_set: Set[Tuple[Tuple[str, str], ...]],
+    right_set: Set[Tuple[Tuple[str, str], ...]],
+    *,
+    declared: bool,
+) -> Optional[str]:
+    if len(left_set) == 1 and len(right_set) == 1:
+        return _compare_resource_scope_tuples(next(iter(left_set)), next(iter(right_set)), declared=declared)
+    if len(left_set) != len(right_set):
+        return "resources_changed"
+    saw_unknown = False
+    for left_item in left_set:
+        outcomes = [_compare_resource_scope_tuples(left_item, right_item, declared=declared) for right_item in right_set]
+        if None in outcomes:
+            continue
+        if "scope_unknown" in outcomes:
+            saw_unknown = True
+        else:
+            return "resources_changed"
+    for right_item in right_set:
+        outcomes = [_compare_resource_scope_tuples(left_item, right_item, declared=declared) for left_item in left_set]
+        if None in outcomes:
+            continue
+        if "scope_unknown" in outcomes:
+            saw_unknown = True
+        else:
+            return "resources_changed"
+    return "scope_unknown" if saw_unknown else None
 
 
 def _evidence_scope(evidence: Mapping[str, Any]) -> Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[str, str], ...]]:
@@ -879,8 +1164,9 @@ def compare_reports(baseline: Mapping[str, Any], current: Mapping[str, Any], *,
         local = set(declared_changes.get(key[1], ()))
         # The evidence is compared on either basis: it also shows what no fingerprint covers.
         if left.resources and right.resources:
-            if left.resources != right.resources:
-                local.add("resources_changed")
+            scope_issue = _compare_resource_scope_sets(left.resources, right.resources, declared=declared)
+            if scope_issue is not None:
+                local.add(scope_issue)
         elif not declared:
             local.add("scope_unknown")
         if left.policy and right.policy and left.policy != right.policy:
