@@ -7,6 +7,11 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from core.config_validation.base import ConfigIssue, ValidationSummary, ValidatorBase
 from core.evidence import safe_diagnostic_value
+from core.scan_safety import method_override_risk, read_only_body_risk
+
+# Identity and role headers are sent with every request, reads included.
+METHOD_OVERRIDE_MESSAGE = ("Header overrides the HTTP method to one that can change state; it would be "
+                           "sent with every read request of this identity")
 
 
 class IdentityChecks(ValidatorBase):
@@ -245,6 +250,15 @@ class IdentityChecks(ValidatorBase):
                                 actual=f"{safe_diagnostic_value(h_key)}: [VALUE WITH LINEBREAKS REDACTED]",
                             )
                         )
+                    elif method_override_risk(h_key, h_val):
+                        issues.append(
+                            ConfigIssue(
+                                path=f"identities.roles.{role_name}.headers.{h_key}",
+                                message=METHOD_OVERRIDE_MESSAGE,
+                                expected="no method override, or GET / HEAD",
+                                actual=f"{safe_diagnostic_value(h_key)}: [VALUE REDACTED]",
+                            )
+                        )
 
         # body
         if "body" in role_info:
@@ -258,6 +272,20 @@ class IdentityChecks(ValidatorBase):
                         actual=safe_diagnostic_value(body_val),
                     )
                 )
+            else:
+                # A role body replaces the Owner body on read-only POST role
+                # probes, so it must not ask for a write either.
+                risk = read_only_body_risk(body_val)
+                if risk:
+                    issues.append(
+                        ConfigIssue(
+                            path=f"identities.roles.{role_name}.body",
+                            message=risk["safety_reason"].replace("; no request was sent", "")
+                            + "; role bodies are sent only to read-only POST operations",
+                            expected="a body that only selects or filters the data to read",
+                            actual="state-changing request body (value not shown)",
+                        )
+                    )
 
     @classmethod
     def _validate_single_identity(
@@ -368,6 +396,15 @@ class IdentityChecks(ValidatorBase):
                                 message="Identity header names and values must not contain line breaks or control characters",
                                 expected="single-line header key/value",
                                 actual=f"{safe_diagnostic_value(h_key)}: [VALUE WITH LINEBREAKS REDACTED]",
+                            )
+                        )
+                    elif method_override_risk(h_key, h_val):
+                        issues.append(
+                            ConfigIssue(
+                                path=f"identities.{identity_name}.headers.{h_key}",
+                                message=METHOD_OVERRIDE_MESSAGE,
+                                expected="no method override, or GET / HEAD",
+                                actual=f"{safe_diagnostic_value(h_key)}: [VALUE REDACTED]",
                             )
                         )
 

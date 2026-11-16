@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- A read action no longer clears an operation whose name writes when the
+  resource is missing. Compounds such as getOrCreateCart, findOrCreateUser,
+  fetchOrGenerateKey, getOrInitializeSession, findOrInsertRow, getAndSet,
+  getOrPut, getOrRefreshToken, getOrRotateKey, searchAndArchive,
+  computeIfAbsent and createTableIfNotExists are refused before any
+  request, in camelCase, snake_case, kebab-case and dotted operationIds, in
+  path segments and in concrete path values, for GET and HEAD as well as for
+  declared read-only POSTs. A summary or description such as "Get or create a
+  cart" or "Returns the cart, or creates one if none exists" is refused too.
+  Previously these were sent because only a leading verb or a verb after
+  "and", "then" or "also" was recognized. Names such as getOrDefault,
+  findOrFail, searchByNameOrEmail and searchOrders are unaffected.
+- A declared read-only POST whose own body asks for a write (a GraphQL
+  mutation, an `action`, `op` or `operationName` naming a write, a `_method` or
+  `X-HTTP-Method-Override` of PUT, PATCH or DELETE, a true `upsert`,
+  `createIfMissing`, `auto_create` or `save_search`-style flag, or a dry-run
+  switch turned off) now fails configuration validation; nothing is sent. The
+  message names the kind of request, never a body key or value.
+- Configuration validation refuses an identity or role header that overrides
+  the HTTP method (`X-HTTP-Method-Override`, `X-HTTP-Method`,
+  `X-Method-Override`) to anything but GET or HEAD: these headers are sent with
+  every request, so they would turn reads into writes. Role bodies, which
+  replace the Owner body on read-only POST role probes, get the same body check
+  as `body` and `identity_bodies`.
+- Identifiers are normalized (NFKC) and split after acronyms (getORCreate)
+  before the check. A declared read-only POST whose operationId or path mixes
+  ASCII and non-ASCII letters in one word is refused (`identifier_script`),
+  because a look-alike letter would hide the action word.
+- Declared read-only POSTs also refuse operationIds and path segments that
+  start with ensure, provision, spawn, init, initialize, instantiate, allocate
+  or persist, or with the abbreviations del, rm, upd, mk and crt, and summaries
+  or descriptions that start with one of the full verbs (for example
+  "Initializes the session"). A POST path segment named `init` is therefore
+  refused as well. Abbreviations are not applied to concrete path values, so an
+  id such as `rm-101` is still sent.
+
 ## 2.8.0 - 2026-11-15
 
 Adds an offline comparison of two scan reports and an optional security

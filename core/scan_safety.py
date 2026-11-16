@@ -10,13 +10,22 @@ a wider mutation vocabulary and must be corroborated by an explicit read action
 (search, query, lookup...) in the path, operationId or summary. A heuristic
 match never proves a POST is safe; it only refuses ones that are not plausibly
 read-only.
+
+A read action does not make a compound name read-only: getOrCreate,
+findOrInsert, fetchOrGenerate, getAndSet or computeIfAbsent write when the
+resource is missing. Such compounds are refused for GET, HEAD and POST alike,
+in camelCase, snake_case, kebab-case and dotted spellings. A declared
+read-only POST body that itself asks for a write (a GraphQL mutation, an
+upsert or create flag, a write action or method override, a disabled dry run)
+is refused by configuration validation before any request.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import re
-from typing import Any, Dict, Optional
+import unicodedata
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlsplit
 
 
@@ -108,6 +117,7 @@ _POST_ACTIONS = _ACTIONS + (
     "signup", "authenticate", "verify", "redeem", "renew", "extend", "retry", "resend",
     "notify", "increment", "decrement", "toggle", "upsert", "append", "purge", "clear",
     "destroy", "drop", "kill", "ban", "unban", "unblock", "mute", "unmute", "unshare",
+    "initialize", "initialise", "init", "instantiate", "allocate", "persist",
 )
 # A read-only POST must name one of these actions: the declaration alone is not
 # accepted as evidence that a command-like POST has no side effects.
@@ -116,6 +126,37 @@ _POST_READ_INTENTS = (
     "read", "view", "show", "describe", "count", "filter", "browse", "inspect", "preview",
     "check", "validate", "calculate", "compute", "estimate",
 )
+# Identifiers (operationId, path segments) of a declared read-only POST that
+# start with these name a write. Base forms only: ensureCart, provisionTenant,
+# delUser, rmFile, updProfile, mkDir.
+_POST_IDENTIFIER_ACTIONS = (
+    "ensure", "provision", "spawn", "materialize", "materialise", "crt", "del", "rm", "upd", "mk",
+)
+# Verbs that turn a compound identifier into a conditional or follow-up write
+# after "or", "and", "else", "then", "also" or "otherwise", wherever they occur:
+# getOrCreate, findOrInsert, fetchOrGenerate, getOrInitialize, getUserAndRegister.
+# Base forms only; these are rarely resource nouns in an identifier.
+_COMPOUND_WRITE_VERBS = (
+    "create", "crt", "insert", "ins", "upsert", "add", "save", "register", "update", "upd",
+    "generate", "gen", "init", "initialize", "initialise", "instantiate", "provision", "allocate",
+    "persist", "spawn", "materialize", "materialise", "ensure", "mk",
+)
+# These are also nouns or adjectives ("getProductOrStore", "getUsedOrNew",
+# "getCardOrSet"), so they count only directly after a read action:
+# getOrSet, getAndSet, getOrPut, findAndLock, findAndClaim, findOrNew, getAndDelete.
+_ADJACENT_WRITE_VERBS = (
+    "set", "put", "store", "lock", "claim", "acquire", "reserve", "mint", "new", "make",
+    "delete", "del", "remove", "rm", "replace", "write",
+    # getOrRefreshToken, fetchOrRenewToken, getOrRotateKey; "access or refresh token" is a noun.
+    "refresh", "renew", "rotate",
+    # searchAndArchive, queryAndExport, getAndDequeue, listAndAcknowledge, getAndMarkRead.
+    "archive", "export", "dequeue", "pop", "consume", "ack", "acknowledge", "mark", "touch", "bump",
+)
+_COMPOUND_READ_ACTIONS = _POST_READ_INTENTS + ("first", "load")
+# Objects or conditions that mark a coordinated verb in prose as the operation's
+# own action: "returns the cart, or creates one if none exists".
+_PROSE_OBJECTS = ("a", "an", "the", "it", "one", "them", "new", "this", "that", "these", "those",
+                  "if", "when", "unless", "whenever")
 
 
 def _word_forms(verbs: tuple[str, ...]) -> set[str]:
@@ -132,11 +173,48 @@ def _alternation(forms: set[str]) -> str:
     return r"(?:" + "|".join(sorted(forms, key=lambda word: (-len(word), word))) + r")\b"
 
 
+def _third_person(verbs: tuple[str, ...]) -> set[str]:
+    return {verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s") for verb in verbs}
+
+
+_STRONG_WRITE = _alternation(set(_COMPOUND_WRITE_VERBS))
+# A compound identifier that writes: a strong write verb after any conjunction,
+# an ambiguous one directly after a read action (also behind a resource or
+# controller prefix: Orders_GetOrSet, orders.getOrSet, OrdersController_getOrPut),
+# or a conditional creation marker (createTableIfNotExists, computeIfAbsent,
+# getIfAbsentPut).
+_COMPOUND_WRITE = re.compile(
+    r"\b(?:or|else|otherwise|and|then|also)\s+(?:it\s+)?" + _STRONG_WRITE
+    + r"|\b" + _alternation(set(_COMPOUND_READ_ACTIONS)) + r"\s+(?:or|and|else)\s+"
+    + _alternation(set(_ADJACENT_WRITE_VERBS))
+    + r"|\bif\s+not\s+exists?\b|\bunless\s+exists?\b"
+    + r"|\b(?:compute|put|" + _STRONG_WRITE + r")\s+if\s+(?:absent|missing)\b"
+    + r"|\bif\s+(?:absent|missing)\s+(?:put|" + _STRONG_WRITE + r")",
+    re.IGNORECASE,
+)
+_POST_IDENTIFIER_LEADING = re.compile(r"^" + _alternation(set(_POST_IDENTIFIER_ACTIONS)), re.IGNORECASE)
+
+
 class _ActionPatterns:
     def __init__(self, verbs: tuple[str, ...], methods: str) -> None:
         word = _alternation(_word_forms(verbs))
         self.leading = re.compile(r"^" + word, re.IGNORECASE)
         self.conjoined = re.compile(r"\b(?:and|then|also)\s+(?:it\s+)?" + word, re.IGNORECASE)
+        alternative = verbs + _COMPOUND_WRITE_VERBS + _ADJACENT_WRITE_VERBS
+        # "Get or create a cart", "Fetch or generate an API key": a read action
+        # coordinated with a write at the start of a clause.
+        self.alternative = re.compile(
+            r"^(?:" + _alternation(_word_forms(_POST_READ_INTENTS + ("return",))) + r"|look\s+up)"
+            r"\s+(?:and\s+)?or\s+" + _alternation(_word_forms(alternative)),
+            re.IGNORECASE,
+        )
+        # "Returns the cart, or creates one if none exists": a third-person verb
+        # with its own object or condition; "by email or login name" is not one.
+        self.alternative_clause = re.compile(
+            r"\bor\s+" + _alternation(_third_person(alternative))
+            + r"\s+" + _alternation(set(_PROSE_OBJECTS)),
+            re.IGNORECASE,
+        )
         self.description = re.compile(
             r"^(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
             r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
@@ -161,20 +239,49 @@ _CONJOINED_ACTION = _READ_PATTERNS.conjoined
 def _words(value: Any) -> str:
     if not isinstance(value, str):
         return ""
-    # Retain word boundaries for identifiers such as convertVideo/create_report.
+    # Compatibility forms (full-width letters, ligatures) read as the ASCII
+    # words a server router or code generator would see.
+    value = unicodedata.normalize("NFKC", value)
+    # Retain word boundaries for identifiers such as convertVideo/create_report,
+    # including after an acronym: getORCreate, HTMLReport.
+    value = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", value)
     value = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
     return re.sub(r"[^a-zA-Z0-9]+", " ", value).strip().lower()
 
 
-def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns) -> str:
+def _mixes_scripts(value: Any) -> bool:
+    """True when one word mixes ASCII letters with other letters (getOrCrеate with a Cyrillic е).
+
+    The ASCII-only word split would drop the look-alike letter and with it the
+    action word, so such an identifier cannot be checked.
+    """
+    if not isinstance(value, str):
+        return False
+    value = unicodedata.normalize("NFKC", re.sub(r"\{[^}]*\}", "", value))
+    for word in re.findall(r"[^\W\d_]+", value):
+        ascii_letters = any(char.isascii() for char in word)
+        if ascii_letters and not word.isascii():
+            return True
+    return False
+
+
+def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns, post: bool = False) -> Tuple[str, str]:
+    """The metadata field that names a write, and the rule: "action" or "compound"."""
     identifier = _words(endpoint.get("operation_id", ""))
-    if patterns.leading.search(identifier) or patterns.conjoined.search(identifier):
-        return "operation_id"
+    if patterns.leading.search(identifier) or patterns.conjoined.search(identifier) or (
+            post and _POST_IDENTIFIER_LEADING.search(identifier)):
+        return "operation_id", "action"
+    if _COMPOUND_WRITE.search(identifier):
+        return "operation_id", "compound"
     path = str(endpoint.get("path", ""))
     # Object placeholders are data, not action names.
     path = re.sub(r"\{[^}]*\}", "", path)
-    if any(patterns.leading.search(_words(part)) for part in path.split("/")):
-        return "path"
+    segments = [_words(part) for part in path.split("/")]
+    if any(patterns.leading.search(words) or (post and _POST_IDENTIFIER_LEADING.search(words))
+           for words in segments):
+        return "path", "action"
+    if any(_COMPOUND_WRITE.search(words) for words in segments):
+        return "path", "compound"
     for field in ("summary", "description"):
         value = endpoint.get(field, "")
         if not isinstance(value, str):
@@ -186,8 +293,11 @@ def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns) -> str
         if any((patterns.description.search(clause)
                 and not patterns.informational.search(clause))
                or patterns.conjoined.search(clause) for clause in words):
-            return field
-    return ""
+            return field, "action"
+        if any(patterns.alternative.search(clause) or patterns.alternative_clause.search(clause)
+               for clause in words):
+            return field, "compound"
+    return "", ""
 
 
 def _has_read_intent(endpoint: Dict[str, Any]) -> bool:
@@ -212,9 +322,15 @@ def read_only_risk(endpoint: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """
     method = str(endpoint.get("method", "")).upper()
     if method in {"GET", "HEAD"}:
-        signal = _mutation_signal(endpoint, _READ_PATTERNS)
+        signal, rule = _mutation_signal(endpoint, _READ_PATTERNS)
     elif method == "POST":
-        signal = _mutation_signal(endpoint, _POST_PATTERNS)
+        if _mixes_scripts(endpoint.get("operation_id")) or _mixes_scripts(endpoint.get("path")):
+            return {
+                "safety_reason": "Read-only POST safety policy blocked an operationId or path that mixes ASCII and "
+                                 "non-ASCII letters in one word; its action words cannot be checked; no request was sent",
+                "safety_signal": "identifier_script",
+            }
+        signal, rule = _mutation_signal(endpoint, _POST_PATTERNS, post=True)
         if not signal and not _has_read_intent(endpoint):
             return {
                 "safety_reason": "Read-only POST safety policy requires the path, operationId or summary to name a "
@@ -225,10 +341,118 @@ def read_only_risk(endpoint: Dict[str, Any]) -> Optional[Dict[str, str]]:
         return None
     if not signal:
         return None
+    if rule == "compound":
+        return {
+            "safety_reason": "Read-only safety policy blocked an operation that combines a read action with a "
+                             "conditional or follow-up write (such as get-or-create, find-or-insert or "
+                             "put-if-absent); no request was sent",
+            "safety_signal": signal,
+        }
     return {
         "safety_reason": "Read-only safety policy blocked an operation with explicit state-changing semantics; no request was sent",
         "safety_signal": signal,
     }
+
+
+# Body keys whose string value selects the action a POST endpoint performs:
+# {"action": "create"}, {"op": "replace"} (JSON Patch), {"operationName": "CreateUser"}.
+_BODY_ACTION_KEYS = frozenset({"action", "operation", "operation name", "op", "command", "cmd", "intent", "verb"})
+# Keys that override the HTTP method (Rails, Laravel and Symfony read "_method").
+_BODY_METHOD_KEYS = frozenset({"method", "http method", "method override", "x http method override",
+                               "x method override", "x http method"})
+_WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+# A true flag whose name starts with one of these asks the endpoint to write:
+# {"upsert": true}, {"createIfMissing": true}, {"auto_create": true}, {"save_search": true}.
+_BODY_FLAG_VERBS = frozenset({
+    "create", "insert", "upsert", "save", "persist", "store", "commit", "write", "overwrite",
+    "ensure", "init", "initialize", "initialise", "provision", "register", "delete", "purge", "destroy",
+})
+_BODY_FLAG_PREFIXES = frozenset({"auto", "allow", "should", "do", "force", "enable", "perform"})
+# A false value for one of these runs the operation for real: {"dry_run": false}.
+_BODY_DRY_RUN_KEYS = frozenset({"dry run", "dryrun", "validate only", "simulate", "simulation", "what if"})
+_TRUE_VALUES = frozenset({"true", "yes", "on", "1"})
+_FALSE_VALUES = frozenset({"false", "no", "off", "0"})
+# GraphQL: the mutation keyword, an optional name and variables, then a selection.
+# Each whitespace run follows a token, so matching stays linear on long input.
+_GRAPHQL_MUTATION = re.compile(
+    r"(?<![_0-9A-Za-z])mutation\b\s*(?:[_A-Za-z][_0-9A-Za-z]*\s*)?(?:\([^)]*\)\s*)?(?:@[^{]*)?\{")
+# Validated bodies are at most 64 KiB, far below this bound; it protects direct callers.
+_BODY_MAX_NODES = 100000
+_BODY_ACTION_VERBS = re.compile(
+    r"^" + _alternation(_word_forms(_POST_ACTIONS) | set(_COMPOUND_WRITE_VERBS) | set(_ADJACENT_WRITE_VERBS)
+                        | {"copy"}), re.IGNORECASE)
+
+
+# Request headers that make a server treat a request as another method.
+_METHOD_OVERRIDE_HEADERS = frozenset({"x http method override", "x http method", "x method override",
+                                      "http method override", "method override"})
+
+
+def method_override_risk(name: Any, value: Any) -> bool:
+    """True for a configured header that turns requests into a method other than GET or HEAD.
+
+    Identity headers are sent with every request, GET included, so an
+    override to POST, PUT, PATCH or DELETE would turn reads into writes.
+    """
+    return (isinstance(name, str) and _words(name) in _METHOD_OVERRIDE_HEADERS
+            and isinstance(value, str) and value.strip().upper() not in {"", "GET", "HEAD"})
+
+
+def _body_value_is(value: Any, words: frozenset) -> bool:
+    if isinstance(value, bool):
+        return ("true" if value else "false") in words
+    if type(value) is int:
+        return str(value) in words
+    return isinstance(value, str) and value.strip().lower() in words
+
+
+def read_only_body_risk(body: Any) -> Optional[Dict[str, str]]:
+    """Return a safe-to-display reason if a declared read-only POST body asks for a write.
+
+    The body is the operator's own selector, sent unchanged by every identity.
+    A body that selects a write cannot be read-only whatever the operation is
+    called: a GraphQL mutation, an action or JSON Patch "op" naming a write, an
+    HTTP method override to PUT/PATCH/DELETE, a true create/upsert/save flag, or
+    a dry-run switch turned off. Keys and values are never echoed. Ordinary
+    filters ({"deleted": true}, {"sort": "updated_at"}, {"query": "mutation
+    testing"}) are not refused. A body without these markers is not proven
+    read-only.
+    """
+    stack: List[Tuple[Any, Optional[str]]] = [(body, None)]
+    nodes = 0
+    while stack:
+        value, key = stack.pop()
+        nodes += 1
+        if nodes > _BODY_MAX_NODES:
+            return {"safety_reason": "Read-only POST body is too large to check for write requests",
+                    "safety_signal": "request_body"}
+        if isinstance(value, dict):
+            stack.extend((child, _words(str(name))) for name, child in value.items())
+            continue
+        if isinstance(value, list):
+            stack.extend((child, key) for child in value)
+            continue
+        reason = None
+        if isinstance(value, str) and _GRAPHQL_MUTATION.search(value):
+            reason = "a GraphQL mutation"
+        elif key is None:
+            continue
+        elif key in _BODY_ACTION_KEYS and isinstance(value, str) and _BODY_ACTION_VERBS.search(_words(value)):
+            reason = "an action that names a write"
+        elif key in _BODY_METHOD_KEYS and isinstance(value, str) and value.strip().upper() in _WRITE_METHODS:
+            reason = "an HTTP method override to PUT, PATCH or DELETE"
+        elif key in _BODY_DRY_RUN_KEYS and _body_value_is(value, _FALSE_VALUES):
+            reason = "a dry-run switch turned off"
+        else:
+            words = key.split()
+            while len(words) > 1 and words[0] in _BODY_FLAG_PREFIXES:
+                words = words[1:]
+            if words and words[0] in _BODY_FLAG_VERBS and _body_value_is(value, _TRUE_VALUES):
+                reason = "a flag that asks for a write"
+        if reason:
+            return {"safety_reason": f"Read-only POST body contains {reason}; no request was sent",
+                    "safety_signal": "request_body"}
+    return None
 
 
 def post_path_risk(path: str) -> Optional[Dict[str, str]]:
@@ -239,8 +463,10 @@ def post_path_risk(path: str) -> Optional[Dict[str, str]]:
         decoded = path
     for candidate in {path, decoded}:
         # Check matrix parameters too: a router may ignore them, a handler may not.
-        pieces = [piece for part in candidate.split("/") for piece in part.split(";")]
-        if any(_POST_PATTERNS.leading.search(_words(piece)) for piece in pieces):
+        # Filled values are data, so abbreviations (an id such as "rm-101") are
+        # checked in the specification's path template only, not here.
+        pieces = [_words(piece) for part in candidate.split("/") for piece in part.split(";")]
+        if any(_POST_PATTERNS.leading.search(words) or _COMPOUND_WRITE.search(words) for words in pieces):
             return {
                 "safety_reason": "Read-only safety policy blocked a POST path with explicit state-changing semantics; "
                                  "no request was sent",
