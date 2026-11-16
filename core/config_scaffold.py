@@ -80,8 +80,8 @@ def _session_cookies(parser: OpenAPIParser, endpoints: List[Dict[str, Any]]) -> 
     required = {name for endpoint in endpoints for requirement in endpoint.get("security") or []
                 if isinstance(requirement, dict) for name in requirement}
     return {name: scheme["name"].strip() for name, scheme in schemes.items()
-            if name in required and isinstance(scheme, dict) and scheme.get("type") == "apiKey"
-            and scheme.get("in") == "cookie" and isinstance(scheme.get("name"), str) and scheme["name"].strip()}
+            if name in required and isinstance(scheme, dict) and scheme.get("in") == "cookie"
+            and isinstance(scheme.get("name"), str) and scheme["name"].strip()}
 
 
 def _is_query_credential(name: str, auth: AuthNames) -> bool:
@@ -346,7 +346,8 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
             scheme_note["config_paths"].append("identities." + identity + ".parameters." + key)
         for identity_note in checklist["identities"]:
             identity_note["config_paths"].append("identities." + identity_note["identity"] + ".parameters." + cookie)
-        scheme_note["needs_review"] = (
+        earlier = scheme_note.get("needs_review")  # A $ref scheme keeps its own note.
+        scheme_note["needs_review"] = (earlier + " " if earlier else "") + (
             "Session cookie: drafted for owner and visitor under identities.*.parameters." + cookie + " and sent "
             "with every request of that identity. Give each its own session, distinct from the other; give "
             "every role in identities.roles its own under identities.roles.<role>.parameters." + cookie + ". "

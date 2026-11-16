@@ -614,6 +614,16 @@ class ScaffoldTests(unittest.TestCase):
         scheme = next(item for item in checklist["security_schemes"] if item["name"] == "cookieAuth")
         self.assertNotIn("config_paths", scheme)
 
+    def test_a_referenced_cookie_scheme_is_drafted_and_keeps_its_review_note(self):
+        spec = _spec(schemes={"cookieAuth": {"$ref": "#/components/x-session"}})
+        spec["components"]["x-session"] = {"type": "apiKey", "in": "cookie", "name": COOKIE}
+        draft, checklist = self.draft(spec)
+        for name in ("owner", "visitor"):
+            self.assertEqual(list(draft["identities"][name]["parameters"]), [COOKIE])
+        scheme = next(item for item in checklist["security_schemes"] if item["name"] == "cookieAuth")
+        self.assertIn("Resolve this security scheme locally", scheme["needs_review"])
+        self.assertIn("every request", scheme["needs_review"])
+
     def test_an_operation_level_cookie_requirement_is_drafted_once(self):
         spec = _spec(declare_cookie=True, security=[])
         spec["paths"]["/users/{id}"]["get"]["security"] = [{"cookieAuth": []}]

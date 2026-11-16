@@ -37,10 +37,11 @@ class SpecAuth:
 
     @classmethod
     def from_schemes(cls, schemes: Mapping[str, Any]) -> "SpecAuth":
+        """Like the scanner's own lookups, by location: only apiKey schemes have one."""
         headers: Set[str] = set()
         cookies: Dict[str, str] = {}
         for scheme in schemes.values():
-            if not isinstance(scheme, Mapping) or scheme.get("type") != "apiKey":
+            if not isinstance(scheme, Mapping):
                 continue
             location, name = scheme.get("in"), scheme.get("name")
             if isinstance(name, str) and name.strip():
