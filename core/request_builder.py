@@ -19,7 +19,12 @@ import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.config_validator import ConfigValidator
-from core.evidence import is_auth_credential_key, is_sensitive_key
+from core.evidence import (
+    is_auth_credential_key,
+    is_credential_parameter,
+    is_resource_identifier_key,
+    is_sensitive_key,
+)
 from core.generator import SmartDataGenerator
 from core.parameters import (
     ParameterSerializationError,
@@ -248,7 +253,22 @@ class RequestBuilderMixin:
                     if isinstance(child, (dict, list, tuple)):
                         walk_structured(child, matcher, depth + 1, next_seen)
 
+        # Names that a security scheme or auth_header_names declares carry credentials whatever they say.
+        declared_names = {
+            scheme["name"].strip().lower()
+            for scheme in self.parser.get_security_schemes().values()
+            if isinstance(scheme, dict) and isinstance(scheme.get("name"), str) and scheme["name"].strip()
+        } | {name.lower() for name in ConfigValidator.STANDARD_AUTH_QUERY_PARAMETERS}
+        for identity_name, identity in self.identities.items():
+            extra = identity.get("auth_header_names") if identity_name != "roles" and isinstance(identity, dict) else None
+            if isinstance(extra, list):
+                declared_names.update(item.strip().lower() for item in extra if isinstance(item, str))
+
         def param_matcher(name: str) -> bool:
+            if is_resource_identifier_key(name) and name.strip().lower() not in declared_names:
+                # session_id or ticket_id selects the object a request reads: a resource value
+                # that keyed comparison fingerprints, still redacted from output as sensitive.
+                return include_business_pii and is_sensitive_key(name)
             is_auth = (
                 self._is_auth_header(name)
                 or self._is_auth_cookie(name)
@@ -258,7 +278,7 @@ class RequestBuilderMixin:
             return is_auth or (include_business_pii and is_sensitive_key(name))
 
         def body_matcher(name: str) -> bool:
-            return is_auth_credential_key(name) or (include_business_pii and is_sensitive_key(name))
+            return is_credential_parameter(name) or (include_business_pii and is_sensitive_key(name))
 
         for identity_name, identity in self.identities.items():
             if identity_name == "roles" and isinstance(identity, dict):

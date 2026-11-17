@@ -76,7 +76,7 @@ from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Op
 from urllib.parse import unquote, unquote_plus, urlsplit
 
 from core import __version__
-from core.evidence import is_auth_credential_key, sanitize_operation_key
+from core.evidence import is_credential_parameter, sanitize_operation_key
 from core.models import parse_operation_key
 
 COMPARISON_SCHEMA_VERSION = 1
@@ -278,6 +278,7 @@ def build_comparison_context(
     readback_config: Any = None,
     write_allowlist: Iterable[Any] = (),
     secret_values: Iterable[str] = (),
+    volatile_operations: Iterable[Any] = (),
 ) -> Dict[str, Any]:
     """Keyed fingerprints of what a scan compared, for later comparability checks.
 
@@ -293,6 +294,9 @@ def build_comparison_context(
       rotating credentials does not look like another identity.
     * operations: the operation as defined by the specification (``endpoints``
       and the security schemes), its configured policy and its resource values.
+      ``volatile_operations`` (APISentinelAuditor.volatile_operations) sent a
+      value generated anew for every scan; no configuration fingerprints their
+      resources, so theirs is left out and ``diff`` reports context_incomplete.
     * credentials: one fingerprint over all credentials together (tokens, the
       identities' header values and every configured value that contains a
       known credential). When it differs, a credential changed: a rotation and
@@ -306,9 +310,7 @@ def build_comparison_context(
     scheme_names = _declared_auth_parameter_names(security_schemes, identity_map)
 
     def is_credential_param_key(name: Any) -> bool:
-        return isinstance(name, str) and (
-            is_auth_credential_key(name) or name.strip().lower() in scheme_names
-        )
+        return isinstance(name, str) and is_credential_parameter(name, scheme_names)
 
     def mask_param_tree(value: Any) -> Any:
         if isinstance(value, Mapping):
@@ -431,6 +433,7 @@ def build_comparison_context(
     bopla = _by_operation(bopla_config)
     readbacks = _by_operation(readback_config)
     allowlisted = {operation for operation in map(_canonical_operation, write_allowlist or ()) if operation}
+    volatile = {operation for operation in map(_canonical_operation, volatile_operations or ()) if operation}
     raw_operations = sorted(set(definitions) | set(parameters) | set(bola) | set(bopla) | set(readbacks) | allowlisted)
     grouped_operations: Dict[str, List[str]] = {}
     for raw_op in raw_operations:
@@ -457,6 +460,8 @@ def build_comparison_context(
             operations[safe_op] = {name: None for name, _ in _OPERATION_FINGERPRINTS}
             continue
         operations[safe_op] = {name: fingerprint(name, material[name]) for name, _ in _OPERATION_FINGERPRINTS}
+        if operation in volatile:
+            operations[safe_op]["resources"] = None
     identity_of_target = target_identity(target)
     everyone = {str(name): data for name, data in identity_map.items() if name != "roles"}
     if isinstance(roles, Mapping):
@@ -693,24 +698,34 @@ def _wildcard_nonempty_match(parts: Sequence[str], text: str) -> bool:
     return end - pos >= 1
 
 
-def _segments_compatible(left: str, right: str) -> bool:
+# How two evidence path segments or query values relate: the same text apart from what a redaction
+# marker may hide on one side only, a proven difference, or not decidable.
+_SAME, _CHANGED, _UNKNOWN = "same", "changed", "unknown"
+
+
+def _segment_relation(left: str, right: str) -> str:
     left_red = _REDACTION_MARKER_RE.search(left) is not None
     right_red = _REDACTION_MARKER_RE.search(right) is not None
     if not left_red and not right_red:
-        return left == right
-    if left_red and not right_red:
-        return _wildcard_nonempty_match(_REDACTION_MARKER_RE.split(left), right)
-    if right_red and not left_red:
-        return _wildcard_nonempty_match(_REDACTION_MARKER_RE.split(right), left)
+        return _SAME if left == right else _CHANGED
+    if left_red != right_red:
+        pattern, text = (left, right) if left_red else (right, left)
+        return _SAME if _wildcard_nonempty_match(_REDACTION_MARKER_RE.split(pattern), text) else _CHANGED
     if left in _TYPED_PII_MARKERS and right in _TYPED_PII_MARKERS and left != right:
-        return False
+        return _CHANGED
     left_parts = _REDACTION_MARKER_RE.split(left)
     right_parts = _REDACTION_MARKER_RE.split(right)
+    # Every marker stands for at least one character, so text before the first marker and after the
+    # last one must line up.
     if not (left_parts[0].startswith(right_parts[0]) or right_parts[0].startswith(left_parts[0])):
-        return False
+        return _CHANGED
     if not (left_parts[-1].endswith(right_parts[-1]) or right_parts[-1].endswith(left_parts[-1])):
-        return False
-    return True
+        return _CHANGED
+    # Both sides hide values. Only the same markers around the same literal text read the same; any
+    # other text between markers (an ID in "[REDACTED]-1001-[REDACTED]") cannot be matched either way.
+    if left_parts == right_parts and _REDACTION_MARKER_RE.findall(left) == _REDACTION_MARKER_RE.findall(right):
+        return _SAME
+    return _UNKNOWN
 
 
 def _parse_query_pairs(query: str) -> Tuple[List[Tuple[str, str]], bool]:
@@ -727,6 +742,26 @@ def _parse_query_pairs(query: str) -> Tuple[List[Tuple[str, str]], bool]:
     return pairs, False
 
 
+def _query_relation(left: str, right: str) -> str:
+    """How two evidence query strings relate; parameters past the evidence limit are never known."""
+    left_pairs, left_cut = _parse_query_pairs(left)
+    right_pairs, right_cut = _parse_query_pairs(right)
+    if not left_cut and not right_cut:
+        if [name for name, _ in left_pairs] != [name for name, _ in right_pairs]:
+            return _CHANGED
+    elif (left_cut and not right_cut and len(right_pairs) <= len(left_pairs)) or (
+            right_cut and not left_cut and len(left_pairs) <= len(right_pairs)):
+        # One side was cut off after its kept parameters; the other has no more than those.
+        return _CHANGED
+    relations = [_CHANGED if left_name != right_name else _segment_relation(left_value, right_value)
+                 for (left_name, left_value), (right_name, right_value) in zip(left_pairs, right_pairs)]
+    if _CHANGED in relations:
+        return _CHANGED
+    if left_cut or right_cut or _UNKNOWN in relations:
+        return _UNKNOWN
+    return _SAME
+
+
 def _compare_single_url_scope(left_scope: str, right_scope: str, *, declared: bool) -> Optional[str]:
     if left_scope == "[URL OMITTED]" or right_scope == "[URL OMITTED]":
         if (left_scope == "[URL OMITTED]") != (right_scope == "[URL OMITTED]"):
@@ -741,28 +776,19 @@ def _compare_single_url_scope(left_scope: str, right_scope: str, *, declared: bo
         pb = urlsplit(right_scope)
     except ValueError:
         return "scope_unknown"
-    qa, trunc_a = _parse_query_pairs(pa.query)
-    qb, trunc_b = _parse_query_pairs(pb.query)
-    if trunc_a or trunc_b:
-        limit = min(len(qa), len(qb))
-        qa_cmp, qb_cmp = qa[:limit], qb[:limit]
-    else:
-        if [k for k, _ in qa] != [k for k, _ in qb]:
-            return "resources_changed"
-        qa_cmp, qb_cmp = qa, qb
-    for (ka, va), (kb, vb) in zip(qa_cmp, qb_cmp):
-        if ka != kb or not _segments_compatible(va, vb):
-            return "resources_changed"
+    relations = [_query_relation(pa.query, pb.query)]
     segs_a = [_decode_preserving_encoded_slash(s) for s in pa.path.split("/")]
     segs_b = [_decode_preserving_encoded_slash(s) for s in pb.path.split("/")]
     if len(segs_a) == len(segs_b):
-        if not all(_segments_compatible(a, b) for a, b in zip(segs_a, segs_b)):
-            return "resources_changed"
+        relations.extend(_segment_relation(a, b) for a, b in zip(segs_a, segs_b))
     else:
-        full_a = _decode_preserving_encoded_slash(pa.path)
-        full_b = _decode_preserving_encoded_slash(pb.path)
-        if not _segments_compatible(full_a, full_b):
-            return "resources_changed"
+        relations.append(_segment_relation(_decode_preserving_encoded_slash(pa.path),
+                                           _decode_preserving_encoded_slash(pb.path)))
+    if _CHANGED in relations:
+        return "resources_changed"
+    if _UNKNOWN in relations:
+        # Redaction hides what would decide it; keyed fingerprints do not cover evidence URLs.
+        return "scope_unknown"
     return None if declared else "scope_unknown"
 
 
@@ -814,6 +840,21 @@ def _compare_resource_scope_sets(
         else:
             return "resources_changed"
     return "scope_unknown" if saw_unknown else None
+
+
+def resource_scope_issue(
+    before: Iterable[Tuple[Tuple[str, str], ...]],
+    after: Iterable[Tuple[Tuple[str, str], ...]],
+    *,
+    declared: bool,
+) -> Optional[str]:
+    """What the evidence URLs of one check show about its resources between two reports.
+
+    ``resources_changed`` or ``scope_unknown``, or None when they are shown the
+    same; ``declared`` is whether keyed contexts compare the reports. This is
+    the rule compare_reports applies to findings and the gate to accepted access.
+    """
+    return _compare_resource_scope_sets(set(before), set(after), declared=declared)
 
 
 def _evidence_scope(evidence: Mapping[str, Any]) -> Tuple[Tuple[Tuple[str, str], ...], Tuple[Tuple[str, str], ...]]:

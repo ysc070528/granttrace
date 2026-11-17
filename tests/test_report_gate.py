@@ -204,6 +204,101 @@ class ConditionTests(unittest.TestCase):
         self.assertEqual(gate(baseline, current, "not_comparable")["exit_code"], 3)
         self.assertEqual(gate(baseline, current, "coverage_decrease")["exit_code"], 1)
 
+    def test_all_resolved_exits_0_and_resolved_with_not_comparable_exits_3(self) -> None:
+        # 1. Every confirmed finding resolved on comparable evidence -> exit 0.
+        all_base = keyed([
+            bola("CONFIRMED"),
+            result("BOLA", OTHER, "CONFIRMED", target_url="http://127.0.0.1:8000/api/other/1"),
+            result("BROKEN_AUTH", THIRD, "CONFIRMED"),
+        ])
+        all_fixed = keyed([
+            bola("SECURE"),
+            result("BOLA", OTHER, "AUTHORIZED", target_url="http://127.0.0.1:8000/api/other/1"),
+            result("BROKEN_AUTH", THIRD, "SECURE"),
+        ])
+        all_comp = compare_reports(all_base, all_fixed)
+        self.assertEqual(all_comp["summary"], {
+            "baseline_confirmed": 3,
+            "current_confirmed": 0,
+            "current_confirmed_not_comparable": 0,
+            "new": 0,
+            "persisting": 0,
+            "resolved": 3,
+            "not_comparable": 0,
+            "relying_on_assumptions": 0,
+        })
+        all_decided = evaluate_gate(
+            all_comp, result_states(all_base), result_states(all_fixed), conditions=ALL,
+        )
+        self.assertEqual((all_decided["result"], all_decided["exit_code"], all_decided["verified"]), ("passed", 0, True))
+        self.assertTrue(all(not c["regressions"] and not c["unverified"] for c in all_decided["conditions"]))
+
+        # 2. One operation RESOLVED (OP) + another operation NOT_COMPARABLE (OTHER) -> exit 3,
+        #    naming the exact reason on OTHER and never reporting OP as failed or unverified.
+        resolved_id = finding_id("BOLA", OP)
+        other_id = finding_id("BOLA", OTHER)
+        mixed_cases: Dict[str, Tuple[Dict[str, Any], Dict[str, Any], str]] = {
+            "context_incomplete": (
+                keyed([bola("CONFIRMED"), result("BOLA", OTHER, "CONFIRMED")], volatile_operations=(OTHER,)),
+                keyed([bola("SECURE"), result("BOLA", OTHER, "SECURE")], volatile_operations=(OTHER,)),
+                "context_incomplete",
+            ),
+            "resources_changed": (
+                keyed([bola("CONFIRMED"),
+                       result("BOLA", OTHER, "CONFIRMED", target_url="http://127.0.0.1:8000/api/other/1")]),
+                keyed([bola("SECURE"),
+                       result("BOLA", OTHER, "SECURE", target_url="http://127.0.0.1:8000/api/other/2")]),
+                "resources_changed",
+            ),
+            "scope_unknown": (
+                keyed([bola("CONFIRMED"),
+                       result("BOLA", OTHER, "CONFIRMED",
+                              target_url="http://127.0.0.1:8000/api/other/%5BREDACTED%5D-1-%5BREDACTED%5D")]),
+                keyed([bola("SECURE"),
+                       result("BOLA", OTHER, "SECURE",
+                              target_url="http://127.0.0.1:8000/api/other/%5BREDACTED%5D-2-%5BREDACTED%5D")]),
+                "scope_unknown",
+            ),
+            "spec_changed": (
+                keyed([bola("CONFIRMED"), result("BOLA", OTHER, "CONFIRMED")]),
+                keyed([bola("SECURE"), result("BOLA", OTHER, "SECURE")],
+                      endpoints=[endpoint(OP), endpoint(OTHER, summary="changed"), endpoint(THIRD)]),
+                "spec_changed",
+            ),
+            "confirmed_on_changed_resource": (
+                keyed([bola("CONFIRMED"),
+                       result("BOLA", OTHER, "CONFIRMED", target_url="http://127.0.0.1:8000/api/other/1")]),
+                keyed([bola("SECURE"),
+                       result("BOLA", OTHER, "CONFIRMED", target_url="http://127.0.0.1:8000/api/other/2")]),
+                "resources_changed",
+            ),
+        }
+        for label, (mixed_base, mixed_cur, expected_reason) in mixed_cases.items():
+            with self.subTest(case=label):
+                comp = compare_reports(mixed_base, mixed_cur)
+                by_op = {issue["operation"]: issue for issue in comp["issues"]}
+                self.assertEqual(by_op[OP]["status"], "resolved")
+                self.assertNotIn("reasons", by_op[OP])
+                self.assertEqual(by_op[OTHER]["status"], "not_comparable")
+                self.assertIn(expected_reason, by_op[OTHER]["reasons"])
+                self.assertEqual(comp["summary"]["resolved"], 1)
+                self.assertEqual(comp["summary"]["not_comparable"], 1)
+
+                decided = evaluate_gate(comp, result_states(mixed_base), result_states(mixed_cur), conditions=ALL)
+                self.assertEqual((decided["result"], decided["exit_code"]), ("unverified", 3))
+                flagged_ids = {
+                    entry["finding_id"]
+                    for cond in decided["conditions"]
+                    for entry in cond["regressions"] + cond["unverified"]
+                }
+                self.assertNotIn(resolved_id, flagged_ids)
+                self.assertEqual(flagged_ids, {other_id})
+                nc_entries = part(decided, "not_comparable")["unverified"]
+                self.assertEqual(len(nc_entries), 1)
+                self.assertEqual(nc_entries[0]["finding_id"], other_id)
+                self.assertEqual(nc_entries[0]["reason"], "finding_not_comparable")
+                self.assertIn(expected_reason, nc_entries[0]["comparison_reasons"])
+
     def test_a_verified_regression_outranks_what_could_not_be_verified(self):
         baseline = keyed([bola("SECURE"), result("BOLA", OTHER, "CONFIRMED"), anchor()])
         current = keyed([bola("CONFIRMED"), result("BOLA", OTHER, "ERROR"), anchor()])
@@ -495,6 +590,50 @@ class CommandLineTests(unittest.TestCase):
                 self.assertIn(report_gate.EXIT_CODES_LINE, stdout)
                 # Without a gate option the same comparison exits 0.
                 self.assertEqual(run_diff([old, new])[0], 0)
+
+    def test_cli_all_resolved_and_mixed_resolved_with_not_comparable_exit_codes(self) -> None:
+        all_flags = ("--fail-on-new", "--fail-on-coverage-decrease", "--fail-on-not-comparable", "--github-actions")
+        summary_file = self.folder / "step-summary.md"
+
+        # 1. All findings RESOLVED -> CLI exit 0.
+        base_all, cur_all = self.pair(
+            keyed([bola("CONFIRMED"), result("BOLA", OTHER, "CONFIRMED")]),
+            keyed([bola("SECURE"), result("BOLA", OTHER, "SECURE")]),
+        )
+        out_all = self.folder / "cmp-all.json"
+        code_all, stdout_all, stderr_all = run_diff(
+            [base_all, cur_all, *all_flags, "--export-json", out_all],
+            {"GITHUB_STEP_SUMMARY": str(summary_file)},
+        )
+        self.assertEqual(code_all, 0, stdout_all + stderr_all)
+        self.assertIn("PASSED (exit 0)", stdout_all)
+        self.assertIn("2 resolved, 0 not comparable", stdout_all)
+        self.assertNotIn("REGRESSION", stdout_all)
+        self.assertNotIn("UNVERIFIED", stdout_all)
+
+        # 2. Mixed RESOLVED (OP) + NOT_COMPARABLE (OTHER: context_incomplete) -> CLI exit 3.
+        summary_file.unlink(missing_ok=True)
+        base_mix, cur_mix = self.pair(
+            keyed([bola("CONFIRMED"), result("BOLA", OTHER, "CONFIRMED")], volatile_operations=(OTHER,)),
+            keyed([bola("SECURE"), result("BOLA", OTHER, "SECURE")], volatile_operations=(OTHER,)),
+        )
+        out_mix = self.folder / "cmp-mix.json"
+        code_mix, stdout_mix, stderr_mix = run_diff(
+            [base_mix, cur_mix, *all_flags, "--export-json", out_mix],
+            {"GITHUB_STEP_SUMMARY": str(summary_file)},
+        )
+        self.assertEqual(code_mix, 3, stdout_mix + stderr_mix)
+        self.assertIn("NOT VERIFIED (exit 3)", stdout_mix)
+        self.assertIn("1 resolved, 1 not comparable", stdout_mix)
+        self.assertIn(f"UNVERIFIED  [not_comparable] {finding_id('BOLA', OTHER)} BOLA {OTHER} "
+                      "(finding_not_comparable: context_incomplete)", stdout_mix)
+        self.assertNotIn(finding_id("BOLA", OP),
+                         "\n".join(line for line in stdout_mix.splitlines()
+                                   if "REGRESSION" in line or "UNVERIFIED" in line))
+        step_md = summary_file.read_text(encoding="utf-8")
+        self.assertIn("## GrantTrace security gate: NOT VERIFIED (exit 3)", step_md)
+        self.assertIn("finding_not_comparable (context_incomplete)", step_md)
+        self.assertNotIn(finding_id("BOLA", OP), step_md)
 
     def test_invalid_input_and_options_exit_2(self):
         old, new = self.pair(keyed([bola("SECURE")]), keyed([bola("CONFIRMED")]))

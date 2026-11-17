@@ -75,7 +75,7 @@ template and subject. The JSON lists each item with one of these reason codes.
 | Regression (1) | The baseline verified the check as not vulnerable; it is now confirmed | `new_finding` |
 | Not verified (3) | A confirmed finding in the current report is neither new nor persisting: a first detection, a new operation, a changed specification, policy or resources, an unverified baseline, a verdict without a request, an unreadable subject | `confirmed_not_comparable` |
 | Not verified (3) | A check the baseline verified as not vulnerable has no conclusive result now: error, skipped, inconclusive, a verdict without a request, a missing check or a removed operation | `no_longer_verified` |
-| Not verified (3) | A check the baseline verified as not vulnerable is now PUBLIC or AUTHORIZED, and its specification, policy or resources changed | `accepted_after_declaration_change` |
+| Not verified (3) | A check the baseline verified as not vulnerable is now PUBLIC or AUTHORIZED, and its specification, policy or resources changed or cannot be shown unchanged (the rule `diff` applies to findings; any difference in the request URLs also counts) | `accepted_after_declaration_change` |
 
 The last two rows matter: a current report without new confirmed findings is
 not enough. A vulnerability can hide behind a check that no longer reaches a

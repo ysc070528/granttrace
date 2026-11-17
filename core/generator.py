@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import datetime
 import json
 import math
 import re
 import uuid
+from contextvars import ContextVar
 from fractions import Fraction
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 
 JsonPathPart = Union[str, int]
@@ -29,6 +31,19 @@ def _json_equal(left: Any, right: Any) -> bool:
     if isinstance(left, list) and isinstance(right, list):
         return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
     return left == right
+
+
+# A random UUID or the current date or time differs on every scan. While a parameter value is
+# generated, _PER_SCAN_SAMPLE collects whether such a value was used; track_generated_values()
+# collects the names of the parameters that received one.
+_PER_SCAN_SAMPLE: ContextVar[Optional[List[bool]]] = ContextVar("granttrace_per_scan_sample", default=None)
+_PER_SCAN_PARAMETERS: ContextVar[Optional[List[str]]] = ContextVar("granttrace_per_scan_parameters", default=None)
+
+
+def _note_per_scan_value() -> None:
+    marks = _PER_SCAN_SAMPLE.get()
+    if marks is not None:
+        marks.append(True)
 
 
 class SmartDataGenerator:
@@ -553,8 +568,32 @@ class SmartDataGenerator:
             parameter_name = str(param_meta.get("name", "")).lower()
             return "test_user_id" if ("user" in parameter_name or "name" in parameter_name) else "sample_param"
 
-        value = cls._generate_schema_sample(schema, include_optional=True, field_name=param_meta.get("name"))
+        marks: List[bool] = []
+        token = _PER_SCAN_SAMPLE.set(marks)
+        try:
+            value = cls._generate_schema_sample(schema, include_optional=True, field_name=param_meta.get("name"))
+        finally:
+            _PER_SCAN_SAMPLE.reset(token)
+        names = _PER_SCAN_PARAMETERS.get()
+        if marks and names is not None:
+            names.append(str(param_meta.get("name", "")))
         return value
+
+    @staticmethod
+    @contextlib.contextmanager
+    def track_generated_values() -> Iterator[List[str]]:
+        """Collect, in this thread, the parameters given a value that differs on every scan.
+
+        A random UUID or the current date or time, generated for a parameter
+        without a configured or documented value. Request bodies built for
+        write tests are not parameters and are not collected.
+        """
+        names: List[str] = []
+        token = _PER_SCAN_PARAMETERS.set(names)
+        try:
+            yield names
+        finally:
+            _PER_SCAN_PARAMETERS.reset(token)
 
     @classmethod
     def _numeric_bounds(cls, schema: Dict[str, Any]) -> Tuple[Any, bool, Any, bool]:
@@ -682,12 +721,15 @@ class SmartDataGenerator:
         fmt = str(schema.get("format", "")).lower()
         normalized_name = str(field_name or "").lower()
         if fmt == "uuid" or "uuid" in normalized_name:
+            _note_per_scan_value()
             value = str(uuid.uuid4())
         elif fmt == "email" or "email" in normalized_name:
             value = "audit@example.com"
         elif fmt == "date-time":
+            _note_per_scan_value()
             value = datetime.datetime.now(datetime.timezone.utc).isoformat()
         elif fmt == "date":
+            _note_per_scan_value()
             value = datetime.date.today().isoformat()
         elif schema.get("pattern"):
             value = cls._pattern_token(str(schema["pattern"])) or "sample"

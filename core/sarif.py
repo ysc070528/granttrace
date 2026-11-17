@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 from core import __version__
 from core.bopla import confirmation_supported
-from core.evidence import sanitize_evidence, sanitize_text, sanitize_url
+from core.evidence import sanitize_evidence, sanitize_operation_key, sanitize_text, sanitize_url
 from core.models import parse_operation_key
 
 
@@ -102,13 +102,11 @@ def _safe_endpoint(value: object, secret_values: tuple[str, ...]) -> Optional[st
     valid, method, path, _, _ = parse_operation_key(value)
     if not valid:
         return None
-    # Use the existing URL-aware evidence boundary so encoded credentials in
-    # valid operation paths receive the same redaction as HTTP evidence.
-    safe_evidence = sanitize_evidence({"endpoint_url": path}, secret_values=secret_values)
-    safe_path = safe_evidence.get("endpoint_url") if isinstance(safe_evidence, dict) else None
-    if not isinstance(safe_path, str):
-        return None
-    return sanitize_text(f"{method} {safe_path}", secret_values=secret_values)
+    # The operation-template boundary of the JSON report: URL-aware, so encoded
+    # credentials are redacted as in HTTP evidence, and short configured values
+    # only replace whole path segments instead of corrupting the template.
+    safe = sanitize_operation_key(f"{method} {path}", secret_values)
+    return safe if isinstance(safe, str) else None
 
 
 def _safe_spec_uri(spec_path: Optional[str], secret_values: tuple[str, ...]) -> Optional[str]:

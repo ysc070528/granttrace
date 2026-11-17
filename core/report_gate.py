@@ -38,7 +38,7 @@ import re
 import secrets
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
-from core.report_diff import CONFIRMED, Key, ResultState, finding_id
+from core.report_diff import CONFIRMED, Key, ResultState, finding_id, resource_scope_issue
 
 GATE_SCHEMA_VERSION = 1
 CONDITIONS = ("new", "coverage_decrease", "not_comparable")
@@ -120,12 +120,16 @@ def _scope_changed(key: Key, before: ResultState, after: ResultState, changed: I
     """Whether the specification, policy or resources of a check are not shown unchanged.
 
     The rule compare_reports applies to findings: keyed fingerprints where the
-    reports have them, and the evidence on either basis.
+    reports have them, and the evidence on either basis, judged by
+    resource_scope_issue. Evidence URLs that differ in any way also count as a
+    change here, so accepted access is never verified on a resource that only
+    one report shows in readable form.
     """
     if key[1] in changed:
         return True
     if before.resources and after.resources:
-        if before.resources != after.resources:
+        if (before.resources != after.resources
+                or resource_scope_issue(before.resources, after.resources, declared=declared) is not None):
             return True
     elif not declared:
         return True
