@@ -71,6 +71,19 @@ def _spec_auth_names(parser: OpenAPIParser) -> AuthNames:
     return frozenset(names["header"]), frozenset(names["cookie"]), frozenset(names["query"])
 
 
+def _session_cookies(parser: OpenAPIParser, endpoints: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Security scheme name -> cookie name of each apiKey cookie scheme a security requirement uses."""
+    try:
+        schemes = parser.get_security_schemes()
+    except (TypeError, ValueError, RuntimeError):
+        return {}
+    required = {name for endpoint in endpoints for requirement in endpoint.get("security") or []
+                if isinstance(requirement, dict) for name in requirement}
+    return {name: scheme["name"].strip() for name, scheme in schemes.items()
+            if name in required and isinstance(scheme, dict) and scheme.get("in") == "cookie"
+            and isinstance(scheme.get("name"), str) and scheme["name"].strip()}
+
+
 def _is_query_credential(name: str, auth: AuthNames) -> bool:
     """Mirror RequestBuilderMixin._is_auth_query_parameter."""
     lowered = name.lower()
@@ -124,10 +137,18 @@ def _request_value_review(
                 "different identity-specific values under identities.*.parameters; never use common. "
                 "Anonymous requests omit it."
             )
+        if lowered in auth_cookies:
+            return "identity_parameters", (
+                "Session cookie of a security scheme: drafted for owner and visitor under identities.*.parameters "
+                "and sent with every request of that identity. Values must be identity-specific and differ "
+                "between owner and visitor; give every role its own under identities.roles.<role>.parameters; "
+                "never use common. Anonymous requests omit it."
+            )
         return "identity_parameters", (
             "Authentication cookie: drafted for owner and visitor under identities.*.parameters. Values must "
             "be identity-specific and differ between owner and visitor; never use common. Anonymous requests "
-            "omit it."
+            "omit it. No security scheme declares it, so it is sent only with operations that declare it and "
+            "does not count as the identity's authentication."
         )
     if "content" in parameter:
         return "", (
@@ -275,8 +296,11 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
         "steps": [
             "Use a dedicated authorized test target and disposable resources.",
             "Fill owner and visitor with distinct real test-account IDs and authentication. For Bearer auth, "
-            "set identities.*.token to 'Bearer <test credential>'; for custom authentication, use "
-            "identities.*.headers and auth_header_names. Keep anonymous credentials empty.",
+            "set identities.*.token to 'Bearer <test credential>'; for a session cookie, fill the drafted "
+            "identities.*.parameters value (each identity's own session, sent with every request); for custom "
+            "authentication, use identities.*.headers and auth_header_names. Every identity, roles included, "
+            "must send each credential that every security requirement includes. Ordinary cookies (theme, "
+            "language) are no authentication. Keep anonymous credentials empty.",
             "Replace every resource placeholder with an existing resource belonging to the named test "
             "identity. Parameter values are JSON values of the declared type, not Python list/boolean text. "
             "Fill optional query parameters deliberately when needed; do not guess resource ownership.",
@@ -309,6 +333,28 @@ def build_config_scaffold(spec_path: str) -> Tuple[Dict[str, Any], Dict[str, Any
         ],
         "operations": [],
     }
+    # A session cookie a security requirement uses is each identity's credential, sent with every request.
+    sessions = _session_cookies(parser, endpoints)
+    for scheme_note in checklist["security_schemes"]:
+        cookie = sessions.get(scheme_note["name"])
+        if cookie is None:
+            continue
+        scheme_note["config_paths"] = []
+        for identity in RESOURCE_IDENTITIES:
+            existing = draft["identities"][identity]["parameters"]
+            key = next((key for key in existing if key.lower() == cookie.lower()), cookie)
+            existing.setdefault(key, _input(identity + " session cookie " + cookie))
+            scheme_note["config_paths"].append("identities." + identity + ".parameters." + key)
+        for identity_note in checklist["identities"]:
+            identity_note["config_paths"].append("identities." + identity_note["identity"] + ".parameters." + cookie)
+        earlier = scheme_note.get("needs_review")  # A $ref scheme keeps its own note.
+        scheme_note["needs_review"] = (earlier + " " if earlier else "") + (
+            "Session cookie: drafted for owner and visitor under identities.*.parameters." + cookie + " and sent "
+            "with every request of that identity. Give each its own session, distinct from the other; give "
+            "every role in identities.roles its own under identities.roles.<role>.parameters." + cookie + ". "
+            "Anonymous requests never send it. Remove the drafted values only if the identities authenticate "
+            "in another way the specification allows."
+        )
     get_paths = sorted({endpoint["path"] for endpoint in endpoints if endpoint["method"] == "GET"})
     checklist["available_get_paths"] = get_paths
     for endpoint in endpoints:

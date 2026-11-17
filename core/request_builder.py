@@ -20,6 +20,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from core.config_validator import ConfigValidator
 from core.evidence import _is_sensitive_key
 from core.generator import SmartDataGenerator
+from core.identity_auth import (
+    IdentityAuthError,
+    SpecAuth,
+    isolation_problems,
+    merge_session_cookies,
+    parse_cookie_header,
+    problems_for,
+    session_cookie_parameters,
+)
 from core.parameters import (
     ParameterSerializationError,
     normalize_parameter_value,
@@ -48,20 +57,31 @@ class RequestBuilderMixin:
         def _publish_secret_values(self, values: Set[str]) -> None: ...
 
     def _is_auth_header(self, name: str) -> bool:
-        spec_headers = self._spec_auth_header_names()
-        custom_headers = []
+        return ConfigValidator.is_auth_header(
+            name,
+            custom_auth_names=self._custom_auth_header_names(),
+            spec_auth_names=self._spec_auth_header_names(),
+        )
+
+    def _custom_auth_header_names(self) -> List[str]:
+        custom_headers: List[str] = []
         for identity_name, identity in self.identities.items():
             if identity_name == "roles":
                 continue  # A role map, not an identity; roles have no auth_header_names.
-            extra = identity.get("auth_header_names", [])
+            extra = identity.get("auth_header_names", []) if isinstance(identity, dict) else []
             if not isinstance(extra, list) or any(not isinstance(key, str) for key in extra):
                 raise ValueError("auth_header_names must be a list of header names")
             custom_headers.extend(extra)
-        return ConfigValidator.is_auth_header(
-            name,
-            custom_auth_names=custom_headers,
-            spec_auth_names=spec_headers,
-        )
+        return custom_headers
+
+    def _spec_auth(self) -> SpecAuth:
+        """The credentials the current specification declares, recomputed when the parser changes."""
+        cached = getattr(self, "_spec_auth_cache", None)
+        if cached is not None and cached[0] is self.parser:
+            return cached[1]
+        spec = SpecAuth.from_spec(self.parser.get_security_schemes(), self.parser.raw_spec)
+        self._spec_auth_cache = (self.parser, spec)
+        return spec
 
     def _spec_auth_header_names(self) -> Set[str]:
         return {
@@ -122,22 +142,21 @@ class RequestBuilderMixin:
             if not isinstance(identity.get("headers", {}), dict):
                 raise ValueError(f"identity '{name}' headers must be an object")
         self._validate_read_only_identity_material()
-        fingerprints = {}
         for name in ("owner", "visitor", "anonymous"):
-            material = []
-            for key, value in self.identity_headers(name).items():
-                if self._is_auth_header(key) and value.strip():
-                    normalized = value.strip()
-                    if key.lower() == "authorization" and " " in normalized:
-                        scheme, credential = normalized.split(None, 1)
-                        normalized = scheme.lower() + " " + credential.strip()
-                    material.append((key.lower(), normalized))
-            fingerprints[name] = tuple(sorted(material))
-        if (not fingerprints["owner"] or not fingerprints["visitor"]
-                or fingerprints["owner"] == fingerprints["visitor"]):
-            raise ValueError("owner and visitor must use distinct, non-empty effective authentication material")
-        if fingerprints["anonymous"]:
-            raise ValueError("anonymous identity must not define authentication material")
+            self._identity_wire_headers(name)  # Line breaks and duplicate headers are refused here.
+        problems = self._identity_isolation_problems()
+        if problems:
+            raise IdentityAuthError("; ".join(problem.message for problem in problems))
+
+    def _identity_isolation_problems(self) -> List[Any]:
+        """The configuration validation rules for identity credentials (core.identity_auth)."""
+        spec = self._spec_auth()
+        custom = self._custom_auth_header_names()
+
+        def is_auth_header(name: str) -> bool:
+            return ConfigValidator.is_auth_header(name, custom_auth_names=custom, spec_auth_names=spec.header_names)
+
+        return isolation_problems(self.identities, spec, is_auth_header, custom)
 
     def _validate_read_only_identity_material(self) -> None:
         """Apply the read-only rules of configuration validation to identities given in Python.
@@ -239,14 +258,39 @@ class RequestBuilderMixin:
 
         return secrets
 
-    def identity_headers(self, identity_name: str) -> Dict[str, str]:
+    def _identity_entry(self, identity_name: str) -> Dict[str, Any]:
+        """A built-in identity or a role of identities.roles; KeyError for any other name.
+
+        "roles" itself, the map of roles, is no identity and has no credentials:
+        callers that walk identities (report templates) get no headers for it.
+        """
+        if identity_name == "roles" and "roles" in self.identities:
+            return {}
         if identity_name in self.identities:
-            identity = self.identities[identity_name]
-        elif isinstance(self.identities.get("roles"), dict) and identity_name in self.identities["roles"]:
-            identity = self.identities["roles"][identity_name]
-        else:
-            raise KeyError(f"Unknown identity: {identity_name}")
-        headers = {}
+            return self.identities[identity_name]
+        roles = self.identities.get("roles")
+        if isinstance(roles, dict) and identity_name in roles:
+            return roles[identity_name]
+        raise KeyError(f"Unknown identity: {identity_name}")
+
+    def identity_headers(self, identity_name: str) -> Dict[str, str]:
+        """The headers every request of this identity carries, session cookies included.
+
+        The identity rules of configuration validation are applied first, to
+        the identities as they are now: material changed after construction
+        that would let this identity act as another, send credentials as
+        Anonymous, or be denied for a missing credential stops its requests
+        before any is built (IdentityAuthError, a ParameterSerializationError).
+        """
+        headers = self._identity_wire_headers(identity_name)
+        blocking = problems_for(self._identity_isolation_problems(), identity_name)
+        if blocking:
+            raise IdentityAuthError(blocking[0].message + "; no request was sent")
+        return headers
+
+    def _identity_wire_headers(self, identity_name: str) -> Dict[str, str]:
+        identity = self._identity_entry(identity_name)
+        headers: Dict[str, str] = {}
         for key, value in identity.get("headers", {}).items():
             normalized = str(key).strip().lower()
             if normalized in headers:
@@ -259,7 +303,8 @@ class RequestBuilderMixin:
             if any(char in str(token) for char in "\r\n"):
                 raise ValueError("identity token must not contain line breaks")
             headers["authorization"] = str(token).strip()
-        return headers
+        # Session cookies named by an apiKey cookie scheme ride on every request, like the Cookie header.
+        return merge_session_cookies(headers, identity, self._spec_auth())
 
     @staticmethod
     def _operation_key(ep: Dict[str, Any]) -> str:
@@ -289,6 +334,17 @@ class RequestBuilderMixin:
             values.update(identity_values)
         return values
 
+    @staticmethod
+    def _operation_value_names(configured: Any, identity_name: str) -> Set[str]:
+        """Names given a value for this operation in parameter_values (common, this identity, or flat)."""
+        if not isinstance(configured, dict):
+            return set()
+        names = {key for key in configured if key not in {"common", "owner", "visitor", "anonymous"}}
+        for scope in ("common", identity_name):
+            if isinstance(configured.get(scope), dict):
+                names.update(configured[scope])
+        return names
+
     def _build_request_headers(
         self,
         ep: Dict[str, Any],
@@ -309,6 +365,7 @@ class RequestBuilderMixin:
         requester_values = dict(self._operation_parameter_values(ep, identity_name))
         if extra_values:
             requester_values.update(extra_values)
+        explicit_values = self._operation_value_names(configured, identity_name) | set(extra_values or {})
 
         business_headers: Dict[str, str] = {}
         emitted_headers: Set[str] = set()
@@ -339,7 +396,7 @@ class RequestBuilderMixin:
             elif location == "cookie":
                 cookie = self._cookie_parameter(
                     metadata, name, resource_identity, identity_name, requester_values, configured,
-                    req_headers, swagger2,
+                    req_headers, swagger2, explicit_values,
                 )
                 if cookie is None:
                     continue
@@ -393,6 +450,13 @@ class RequestBuilderMixin:
                 return None
             configured = [bool(self.identity_headers(role).get(normalized_name)) for role in ("owner", "visitor")]
             if all(configured):
+                if not req_headers.get(normalized_name):
+                    # A role probe without it could be refused as unauthenticated, not as unauthorized.
+                    raise ParameterSerializationError(
+                        f"Authentication header '{name}' is configured for owner and visitor but not for role "
+                        f"'{identity_name}'; configure it under identities.roles.{identity_name}.headers; "
+                        "no request was sent"
+                    )
                 return None  # Sent from each requester's own identity headers.
             if name in requester_values:
                 raise ParameterSerializationError(
@@ -476,12 +540,16 @@ class RequestBuilderMixin:
         configured: Any,
         req_headers: Dict[str, str],
         swagger2: bool,
+        explicit_values: Optional[Set[str]] = None,
     ) -> Optional[Tuple[str, str, Any, bool]]:
         """Serialize one cookie parameter, or return None when it is not sent.
 
         Returns the cookie name and value, the configured value and whether the
-        cookie carries authentication.
+        cookie carries authentication. ``explicit_values`` names the values set
+        for this operation (parameter_values and readback values), as opposed to
+        the requester's identity parameters.
         """
+        explicit_values = explicit_values if explicit_values is not None else set(requester_values)
         if swagger2:
             raise ParameterSerializationError("Swagger 2 does not support cookie parameters; no request was sent")
 
@@ -491,15 +559,17 @@ class RequestBuilderMixin:
         if is_auth_cookie:
             if identity_name == "anonymous":
                 return None  # An anonymous probe intentionally omits credentials.
+            identity = self._identity_entry(identity_name)
+            identity_parameters = identity.get("parameters", {}) if isinstance(identity.get("parameters"), dict) else {}
             scoped_values = configured.get(identity_name, {}) if isinstance(configured, dict) else {}
             scoped_val = scoped_values.get(name) if isinstance(scoped_values, dict) else None
-            scoped_val = self.identities[identity_name].get("parameters", {}).get(name, scoped_val)
-            identity_cookies = dict(
-                (key.strip(), value.strip())
-                for part in req_headers.get("cookie", "").split(";") if "=" in part
-                for key, value in [part.split("=", 1)]
-            )
-            if name in identity_cookies and name in requester_values:
+            scoped_val = identity_parameters.get(name, scoped_val)
+            identity_cookies = dict(parse_cookie_header(req_headers.get("cookie", "")))
+            # A session cookie parameter is already part of the identity's Cookie header.
+            sessions = {key for _, key, _ in session_cookie_parameters(identity, self._spec_auth())}
+            supplied = (name in explicit_values
+                        or (name in identity_parameters and name not in sessions))
+            if name in identity_cookies and supplied:
                 raise ParameterSerializationError(
                     f"Business cookie parameter '{name}' conflicts with identity authentication cookie; no request was sent"
                 )
@@ -519,7 +589,7 @@ class RequestBuilderMixin:
             if identity_name == "visitor" and resource_identity != identity_name:
                 owner_scoped = configured.get(resource_identity, {}) if isinstance(configured, dict) else {}
                 owner_val = owner_scoped.get(name) if isinstance(owner_scoped, dict) else None
-                owner_val = self.identities[resource_identity].get("parameters", {}).get(name, owner_val)
+                owner_val = self._identity_entry(resource_identity).get("parameters", {}).get(name, owner_val)
                 owner_cookie = dict(
                     (key.strip(), value.strip())
                     for part in self.identity_headers(resource_identity).get("cookie", "").split(";") if "=" in part
