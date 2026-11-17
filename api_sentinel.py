@@ -763,6 +763,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
                     bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
                     readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
                     secret_values=auditor.config_secret_values(),
+                    volatile_operations=auditor.volatile_operations(),
                 )
             json.dump(
                 json_payload,

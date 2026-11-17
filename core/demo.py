@@ -238,7 +238,8 @@ def run_demo(output_dir: Optional[str] = None, read_only: bool = False) -> int:
                 parameter_values=auditor.parameter_values,
                 bola_config=auditor.bola_config, bopla_config=auditor.bopla_config,
                 readback_config=auditor.readback_config, write_allowlist=auditor.write_allowlist,
-                secret_values=auditor.config_secret_values())
+                secret_values=auditor.config_secret_values(),
+                volatile_operations=auditor.volatile_operations())
         exported.write_text(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         print("Findings:")
         print(f"- BOLA / IDOR: {auditor.stats['bola_confirmed']} confirmed")

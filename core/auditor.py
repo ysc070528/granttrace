@@ -8,6 +8,7 @@ changes are rolled back and the rollback is verified.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import ipaddress
 import re
@@ -19,7 +20,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Pattern, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, Iterator, List, Mapping, Optional, Pattern, Set, Tuple
 
 from core import __version__
 from core.authorization import AuthorizationEvidence
@@ -155,6 +156,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         self._secret_values: Set[str] = set(configured_secrets) | self._collect_sensitive_config_values()
         self._auth_parser = self.parser
         self._auth_parser_lock = threading.Lock()
+        # Operations whose requests carried a value generated anew for every scan (see volatile_operations).
+        self._volatile_operations: Set[str] = set()
 
         self.findings: List[Dict[str, Any]] = []
         self.results: List[Dict[str, Any]] = []
@@ -229,6 +232,28 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         never mutated, so reading it needs no lock.
         """
         return frozenset(self._secret_values)
+
+    def volatile_operations(self) -> FrozenSet[str]:
+        """Operations audited by run() whose requests carried a value that differs on every scan.
+
+        The scanner generates a random UUID or the current date or time for a
+        parameter without a configured value. Evidence and configuration cannot
+        show that two scans sent the same request, so the comparison context
+        leaves out their resources fingerprint; parameter_values pins such a
+        value.
+        """
+        with self._result_lock:
+            return frozenset(self._volatile_operations)
+
+    @contextlib.contextmanager
+    def _tracking_generated_values(self, ep: Dict[str, Any]) -> Iterator[None]:
+        with SmartDataGenerator.track_generated_values() as names:
+            try:
+                yield
+            finally:
+                if names:
+                    with self._result_lock:
+                        self._volatile_operations.add(self._operation_key(ep))
 
     def config_secret_values(self) -> FrozenSet[str]:
         """Return the immutable snapshot of configuration-derived authentication secrets.
@@ -1834,10 +1859,11 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         # A worker must report its own error while transport accounting is still
         # available in that thread. Reused workers start with a fresh check.
         self._request_accounting.attempts = None
-        try:
-            self.audit_endpoint_bola(ep)
-        except Exception as exc:
-            self._record_task_error(ep, "BOLA", exc)
+        with self._tracking_generated_values(ep):
+            try:
+                self.audit_endpoint_bola(ep)
+            except Exception as exc:
+                self._record_task_error(ep, "BOLA", exc)
 
     def build_plan(self) -> Dict[str, Any]:
         """Inspect local specification/configuration only; this never makes requests."""
@@ -1968,7 +1994,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         for ep in endpoints:
             try:
                 if ep["method"] in self.WRITE_METHODS:
-                    self.audit_endpoint_mass_assignment(ep, endpoints)
+                    with self._tracking_generated_values(ep):
+                        self.audit_endpoint_mass_assignment(ep, endpoints)
                 elif ep["method"] != "GET" and ep.get("unresolved_schema_error"):
                     # A failed path-item reference hides which operations exist
                     # (method UNKNOWN). Keep it INCONCLUSIVE like other unresolved

@@ -278,6 +278,7 @@ def build_comparison_context(
     readback_config: Any = None,
     write_allowlist: Iterable[Any] = (),
     secret_values: Iterable[str] = (),
+    volatile_operations: Iterable[Any] = (),
 ) -> Dict[str, Any]:
     """Keyed fingerprints of what a scan compared, for later comparability checks.
 
@@ -293,6 +294,9 @@ def build_comparison_context(
       rotating credentials does not look like another identity.
     * operations: the operation as defined by the specification (``endpoints``
       and the security schemes), its configured policy and its resource values.
+      ``volatile_operations`` (APISentinelAuditor.volatile_operations) sent a
+      value generated anew for every scan; no configuration fingerprints their
+      resources, so theirs is left out and ``diff`` reports context_incomplete.
     * credentials: one fingerprint over all credentials together (tokens, the
       identities' header values and every configured value that contains a
       known credential). When it differs, a credential changed: a rotation and
@@ -429,6 +433,7 @@ def build_comparison_context(
     bopla = _by_operation(bopla_config)
     readbacks = _by_operation(readback_config)
     allowlisted = {operation for operation in map(_canonical_operation, write_allowlist or ()) if operation}
+    volatile = {operation for operation in map(_canonical_operation, volatile_operations or ()) if operation}
     raw_operations = sorted(set(definitions) | set(parameters) | set(bola) | set(bopla) | set(readbacks) | allowlisted)
     grouped_operations: Dict[str, List[str]] = {}
     for raw_op in raw_operations:
@@ -455,6 +460,8 @@ def build_comparison_context(
             operations[safe_op] = {name: None for name, _ in _OPERATION_FINGERPRINTS}
             continue
         operations[safe_op] = {name: fingerprint(name, material[name]) for name, _ in _OPERATION_FINGERPRINTS}
+        if operation in volatile:
+            operations[safe_op]["resources"] = None
     identity_of_target = target_identity(target)
     everyone = {str(name): data for name, data in identity_map.items() if name != "roles"}
     if isinstance(roles, Mapping):
