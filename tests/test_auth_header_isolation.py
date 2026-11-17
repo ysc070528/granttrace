@@ -82,18 +82,18 @@ def make_spec(
     }
 
 
-SCHEMES_APIKEY_ONLY = {
+HEADER_SCHEME_ONLY = {
     "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
 }
-SCHEMES_APIKEY_AND_BEARER = {
+HEADER_AND_BEARER_SCHEMES = {
     "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
     "BearerAuth": {"type": "http", "scheme": "bearer"},
 }
-SCHEMES_SESSION_KEY_AND_BEARER = {
+SESSION_HEADER_AND_BEARER_SCHEMES = {
     "SessionKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Session-Key"},
     "BearerAuth": {"type": "http", "scheme": "bearer"},
 }
-SCHEMES_APIKEY_AND_COOKIE = {
+HEADER_AND_COOKIE_SCHEMES = {
     "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
     "CookieAuth": {"type": "apiKey", "in": "cookie", "name": "SESSIONID"},
 }
@@ -119,21 +119,21 @@ class HeaderIsolationValidationTests(unittest.TestCase):
             "anonymous": {},
         }
         cases = {
-            "single apiKey scheme": make_spec(SCHEMES_APIKEY_ONLY, [{"ApiKeyAuth": []}]),
+            "single apiKey scheme": make_spec(HEADER_SCHEME_ONLY, [{"ApiKeyAuth": []}]),
             "OR security (ApiKey OR Bearer)": make_spec(
-                SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": []}, {"BearerAuth": []}]
+                HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": []}, {"BearerAuth": []}]
             ),
             "AND globally but OR on one operation": make_spec(
-                SCHEMES_APIKEY_AND_BEARER,
+                HEADER_AND_BEARER_SCHEMES,
                 [{"ApiKeyAuth": [], "BearerAuth": []}],
                 extra_op_security=[{"ApiKeyAuth": []}, {"BearerAuth": []}],
             ),
             "AND globally but standalone ApiKey on one operation": make_spec(
-                SCHEMES_APIKEY_AND_BEARER,
+                HEADER_AND_BEARER_SCHEMES,
                 [{"ApiKeyAuth": [], "BearerAuth": []}],
                 extra_op_security=[{"ApiKeyAuth": []}],
             ),
-            "unused scheme with no security requirement": make_spec(SCHEMES_APIKEY_AND_BEARER, []),
+            "unused scheme with no security requirement": make_spec(HEADER_AND_BEARER_SCHEMES, []),
             "config-only validation without spec": None,
         }
         for label, spec in cases.items():
@@ -142,7 +142,7 @@ class HeaderIsolationValidationTests(unittest.TestCase):
                 self.assertIn("identities.visitor", paths, f"Expected visitor error for {label}, got {paths}")
 
     def test_shared_x_session_key_and_authorization_across_identities_and_roles_are_refused(self) -> None:
-        or_spec = make_spec(SCHEMES_SESSION_KEY_AND_BEARER, [{"SessionKeyAuth": []}, {"BearerAuth": []}])
+        or_spec = make_spec(SESSION_HEADER_AND_BEARER_SCHEMES, [{"SessionKeyAuth": []}, {"BearerAuth": []}])
 
         # 1. Owner and Visitor share X-Session-Key (even without auth_header_names) behind distinct Bearer tokens
         shared_session_hdr = {
@@ -166,7 +166,7 @@ class HeaderIsolationValidationTests(unittest.TestCase):
         self.assertIn("identities.roles.viewer", self.validate_paths(role_shared_hdr, or_spec))
 
         # 3. Shared Authorization header is ALWAYS refused, even under AND security with distinct X-API-Key!
-        and_spec = make_spec(SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": [], "BearerAuth": []}])
+        and_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": [], "BearerAuth": []}])
         shared_bearer_under_and = {
             "owner": {"id": "1001", "headers": {"X-API-Key": OWNER_KEY}, "token": TOKENS["owner"]},
             "visitor": {"id": "1002", "headers": {"X-API-Key": VISITOR_KEY}, "token": TOKENS["owner"]},
@@ -175,12 +175,12 @@ class HeaderIsolationValidationTests(unittest.TestCase):
         self.assertIn("identities.visitor", self.validate_paths(shared_bearer_under_and, and_spec))
 
         # 4. Shared X-Session-Key is refused even under AND security (a session key is per-session, not an app key)
-        and_session_hdr = make_spec(SCHEMES_SESSION_KEY_AND_BEARER, [{"SessionKeyAuth": [], "BearerAuth": []}])
+        and_session_hdr = make_spec(SESSION_HEADER_AND_BEARER_SCHEMES, [{"SessionKeyAuth": [], "BearerAuth": []}])
         self.assertIn("identities.visitor", self.validate_paths(shared_session_hdr, and_session_hdr))
 
     def test_legitimate_shared_gateway_apikey_is_allowed_only_under_true_and_with_distinct_identity_creds(self) -> None:
         # 1. True AND: X-API-Key (shared app key) + Bearer (distinct per identity and role)
-        and_bearer_spec = make_spec(SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": [], "BearerAuth": []}])
+        and_bearer_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": [], "BearerAuth": []}])
         valid_and_bearer = {
             "owner": {"id": "1001", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["owner"]},
             "visitor": {"id": "1002", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["visitor"]},
@@ -193,7 +193,7 @@ class HeaderIsolationValidationTests(unittest.TestCase):
         self.assertEqual(self.validate_paths(valid_and_bearer, and_bearer_spec), [])
 
         # 2. True AND: X-API-Key (shared app key) + Session Cookie (distinct per identity and role)
-        and_cookie_spec = make_spec(SCHEMES_APIKEY_AND_COOKIE, [{"ApiKeyAuth": [], "CookieAuth": []}])
+        and_cookie_spec = make_spec(HEADER_AND_COOKIE_SCHEMES, [{"ApiKeyAuth": [], "CookieAuth": []}])
         valid_and_cookie = {
             "owner": {"id": "1001", "headers": {"X-API-Key": APP_KEY}, "parameters": {"SESSIONID": SESSIONS["owner"]}},
             "visitor": {"id": "1002", "headers": {"X-API-Key": APP_KEY}, "parameters": {"SESSIONID": SESSIONS["visitor"]}},
@@ -310,7 +310,7 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
 
         # 1. OR spec -> --validate-config MUST fail (exit 2) and Python API MUST raise ValueError
-        or_spec = make_spec(SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": []}, {"BearerAuth": []}])
+        or_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": []}, {"BearerAuth": []}])
         or_spec_path = self.folder / "or_spec.json"
         or_spec_path.write_text(json.dumps(or_spec), encoding="utf-8")
         code, out, err = self.run_cli(["--spec", str(or_spec_path), "--config", str(cfg_path), "--validate-config"])
@@ -323,7 +323,7 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         self.assertEqual(self.seen, [])
 
         # 2. True AND spec -> --validate-config MUST pass (exit 0) and full loopback scan isolates identities
-        and_spec = make_spec(SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": [], "BearerAuth": []}])
+        and_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": [], "BearerAuth": []}])
         and_spec_path = self.folder / "and_spec.json"
         and_spec_path.write_text(json.dumps(and_spec), encoding="utf-8")
         code, out, err = self.run_cli(["--spec", str(and_spec_path), "--config", str(cfg_path), "--validate-config"])
@@ -353,7 +353,7 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         self.assertTrue(all(r["api_key"] == APP_KEY for r in auth_reqs))
 
     def test_late_shared_apikey_mutation_on_or_spec_is_blocked_before_wire(self) -> None:
-        or_spec = make_spec(SCHEMES_APIKEY_AND_BEARER, [{"ApiKeyAuth": []}, {"BearerAuth": []}])
+        or_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": []}, {"BearerAuth": []}])
         or_spec_path = self.folder / "late_or.json"
         or_spec_path.write_text(json.dumps(or_spec), encoding="utf-8")
         identities = {
