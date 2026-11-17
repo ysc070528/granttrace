@@ -25,7 +25,7 @@ Requirements are not checked operation by operation (a documented limit).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from core.config_validation.base import ValidatorBase
 from core.parameters import ParameterSerializationError, serialize_cookie_parameter
@@ -47,6 +47,9 @@ class SpecAuth:
     # Credentials every alternative of every security requirement includes, as Material.kinds() names
     # them: "authorization", a lower-case header name or "cookie:<lower-case name>".
     mandatory: frozenset = frozenset()
+    # Each protected operation's OR list of AND scheme-credential sets ("" for an undefined or
+    # unsupported scheme such as an query key or mutual TLS).
+    requirements: Tuple[Tuple[FrozenSet[str], ...], ...] = ()
 
     @classmethod
     def from_spec(cls, schemes: Mapping[str, Any], raw_spec: Optional[Mapping[str, Any]]) -> "SpecAuth":
@@ -60,7 +63,11 @@ class SpecAuth:
             credential for credential in candidates if requirements and all(
                 any(credentials.get(name) == credential for name in alternative)
                 for alternatives in requirements for alternative in alternatives))
-        return cls(spec.header_names, spec.cookie_names, mandatory)
+        resolved_requirements = tuple(
+            tuple(frozenset(credentials.get(name, "") for name in alternative) for alternative in alternatives)
+            for alternatives in requirements
+        )
+        return cls(spec.header_names, spec.cookie_names, mandatory, resolved_requirements)
 
     @classmethod
     def from_schemes(cls, schemes: Mapping[str, Any]) -> "SpecAuth":
@@ -172,6 +179,12 @@ class Material:
     def names(self) -> List[str]:
         return sorted(set(self.headers) | set(self.cookies))
 
+    def credential_value(self, kind: str) -> Optional[str]:
+        if kind.startswith("cookie:"):
+            target = kind[7:]
+            return next((val for name, val in self.cookies.items() if name.lower() == target), None)
+        return self.headers.get(kind)
+
 
 def _normalized(name: str, value: str) -> str:
     if name == "authorization" and " " in value:
@@ -228,13 +241,55 @@ def _path(name: str) -> str:
     return f"identities.{name}" if name in ("owner", "visitor", "anonymous") else f"identities.roles.{name}"
 
 
-def _shared(first: Material, second: Material, custom_names: Set[str]) -> List[str]:
+def _is_and_bound_shared_header(
+    header: str,
+    first: Material,
+    second: Material,
+    spec: SpecAuth,
+    custom_names: Set[str],
+) -> bool:
+    """True only for an application-level apiKey header that every relevant security requirement
+    combines via AND with another supported credential that keeps the two identities distinct."""
+    tokens = set(header.replace("-", "_").split("_"))
+    if (
+        header == "authorization"
+        or "session" in tokens
+        or header in custom_names
+        or header not in spec.header_names
+        or not spec.requirements
+    ):
+        return False
+    relevant = [req for req in spec.requirements if any(header in alt for alt in req)]
+    if not relevant:
+        return False
+    first_kinds, second_kinds = first.kinds(), second.kinds()
+    for req in relevant:
+        for alt in req:
+            if header in alt and ("" in alt or len(alt - {header}) == 0):
+                return False
+        first_satisfied = [alt for alt in req if "" not in alt and alt <= first_kinds]
+        second_satisfied = [alt for alt in req if "" not in alt and alt <= second_kinds]
+        if not first_satisfied or not second_satisfied:
+            return False
+        for alt in first_satisfied:
+            if alt in second_satisfied and all(
+                first.credential_value(cred) == second.credential_value(cred) for cred in alt
+            ):
+                return False
+    return True
+
+
+def _shared(first: Material, second: Material, spec: SpecAuth, custom_names: Set[str]) -> List[str]:
     """Credentials both identities send with the same value: a server authenticating by one of them
-    would treat the second identity as the first."""
+    would treat the second identity as the first, unless an application-level apiKey header is
+    strictly AND-coupled with distinct per-identity credentials."""
     shared = [name for name, value in first.cookies.items()
               if any(other.lower() == name.lower() and second.cookies[other] == value for other in second.cookies)]
-    shared += [name for name in sorted({"authorization", *custom_names})
-               if name in first.headers and first.headers[name] == second.headers.get(name)]
+    for name in sorted(set(first.headers) & set(second.headers)):
+        if first.headers[name] == second.headers[name] and not _is_and_bound_shared_header(
+            name, first, second, spec, custom_names
+        ):
+            shared.append(name)
     return shared
 
 
@@ -313,7 +368,7 @@ def isolation_problems(
             problems.append(Problem(_path(second), message, (first, second),
                                     "identical auth material (redacted)"))
             continue
-        shared = _shared(one, two, custom)
+        shared = _shared(one, two, spec, custom)
         if shared:
             problems.append(Problem(
                 _path(second),
