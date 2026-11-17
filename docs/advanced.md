@@ -192,7 +192,7 @@ export GRANTTRACE_COMPARISON_KEY="$(python -c 'import secrets; print(secrets.tok
 | `spec_changed` | 该操作在 OpenAPI 规范中的定义或安全方案变化 |
 | `policy_changed` | 该操作的 `bola`、`bopla`、`readbacks` 配置或写允许清单变化，或证据显示判定依据（是否要求认证、是否公开、预期访问）不同 |
 | `resources_changed` | 该操作的 `parameter_values` 变化，或证据中的请求路径、查询参数不同 |
-| `scope_unknown` | 没有密钥时，报告缺少可用来确认范围的请求路径 |
+| `scope_unknown` | 没有密钥时，报告缺少可用来确认范围的请求路径；或者脱敏后的请求路径（两侧都有脱敏标记、标记之间的文字不同）、超过证据上限被截断的查询参数无法说明是否为同一资源，此时有密钥也同样不可比较 |
 | `context_incomplete` | `comparison_context` 缺少该操作的指纹 |
 
 即使指纹一致，证据中的请求路径和判定依据仍会被比较。这些变化记录在 `comparability.operation_changes`，只影响该操作的结论。

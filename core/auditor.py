@@ -30,8 +30,8 @@ from core.evidence import (
     body_sha256,
     sanitize_body,
     sanitize_evidence,
+    sanitize_operation_id,
     sanitize_operation_key,
-    sanitize_text,
 )
 from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
 from core.generator import SmartDataGenerator
@@ -297,9 +297,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                         for record in collection:
                             if isinstance(record.get("endpoint"), str):
                                 record["endpoint"] = sanitize_operation_key(record["endpoint"], configured_secrets)
-                            if isinstance(record.get("operation_id"), str):
-                                record["operation_id"] = sanitize_text(
-                                    record["operation_id"], secret_values=configured_secrets
+                            if "operation_id" in record:
+                                record["operation_id"] = sanitize_operation_id(
+                                    record["operation_id"], configured_secrets
                                 )
                     self._redact_property_history()
                 else:
@@ -307,9 +307,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                         for record in collection:
                             has_ep = isinstance(record.get("endpoint"), str)
                             keep_ep = sanitize_operation_key(record["endpoint"], configured_secrets) if has_ep else None
-                            has_op_id = isinstance(record.get("operation_id"), str)
+                            has_op_id = "operation_id" in record
                             keep_op_id = (
-                                sanitize_text(record["operation_id"], secret_values=configured_secrets)
+                                sanitize_operation_id(record["operation_id"], configured_secrets)
                                 if has_op_id
                                 else None
                             )

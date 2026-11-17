@@ -465,11 +465,11 @@ class ComparisonContextSecretsIsolationTests(unittest.TestCase):
         spec1 = self.folder / "spec1.json"
         spec2 = self.folder / "spec2.json"
         spec1.write_text(json.dumps(self._spec_users_only()), encoding="utf-8")
-        spec_with_api_key = self._spec_users_only()
-        spec_with_api_key["components"]["securitySchemes"]["customHdr"] = {
+        spec_with_custom_header = self._spec_users_only()
+        spec_with_custom_header["components"]["securitySchemes"]["customHdr"] = {
             "type": "apiKey", "in": "header", "name": "X-Custom-Session",
         }
-        spec2.write_text(json.dumps(spec_with_api_key), encoding="utf-8")
+        spec2.write_text(json.dumps(spec_with_custom_header), encoding="utf-8")
 
         identities = {
             "owner": {"id": "1", "token": "Bearer tok-a", "headers": {"X-Custom-Session": "CUSTOM_HDR_SECRET_A"}},
@@ -945,6 +945,8 @@ class ComparisonContextSecretsIsolationTests(unittest.TestCase):
                         "id": "r-1",
                         "role": "auditor",
                         "token": "Token DRF_ROLE_TOK_5566",
+                        # Every identity sends the gateway credential that owner and visitor declare.
+                        "headers": {"X-Custom-Gateway": "GW_AUTH_9933"},
                         "body": {
                             "auth": {"api_key": role_api_key},
                             "chain": [{"client_secret": "LIST_ROLE_SEC_44"}],

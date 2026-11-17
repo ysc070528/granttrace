@@ -17,9 +17,9 @@ from core.bopla import resource_scope, validate_bopla_policy
 from core.evidence import (
     PROPERTY_EVIDENCE_LOCK,
     sanitize_evidence,
+    sanitize_operation_id,
     sanitize_operation_key,
     sanitize_property_record,
-    sanitize_text,
 )
 from core.models import HTTPResult, Verdict, strict_json_loads
 from core.transactions import get_path, path_parts
@@ -163,7 +163,9 @@ class ResultRecorderMixin:
             # observations and prevents a concurrent append escaping late cleanup.
             config_secrets: FrozenSet[str] = getattr(self, "_configured_secrets", frozenset())
             safe_endpoint = sanitize_operation_key(result["endpoint"], config_secrets)
-            safe_op_id = sanitize_text(str(result.get("operation_id", "")), secret_values=config_secrets)
+            # The operationId keeps its JSON type and is only written back where the record has one.
+            has_op_id = "operation_id" in result
+            safe_op_id = sanitize_operation_id(result.get("operation_id"), config_secrets)
             safe_finding_ep = (
                 sanitize_operation_key(finding["endpoint"], config_secrets)
                 if isinstance(finding, dict) and "endpoint" in finding
@@ -180,7 +182,8 @@ class ResultRecorderMixin:
                 if finding:
                     finding = sanitize_evidence(finding, self.include_sensitive_evidence, self._secret_values)
             result["endpoint"] = safe_endpoint
-            result["operation_id"] = safe_op_id
+            if has_op_id:
+                result["operation_id"] = safe_op_id
             if isinstance(finding, dict) and safe_finding_ep is not None:
                 finding["endpoint"] = safe_finding_ep
             self.results.append(result)
