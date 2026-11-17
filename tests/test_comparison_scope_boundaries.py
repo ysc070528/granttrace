@@ -254,6 +254,108 @@ class GeneratedParameterValuesTests(_Scans):
         self.assertEqual((result["status"], result["change"]), ("not_comparable", ["resources_changed"]))
 
 
+class GateExitSemanticsEndToEndTests(_Scans):
+    """Overall gate exit-code semantics for all-RESOLVED vs mixed RESOLVED + NOT_COMPARABLE scans."""
+
+    ALL_GATE_FLAGS = ("--fail-on-new", "--fail-on-coverage-decrease", "--fail-on-not-comparable")
+
+    def run_full_gate(self, base: Path, cur: Path, tag: str) -> Tuple[int, Dict[str, Any], str]:
+        out = self.folder / f"full-gate-{tag}.json"
+        code, text = self.cli(["diff", str(base), str(cur), *self.ALL_GATE_FLAGS, "--export-json", str(out)])
+        return code, json.loads(out.read_text(encoding="utf-8")), text
+
+    def test_all_resolved_operations_exit_0(self) -> None:
+        all_pinned = {
+            ORDERS: ("as_of", "2026-01-01T00:00:00Z"),
+            TICKETS: ("nonce", "6f1c0a52-3c1f-4d8e-9a3b-2f1e5d7c9b10"),
+        }
+        base = self.scan("all_vuln", _config(pinned=all_pinned))
+        fixed = self.scan("all_fixed", _config(pinned=all_pinned), fixed=True)
+        code, payload, text = self.run_full_gate(base, fixed, "all-resolved")
+        self.assertEqual(code, 0, text[-2000:])
+        self.assertEqual(payload["summary"], {
+            "baseline_confirmed": 4,
+            "current_confirmed": 0,
+            "current_confirmed_not_comparable": 0,
+            "new": 0,
+            "persisting": 0,
+            "resolved": 4,
+            "not_comparable": 0,
+            "relying_on_assumptions": 0,
+        })
+        self.assertTrue(payload["comparability"]["fully_comparable"])
+        gate_data = payload["gate"]
+        self.assertEqual((gate_data["result"], gate_data["exit_code"], gate_data["verified"]), ("passed", 0, True))
+        self.assertTrue(all(not c["regressions"] and not c["unverified"] for c in gate_data["conditions"]))
+        self.assertIn("PASSED (exit 0)", text)
+
+    def test_resolved_plus_not_comparable_exits_3_names_reasons_and_keeps_resolved_clean(self) -> None:
+        all_pinned = {
+            ORDERS: ("as_of", "2026-01-01T00:00:00Z"),
+            TICKETS: ("nonce", "6f1c0a52-3c1f-4d8e-9a3b-2f1e5d7c9b10"),
+        }
+        # Subcase A: USERS & DOCS resolved, ORDERS & TICKETS not_comparable (context_incomplete from generated values)
+        base_gen = self.scan("mix_gen_vuln", _config())
+        fixed_gen = self.scan("mix_gen_fixed", _config(), fixed=True)
+        code_gen, payload_gen, text_gen = self.run_full_gate(base_gen, fixed_gen, "mix-generated")
+        self.assertEqual(code_gen, 3, text_gen[-2000:])
+        self.assertEqual(payload_gen["summary"], {
+            "baseline_confirmed": 4,
+            "current_confirmed": 0,
+            "current_confirmed_not_comparable": 0,
+            "new": 0,
+            "persisting": 0,
+            "resolved": 2,
+            "not_comparable": 2,
+            "relying_on_assumptions": 0,
+        })
+        issues_gen = {item["operation"]: item for item in payload_gen["issues"]}
+        for resolved_op in (USERS, DOCS):
+            self.assertEqual(issues_gen[resolved_op]["status"], "resolved")
+            self.assertNotIn("reasons", issues_gen[resolved_op])
+        for uncomp_op in (ORDERS, TICKETS):
+            self.assertEqual(issues_gen[uncomp_op]["status"], "not_comparable")
+            self.assertEqual(issues_gen[uncomp_op]["reasons"], ["context_incomplete"])
+        flagged_gen = [
+            entry for cond in payload_gen["gate"]["conditions"]
+            for entry in cond["regressions"] + cond["unverified"]
+        ]
+        self.assertEqual({entry["operation"] for entry in flagged_gen}, {ORDERS, TICKETS})
+        for entry in flagged_gen:
+            self.assertEqual(entry["reason"], "finding_not_comparable")
+            self.assertEqual(entry["comparison_reasons"], ["context_incomplete"])
+        self.assertIn("(finding_not_comparable: context_incomplete)", text_gen)
+
+        # Subcase B: USERS, ORDERS, TICKETS resolved, DOCS not_comparable (resources_changed: doc-1111 -> doc-3333)
+        base_res = self.scan("mix_res_vuln", _config(doc="doc-1111", pinned=all_pinned))
+        fixed_res = self.scan("mix_res_fixed", _config(doc="doc-3333", pinned=all_pinned), fixed=True)
+        code_res, payload_res, text_res = self.run_full_gate(base_res, fixed_res, "mix-resources")
+        self.assertEqual(code_res, 3, text_res[-2000:])
+        self.assertEqual(payload_res["summary"], {
+            "baseline_confirmed": 4,
+            "current_confirmed": 0,
+            "current_confirmed_not_comparable": 0,
+            "new": 0,
+            "persisting": 0,
+            "resolved": 3,
+            "not_comparable": 1,
+            "relying_on_assumptions": 0,
+        })
+        issues_res = {item["operation"]: item for item in payload_res["issues"]}
+        for resolved_op in (USERS, ORDERS, TICKETS):
+            self.assertEqual(issues_res[resolved_op]["status"], "resolved")
+            self.assertNotIn("reasons", issues_res[resolved_op])
+        self.assertEqual(issues_res[DOCS]["status"], "not_comparable")
+        self.assertEqual(issues_res[DOCS]["reasons"], ["resources_changed"])
+        flagged_res = [
+            entry for cond in payload_res["gate"]["conditions"]
+            for entry in cond["regressions"] + cond["unverified"]
+        ]
+        self.assertEqual([entry["operation"] for entry in flagged_res], [DOCS])
+        self.assertEqual(flagged_res[0]["comparison_reasons"], ["resources_changed"])
+        self.assertIn("(finding_not_comparable: resources_changed)", text_res)
+
+
 class GeneratedValueTrackingTests(unittest.TestCase):
     def test_only_per_scan_values_of_parameters_are_reported(self) -> None:
         cases = [

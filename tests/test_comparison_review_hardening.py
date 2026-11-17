@@ -168,9 +168,9 @@ class GateUsesTheDiffResourceRuleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.context = _context()
 
-    def gate_result(self, left: str, right: str, context: Optional[Dict[str, Any]] = None, *,
+    def gate_result(self, left: str, right: str, *, context: Any = None,
                     allow: bool = False, **assumptions: bool) -> Tuple[str, List[str]]:
-        ctx = self.context if context is None else context
+        ctx: Optional[Dict[str, Any]] = self.context if context is None else context
         if assumptions:
             ctx = None
         decided = _gate(_report(ctx, "SECURE", left), _report(ctx, "PUBLIC", right), allow=allow, **assumptions)
