@@ -19,6 +19,7 @@ from core.config_validation.identities import IdentityChecks
 from core.config_validation.readbacks import ReadbackChecks
 from core.config_validation.spec_checks import SpecChecks
 from core.evidence import safe_diagnostic_value
+from core.identity_auth import SpecAuth
 from core.remote_refs import RemoteRefConfig, RemoteRefOfflineBlockedError
 
 __all__ = ["ConfigIssue", "ConfigValidationResult", "ConfigValidator", "ValidationSummary"]
@@ -41,14 +42,14 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
         cls._check_numbers(config, issues)
         cls._check_top_level_keys(config, issues)
 
-        spec_auth_names = cls._spec_auth_header_names(
+        spec_auth = cls._spec_auth(
             raw_spec, issues, spec_path=spec_path, remote_ref_config=remote_ref_config,
             offline=offline, allow_offline_unresolved=allow_offline_unresolved,
         )
         allowlisted_set: Set[str] = set()
         readbacks_set: Set[str] = set()
         cls._run_section(config, "identities", "valid identities object", issues, lambda value: (
-            cls._validate_identities_section(value, issues, summary, spec_auth_names=spec_auth_names)))
+            cls._validate_identities_section(value, issues, summary, spec_auth=spec_auth)))
         cls._run_section(config, "write_allowlist", "list of strings", issues, lambda value: (
             cls._validate_write_allowlist_section(value, issues, summary, allowlisted_set)))
         cls._run_section(
@@ -57,6 +58,8 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
         cls._check_allowlisted_readbacks(allowlisted_set, readbacks_set, issues)
         cls._run_section(config, "parameter_values", "dict indexed by operation keys", issues, lambda value: (
             cls._validate_parameter_values_section(value, issues, summary)))
+        cls._run_section(config, "parameter_values", "dict indexed by operation keys", issues, lambda value: (
+            cls._validate_parameter_value_credentials(value, config.get("identities"), spec_auth, issues)))
         cls._run_section(config, "bola", "dict indexed by operation keys", issues, lambda value: (
             cls._validate_bola_section(value, issues, summary)))
         if "bopla" in config:
@@ -149,13 +152,13 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
             )
 
     @classmethod
-    def _spec_auth_header_names(
+    def _spec_auth(
         cls, raw_spec: Optional[Dict[str, Any]], issues: List[ConfigIssue], *, spec_path: Optional[str],
         remote_ref_config: Optional[RemoteRefConfig], offline: bool, allow_offline_unresolved: bool,
-    ) -> Set[str]:
-        """The specification's authentication header names; an empty set and an issue on failure."""
+    ) -> SpecAuth:
+        """The credentials the specification declares; nothing declared and an issue on failure."""
         try:
-            return cls._extract_spec_auth_headers(
+            return cls._extract_spec_auth(
                 raw_spec,
                 spec_path=spec_path,
                 remote_ref_config=remote_ref_config,
@@ -177,7 +180,7 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 expected="object-valued securityDefinitions, components, and securitySchemes",
                 actual="malformed specification structure",
             ))
-        return set()
+        return SpecAuth()
 
     @staticmethod
     def _run_section(

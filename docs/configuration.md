@@ -16,7 +16,7 @@
 granttrace --spec openapi.json --init-config config.local.json
 ```
 
-生成 `config.local.json` 与 `config.local.checklist.json`，列出账户、资源参数、GET 必填的 header / cookie 值和 PATCH / PUT 独立读回待填项。业务 header / cookie 按发出请求的 Owner、Visitor、Anonymous 各起草一个占位值（各身份相同时可合并到 `common`）；必填的认证 header 起草在 `identities.*.headers`，必填的认证 cookie 起草在 `identities.*.parameters`，只给 Owner / Visitor。可选参数、被忽略的 `Accept` 等声明和不支持的 cookie 形式不起草，checklist 逐项说明原因。已有文件不会被覆盖，不复制规范里的示例凭据或资源值，不发送请求。`write_allowlist` 默认为空，没有授权任何主动 PATCH。
+生成 `config.local.json` 与 `config.local.checklist.json`，列出账户、资源参数、GET 必填的 header / cookie 值和 PATCH / PUT 独立读回待填项。业务 header / cookie 按发出请求的 Owner、Visitor、Anonymous 各起草一个占位值（各身份相同时可合并到 `common`）；必填的认证 header 起草在 `identities.*.headers`，必填的认证 cookie 起草在 `identities.*.parameters`，只给 Owner / Visitor。安全要求用到的 `apiKey` `in: cookie` 会话 Cookie（如 `SESSIONID`）即使操作没有声明该参数，也起草在 `identities.owner.parameters` 与 `identities.visitor.parameters`，随该身份的每个请求发送；见 [会话 Cookie](#会话-cookie)。可选参数、被忽略的 `Accept` 等声明和不支持的 cookie 形式不起草，checklist 逐项说明原因。已有文件不会被覆盖，不复制规范里的示例凭据或资源值，不发送请求。`write_allowlist` 默认为空，没有授权任何主动 PATCH。
 
 2. **人工核对配置和 checklist**：填写不同的有效 Owner / Visitor 测试凭据、各自可丢弃资源和业务授权预期；工具不会推断资源归属、管理员或团队共享权限、`expected_visitor_access`、`expected_public`。候选写字段和 GET 路径只是 OpenAPI 合同提示，须自行确认读回独立性、`field_map`、一致性与恢复路径；PUT 读回还须返回完整根文档，`field_map` 只能把字段映射到相同路径。首次只读接入可移除未填写且不用的 `readbacks`，保持 `write_allowlist: []`。替换全部 `__GRANTTRACE_INPUT__:` 占位值，完成审核后才移除 `_granttrace_draft`；未完成的草稿仍会阻止验证、计划与扫描。
 
@@ -197,6 +197,41 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 
 凭证也可以通过 `headers` 配置 API Key、Cookie 或自定义鉴权头。实际配置文件应放入密钥管理系统或加入 `.gitignore`，不要提交真实凭证。
 
+### 会话 Cookie
+
+规范以 `apiKey`、`in: cookie` 声明的会话 Cookie 是身份的认证凭据。按方案声明的名称写进 `identities.<身份>.parameters`（`--init-config` 起草的位置），或写进该身份的 `headers.Cookie`，两处只能选一处。它随该身份的每个请求发送，GET、只读 POST 和角色探测都一样，并与身份的 `Cookie` 请求头和已声明的业务 Cookie 合并成一个 `Cookie` 请求头；Anonymous 从不发送。
+
+```json
+"identities": {
+  "owner":   {"id": "1001", "parameters": {"SESSIONID": "<Owner 会话>"}},
+  "visitor": {"id": "1002", "parameters": {"SESSIONID": "<Visitor 会话>"}},
+  "anonymous": {},
+  "roles": {
+    "admin":  {"role": "administrator", "parameters": {"SESSIONID": "<admin 会话>"}},
+    "viewer": {"role": "viewer", "parameters": {"SESSIONID": "<viewer 会话>"}}
+  }
+}
+```
+
+配置验证、`APISentinelAuditor` 构造和每个请求使用同一套身份规则（`core/identity_auth.py`）：
+
+- Owner、Visitor 和每个角色都必须有有效认证材料：token、认证头或会话 Cookie。主题、语言等普通 Cookie 不是凭据：规范声明了会话 Cookie 时只认这些 Cookie，没有声明时按名称识别（如 `session`、`sid`、`token`、`auth`）；只带普通 Cookie 的身份会被拒绝，以免它的请求以未认证身份发出、401 被误读为授权拒绝。
+- Owner 与 Visitor 之间、任意两个角色之间，认证材料不能相同，也不能共用同一个认证 Cookie、`Authorization` 或 `auth_header_names` 所列认证头的值：只换第二个 Cookie 或 Bearer token 不能掩盖共用的会话。
+- 规范的 `security` 是若干备选项（“或”），同一备选项中的方案须同时提供（“与”）。每个安全要求的每个备选项都包含的凭据（包括 `Authorization`）是必需凭据：Owner、Visitor 和所有角色要么都发送，要么都不发送；`auth_header_names` 所列认证头同样如此。缺少必需凭据的身份会因未认证被拒绝，这种拒绝会被误读为授权拒绝。规范提供备选项时（如 `[{bearerAuth: []}, {sessionAuth: []}]`），各身份可以使用不同的认证方式。
+- Anonymous 不能带会话 Cookie 或规范声明的认证值，包括 `identities.anonymous.parameters` 和 `parameter_values.*.anonymous`，也不能有自己的 `Cookie` 请求头；会话 Cookie 也不能写在 `parameter_values` 的 `common` 或操作级共享值中。
+- 会话值必须是合法的 RFC 6265 cookie 值，不能含分号、空白、引号或逗号。
+
+构造之后再修改身份时，构造每个请求前都会按当时的身份再检查一次：违反规则的身份不发送请求，相关检查记为 `INCONCLUSIVE` 或 `ERROR`，原因写明 "no request was sent"。错误信息只列身份、请求头和 Cookie 的名称，不含值。
+
+没有安全方案声明、只是名称像认证 Cookie 的参数（例如操作上声明的 `session_token`），其 `identities.*.parameters` 值只随声明它的操作发送，不算身份的认证材料。
+
+以下情况静态检查无法判断，须自行确认：
+
+- `security` 不逐个操作检查：身份可以用规范未描述的凭据认证（`auth_header_names`、`parameter_values` 中按操作配置的认证 Cookie），只有每个安全要求都包含的凭据才按必需凭据检查。规范提供备选项时，身份只带其他凭据（两个备选项都不满足）也不会被拒绝。
+- 未定义的方案名、查询参数中的 API Key 和 mutual TLS 不参与判断。
+- 两份不同的凭据可能属于同一账户。对已正确授权的 API，Visitor 自有资源基线会失败，BOLA 记为 `INCONCLUSIVE`；角色探测没有这种基线，低权限角色若实际是特权账户，会被确认为 RBAC 违规。
+- 会话失效、被撤销或被服务端拒绝时，角色探测返回的 401 仍会被当作拒绝（可能是虚假的 `SECURE`）；Visitor 的自有资源基线会让 BOLA 记为 `INCONCLUSIVE`。
+
 ## 配置语义校验与 IDE Schema 支持
 
 从 v2.3.0 起，项目内置了权威的离线配置语义校验引擎（`core/config_validator.py`）以及标准的 JSON Schema 规范文件（`config.schema.json`）：
@@ -369,3 +404,7 @@ POST 在 HTTP 语义上不是只读的。只有同时满足以下条件，GrantT
 - 每个被探测的角色在结果中各有一条 `RBAC` 记录，确定性覆盖率要求所有角色均有确定结论。
   矩阵出现在 HTML 报告和 JSON 的 `rbac_matrix` 中；确认的违规导出为 SARIF 规则 `GT-BFLA-001`。
 - 角色名不能使用 `owner`、`visitor`、`anonymous`、`roles`；所有角色请求头的值都会脱敏。
+- 每个角色需要自己的认证材料，与其他角色不同，并发送规范每个安全要求都包含的必需凭据（规则见
+  [会话 Cookie](#会话-cookie)），会话 Cookie 写在角色的 `parameters` 或 `headers.Cookie` 中。否则配置验证和
+  构造失败；构造后才出现的问题使该角色的探测记为 `ERROR`，不会发送未认证的请求而被误读为拒绝。凭据失效或
+  属于另一个账户无法静态识别，见同节的限制。

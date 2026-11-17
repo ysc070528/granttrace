@@ -135,7 +135,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(json.loads(result["evidence"]["owner"]["body"]), body)
 
     def test_reserved_request_cookie_names_are_protected_at_actual_boundaries(self):
-        auditor = self.make_auditor(owner_cookie="path=PATH_AUTH_SECRET; domain=DOMAIN_AUTH_SECRET")
+        auditor = self.make_auditor(owner_cookie="sid=COOKIE_A_42; path=PATH_AUTH_SECRET; domain=DOMAIN_AUTH_SECRET")
         body = json.dumps({"first": "PATH_AUTH_SECRET", "second": "DOMAIN_AUTH_SECRET", "count": 3})
         evidence = {"owner": auditor._safe_body(HTTPResult(200, body))}
         finding = {"type": "Synthetic finding", "severity": "High", "endpoint": "GET /items/{id}",

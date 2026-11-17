@@ -533,7 +533,8 @@ class RbacEvidenceTests(_Base):
 
     def test_role_header_values_are_secrets_and_the_role_map_is_not_an_identity(self):
         roles = {"auth_header_names": {"token": "Bearer ODD_NAME_TOKEN_0008", "role": "viewer"},
-                 "admin": {"headers": {"X-Role-Session": "ROLE-SESSION-SECRET-1"}, "role": "administrator"}}
+                 "admin": {"token": "Bearer ADMIN_TOKEN_0009", "headers": {"X-Role-Session": "ROLE-SESSION-SECRET-1"},
+                           "role": "administrator"}}
         auditor = self.auditor({}, {**IDENTITIES, "roles": roles})
         secrets = auditor.secret_values()
         self.assertIn("ROLE-SESSION-SECRET-1", secrets)

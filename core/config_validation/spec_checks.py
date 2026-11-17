@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.config_validation.base import ConfigIssue, ValidatorBase
 from core.generator import SmartDataGenerator
+from core.identity_auth import SpecAuth
 from core.models import parse_operation_key
 from core.parameters import ParameterSerializationError, normalize_parameter_value
 from core.parser import OpenAPIParser
@@ -217,32 +218,38 @@ class SpecChecks(ValidatorBase):
     def _extract_spec_auth_headers(
         cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True,
     ) -> Set[str]:
+        return set(cls._extract_spec_auth(raw_spec, spec_path=spec_path, remote_ref_config=remote_ref_config,
+                                          offline=offline).header_names)
+
+    @classmethod
+    def _extract_spec_auth(
+        cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True,
+    ) -> SpecAuth:
+        """The credentials the specification's security schemes declare (core.identity_auth)."""
         if not isinstance(raw_spec, dict) and spec_path is None:
-            return set()
+            return SpecAuth()
         try:
             if spec_path is not None:
-                schemes = OpenAPIParser(
+                parser = OpenAPIParser(
                     spec_path,
                     remote_ref_config=remote_ref_config,
                     offline=offline,
-                ).get_security_schemes()
+                )
+                schemes = parser.get_security_schemes()
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.
                 with tempfile.TemporaryDirectory(prefix="granttrace-auth-spec-") as directory:
                     source = Path(directory) / "openapi.json"
                     source.write_text(json.dumps(raw_spec, allow_nan=False), encoding="utf-8")
-                    schemes = OpenAPIParser(
+                    parser = OpenAPIParser(
                         str(source),
                         remote_ref_config=remote_ref_config,
                         offline=offline,
-                    ).get_security_schemes()
+                    )
+                    schemes = parser.get_security_schemes()
         except RemoteRefOfflineBlockedError:
             raise
         except (OSError, TypeError, ValueError, RuntimeError):
             raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
-        return {
-            scheme["name"].lower()
-            for scheme in schemes.values()
-            if scheme.get("in") == "header" and scheme.get("name")
-        }
+        return SpecAuth.from_spec(schemes, parser.raw_spec)
