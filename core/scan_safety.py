@@ -112,18 +112,45 @@ _ACTIONS = (
     "cancel", "purchase", "pay", "transfer", "withdraw", "deposit", "write",
     "save", "insert", "modify", "publish", "unpublish", "enqueue", "dispatch",
     "generate", "import", "restore", "terminate", "invalidate", "schedule",
+    "logout", "signout", "accept", "decline", "unsubscribe", "purge",
+    "destroy", "kill", "impersonate", "confirm", "redeem", "renew", "rotate",
+    "unban", "unblock", "unarchive", "unlink", "unregister", "deregister",
+    "flush", "wipe", "truncate", "resend", "rerun", "reboot", "shutdown",
+)
+# Phrasal state-changing verbs split into two words by camelCase, snake_case or kebab-case
+# (logOut, log_out, log-out, signOut, sign-out, shutDown). Plain "log" or "sign" is not matched.
+_PHRASAL_ACTIONS: dict[str, tuple[str, ...]] = {
+    "log out": ("log out", "logs out", "logging out"),
+    "sign out": ("sign out", "signs out", "signing out"),
+    "shut down": ("shut down", "shuts down", "shutting down"),
+}
+# Verbs that are imperative mutations in base form (/payments/{id}/refund, /jobs/{id}/run,
+# /users/{id}/ban, clearCart, unlockUser), while their plural or -ing forms name ordinary
+# read collections or states (/refunds, /runs, /jobs/running, /bans, /players/{id}/unlocks).
+_NOUN_HOMOGRAPH_ACTIONS = (
+    "refund", "clear", "ban", "run", "unlock", "retry", "restart", "abort",
+)
+_NOUN_METADATA_FOLLOWERS = (
+    "status", "statuses", "detail", "details", "info", "information", "history",
+    "log", "logs", "list", "summary", "count", "id", "ids", "record", "records",
+    "result", "results", "state", "states",
+)
+_HOMOGRAPH_PROSE_DETERMINERS = (
+    "a", "an", "the", "it", "them", "this", "that", "these", "those",
+    "all", "any", "its", "current", "active", "selected", "specified",
+    "target", "given", "pending", "expired", "suspended", "cached",
 )
 # Extra verbs that only apply to an operator-declared read-only POST. They
 # exclude words whose plural is a common resource name (orders, comments,
 # reports, links...), so a path such as /orders/search is not refused.
 _POST_ACTIONS = _ACTIONS + (
     "add", "register", "edit", "change", "replace", "patch", "grant", "invite", "sign",
-    "apply", "accept", "decline", "unarchive", "unlock", "rename", "move", "clone", "merge",
-    "sync", "refresh", "rotate", "checkout", "subscribe", "unsubscribe", "follow", "unfollow",
-    "attach", "detach", "unlink", "refund", "confirm", "login", "logout", "signin", "signout",
-    "signup", "authenticate", "verify", "redeem", "renew", "extend", "retry", "resend",
-    "notify", "increment", "decrement", "toggle", "upsert", "append", "purge", "clear",
-    "destroy", "drop", "kill", "ban", "unban", "unblock", "mute", "unmute", "unshare",
+    "apply", "rename", "move", "clone", "merge",
+    "sync", "refresh", "checkout", "subscribe", "follow", "unfollow",
+    "attach", "detach", "login", "signin",
+    "signup", "authenticate", "verify", "extend",
+    "notify", "increment", "decrement", "toggle", "upsert", "append",
+    "drop", "mute", "unmute", "unshare",
     "initialize", "initialise", "init", "instantiate", "allocate", "persist",
 )
 # A read-only POST must name one of these actions: the declaration alone is not
@@ -182,9 +209,12 @@ _PROSE_OBJECTS = ("a", "an", "the", "it", "one", "them", "new", "this", "that", 
 def _word_forms(verbs: tuple[str, ...]) -> set[str]:
     forms = set(verbs)
     for verb in verbs:
-        forms.add(verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s"))
+        if len(verb) > 1 and verb.endswith("y") and verb[-2] not in "aeiou":
+            forms.add(verb[:-1] + "ies")
+        else:
+            forms.add(verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s"))
         forms.add((verb[:-1] if verb.endswith("e") else verb) + "ing")
-        if verb in {"reset", "submit", "stop", "transfer", "drop", "ban", "unban"}:
+        if verb in {"reset", "submit", "stop", "transfer", "drop", "ban", "unban", "run", "rerun"}:
             forms.add(verb + verb[-1] + "ing")
     return forms
 
@@ -194,7 +224,13 @@ def _alternation(forms: set[str]) -> str:
 
 
 def _third_person(verbs: tuple[str, ...]) -> set[str]:
-    return {verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s") for verb in verbs}
+    out: set[str] = set()
+    for verb in verbs:
+        if len(verb) > 1 and verb.endswith("y") and verb[-2] not in "aeiou":
+            out.add(verb[:-1] + "ies")
+        else:
+            out.add(verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s"))
+    return out
 
 
 _STRONG_WRITE = _alternation(set(_COMPOUND_WRITE_VERBS))
@@ -236,34 +272,54 @@ _CREATED_ON_DEMAND = re.compile(
 
 class _ActionPatterns:
     def __init__(self, verbs: tuple[str, ...], methods: str) -> None:
-        word = _alternation(_word_forms(verbs))
-        self.leading = re.compile(r"^" + word, re.IGNORECASE)
-        self.conjoined = re.compile(r"\b(?:and|then|also)\s+(?:it\s+)?" + word, re.IGNORECASE)
+        phrasal_forms = {form for forms in _PHRASAL_ACTIONS.values() for form in forms}
+        phrasal_third = {forms[1] for forms in _PHRASAL_ACTIONS.values()}
+        base_word = _alternation(_word_forms(verbs) | phrasal_forms)
+        identifier_word = _alternation(_word_forms(verbs) | phrasal_forms | set(_NOUN_HOMOGRAPH_ACTIONS))
+        homograph_base = _alternation(set(_NOUN_HOMOGRAPH_ACTIONS))
+        homograph_all = _alternation(_word_forms(_NOUN_HOMOGRAPH_ACTIONS))
+        homograph_third = _alternation(_third_person(_NOUN_HOMOGRAPH_ACTIONS))
+        meta_followers = _alternation(set(_NOUN_METADATA_FOLLOWERS))
+        prose_det = _alternation(set(_HOMOGRAPH_PROSE_DETERMINERS))
+
+        self.leading = re.compile(r"^" + identifier_word, re.IGNORECASE)
+        self.conjoined = re.compile(
+            r"\b(?:and|then|also)\s+(?:it\s+)?(?:" + identifier_word
+            + r"|" + homograph_third + r"\s+" + prose_det + r")",
+            re.IGNORECASE,
+        )
         alternative = tuple(verb for verb in verbs + _COMPOUND_WRITE_VERBS + _ADJACENT_WRITE_VERBS
                             if verb not in _PROSE_EXCLUDED_VERBS)
         # "Get or create a cart", "Fetch or generate an API key": a read action
         # coordinated with a write at the start of a clause.
         self.alternative = re.compile(
             r"^(?:" + _alternation(_word_forms(_POST_READ_INTENTS + ("return",))) + r"|look\s+up)"
-            r"\s+(?:and\s+)?or\s+" + _alternation(_word_forms(alternative)),
+            r"\s+(?:and\s+)?or\s+" + _alternation(_word_forms(alternative) | phrasal_forms),
             re.IGNORECASE,
         )
         # "Returns the cart, or creates one if none exists": a third-person verb
         # with its own object or condition; "by email or login name" is not one.
         self.alternative_clause = re.compile(
-            r"\bor\s+" + _alternation(_third_person(alternative))
+            r"\bor\s+" + _alternation(_third_person(alternative) | phrasal_third)
             + r"\s+" + _alternation(set(_PROSE_OBJECTS)),
             re.IGNORECASE,
         )
-        self.description = re.compile(
-            r"^(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
+        subject_prefix = (
+            r"(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
             r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
             r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
-            r"|(?:will|may|can)\s+)?" + word,
+            r"|(?:will|may|can)\s+)"
+        )
+        self.description = re.compile(
+            r"^" + subject_prefix + r"?(?:" + base_word + r")"
+            + r"|^" + subject_prefix + homograph_all
+            + r"|^" + homograph_base + r"(?!\s+" + meta_followers + r")"
+            + r"|^" + homograph_third + r"\s+" + prose_det,
             re.IGNORECASE,
         )
         self.informational = re.compile(
-            r"^" + word + r"\s+(?:are|were)\s+(?:available|supported|listed|documented|possible)\b",
+            r"^(?:" + base_word + r"|" + homograph_all
+            + r")\s+(?:are|were)\s+(?:available|supported|listed|documented|possible)\b",
             re.IGNORECASE,
         )
 
@@ -271,7 +327,6 @@ class _ActionPatterns:
 _READ_PATTERNS = _ActionPatterns(_ACTIONS, "get|head")
 _POST_PATTERNS = _ActionPatterns(_POST_ACTIONS, "get|head|post")
 _LEADING_READ_INTENT = re.compile(r"^" + _alternation(_word_forms(_POST_READ_INTENTS)), re.IGNORECASE)
-# Retained names: the GET/HEAD vocabulary is unchanged.
 _LEADING_ACTION = _READ_PATTERNS.leading
 _CONJOINED_ACTION = _READ_PATTERNS.conjoined
 
@@ -445,11 +500,23 @@ _LINE_END = re.compile(r"[\r\n]")
 # Validated bodies are at most 64 KiB, far below this bound; it protects direct callers.
 _BODY_MAX_NODES = 100000
 _BODY_ACTION_VERBS = re.compile(
-    r"^" + _alternation(_word_forms(_POST_ACTIONS) | set(_COMPOUND_WRITE_VERBS) | set(_ADJACENT_WRITE_VERBS)
-                        | {"copy", "mutation"}), re.IGNORECASE)
+    r"^" + _alternation(
+        _word_forms(_POST_ACTIONS + _NOUN_HOMOGRAPH_ACTIONS)
+        | {form for forms in _PHRASAL_ACTIONS.values() for form in forms}
+        | set(_COMPOUND_WRITE_VERBS)
+        | set(_ADJACENT_WRITE_VERBS)
+        | {"copy", "mutation"}
+    ),
+    re.IGNORECASE,
+)
 # Namespaced actions ("cart.create", "users:delete", "orders/bulk-insert") name
 # the write in a later word; only unambiguous verbs count there.
-_BODY_ACTION_ANY_WORD = frozenset(_POST_ACTIONS) | frozenset(_COMPOUND_WRITE_VERBS) | {"copy", "mutation"}
+_BODY_ACTION_ANY_WORD = (
+    frozenset(_POST_ACTIONS)
+    | frozenset(_NOUN_HOMOGRAPH_ACTIONS)
+    | frozenset(_COMPOUND_WRITE_VERBS)
+    | {"copy", "mutation"}
+)
 
 
 # Request headers that make a server treat a request as another method.
