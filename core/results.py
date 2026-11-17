@@ -11,10 +11,16 @@ lists and the published secret set.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from core.bopla import resource_scope, validate_bopla_policy
-from core.evidence import PROPERTY_EVIDENCE_LOCK, sanitize_evidence, sanitize_property_record
+from core.evidence import (
+    PROPERTY_EVIDENCE_LOCK,
+    sanitize_evidence,
+    sanitize_operation_id,
+    sanitize_operation_key,
+    sanitize_property_record,
+)
 from core.models import HTTPResult, Verdict, strict_json_loads
 from core.transactions import get_path, path_parts
 
@@ -28,6 +34,7 @@ class ResultRecorderMixin:
     bopla_config: Dict[str, Any]
     include_sensitive_evidence: bool
     _result_lock: threading.Lock
+    _configured_secrets: FrozenSet[str]
     _secret_values: Set[str]
     _bopla_secret_values: Set[str]
     _bopla_leak_groups: Dict[Tuple[Any, ...], str]
@@ -154,6 +161,16 @@ class ResultRecorderMixin:
             # The mandatory boundary covers all operations in a BOPLA scan.
             # It preserves trusted control metadata while sanitizing business
             # observations and prevents a concurrent append escaping late cleanup.
+            config_secrets: FrozenSet[str] = getattr(self, "_configured_secrets", frozenset())
+            safe_endpoint = sanitize_operation_key(result["endpoint"], config_secrets)
+            # The operationId keeps its JSON type and is only written back where the record has one.
+            has_op_id = "operation_id" in result
+            safe_op_id = sanitize_operation_id(result.get("operation_id"), config_secrets)
+            safe_finding_ep = (
+                sanitize_operation_key(finding["endpoint"], config_secrets)
+                if isinstance(finding, dict) and "endpoint" in finding
+                else None
+            )
             if self.bopla_config:
                 result["evidence"]["property_privacy_pending"] = True
                 result = self._property_safe_record(result)
@@ -164,6 +181,11 @@ class ResultRecorderMixin:
                 result = sanitize_evidence(result, self.include_sensitive_evidence, self._secret_values)
                 if finding:
                     finding = sanitize_evidence(finding, self.include_sensitive_evidence, self._secret_values)
+            result["endpoint"] = safe_endpoint
+            if has_op_id:
+                result["operation_id"] = safe_op_id
+            if isinstance(finding, dict) and safe_finding_ep is not None:
+                finding["endpoint"] = safe_finding_ep
             self.results.append(result)
             self.stats["total_checks"] += 1
             if primary and attempted:
@@ -243,7 +265,14 @@ class ResultRecorderMixin:
         with PROPERTY_EVIDENCE_LOCK:
             for collection in (self.results, self.findings):
                 for record in collection:
-                    self._replace_evidence_in_place(record, self._property_safe_record(record))
+                    has_ep, keep_ep = "endpoint" in record, record.get("endpoint")
+                    has_op_id, keep_op_id = "operation_id" in record, record.get("operation_id")
+                    safe = self._property_safe_record(record)
+                    if has_ep:
+                        safe["endpoint"] = keep_ep
+                    if has_op_id:
+                        safe["operation_id"] = keep_op_id
+                    self._replace_evidence_in_place(record, safe)
 
     def _record_task_error(self, ep: Dict[str, Any], check: str, exc: BaseException) -> None:
         message = ("Property audit failed; response details omitted" if self.bopla_config

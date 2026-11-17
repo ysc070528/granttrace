@@ -17,6 +17,8 @@ from functools import lru_cache
 from typing import Any, Iterable
 from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlencode, urlsplit, urlunsplit
 
+from core.models import parse_operation_key
+
 MAX_TEXT_CHARS = 4096
 MAX_DEPTH = 12
 MAX_CONTAINER_ITEMS = 100
@@ -75,16 +77,65 @@ def _normalized_key(key: str) -> str:
     return re.sub(r"[\s.-]+", "_", key.lower())
 
 
+AUTH_CREDENTIAL_KEYS = frozenset({
+    "authorization", "password", "passwd", "pwd", "secret", "cookie", "token",
+    "api_key", "apikey", "private_key", "jwt", "sid", "auth", "bearer", "ticket",
+})
+_AUTH_CREDENTIAL_SUBSTRINGS = (
+    "password", "passwd", "secret", "token", "apikey", "privatekey",
+    "authorization", "cookie", "session", "credential", "jwt",
+)
+
+
 @lru_cache(maxsize=4096)
-def _is_sensitive_key(key: str) -> bool:
+def is_auth_credential_key(key: str) -> bool:
+    """Whether a field or parameter name identifies authentication material rather than business PII."""
+    normalized = _normalized_key(key)
+    compact = normalized.replace("_", "")
+    return normalized in AUTH_CREDENTIAL_KEYS or any(token in compact for token in _AUTH_CREDENTIAL_SUBSTRINGS)
+
+
+_RESOURCE_IDENTIFIER_KEYS = frozenset({"id", "uuid", "uid", "resource_id", "object_id"})
+_RESOURCE_IDENTIFIER_SUFFIX = re.compile(r"(?:^|_)(?:id|uuid|uid)$")
+
+
+@lru_cache(maxsize=4096)
+def is_resource_identifier_key(key: str) -> bool:
+    """Whether a parameter name identifies the object a request selects, such as ``session_id`` or ``ticketId``.
+
+    The name rule of SmartDataGenerator.is_resource_identifier on the
+    normalized name only: ``JSESSIONID`` or ``SID`` are no identifier names.
+    """
+    normalized = _normalized_key(key)
+    return normalized in _RESOURCE_IDENTIFIER_KEYS or _RESOURCE_IDENTIFIER_SUFFIX.search(normalized) is not None
+
+
+def is_credential_parameter(name: str, declared_names: Iterable[str] = ()) -> bool:
+    """Whether a configured parameter or body field holds authentication material.
+
+    A name that a security scheme or ``auth_header_names`` declares
+    (``declared_names``, compared without case) always does. Otherwise a
+    credential-like name does, unless it names a resource identifier: the
+    value of ``session_id`` or ``token_id`` selects the object a request reads.
+    Output redaction does not depend on this rule (see is_sensitive_key).
+    """
+    if str(name).strip().lower() in {str(item).strip().lower() for item in declared_names}:
+        return True
+    return is_auth_credential_key(name) and not is_resource_identifier_key(name)
+
+
+@lru_cache(maxsize=4096)
+def is_sensitive_key(key: str) -> bool:
     key = _normalized_key(key)
     compact = key.replace("_", "")
-    return key in SENSITIVE_KEYS or compact in {"fullname", "firstname", "lastname", "phonenumber"} or any(
-        token in compact for token in (
-            "password", "passwd", "secret", "token", "apikey", "privatekey", "authorization", "cookie",
-            "session", "credential",
-        )
+    return (
+        key in SENSITIVE_KEYS
+        or compact in {"fullname", "firstname", "lastname", "phonenumber"}
+        or is_auth_credential_key(key)
     )
+
+
+_is_sensitive_key = is_sensitive_key
 
 
 def body_sha256(body: str) -> str:
@@ -98,9 +149,9 @@ def _secret_variants(secret_values: Iterable[str]) -> tuple[str, ...]:
         secret_values = (secret_values,)
     values = {str(value) for value in secret_values if value}
     for value in tuple(values):
-        match = re.fullmatch(r"(?i)(?:Bearer|Basic)\s+(.+)", value)
+        match = re.fullmatch(r"(?i)(?:Bearer|Basic|Token)\s+(.+)", value)
         if match:
-            values.add(match.group(1))
+            values.add(match.group(1).strip())
         # Cookies are supplied as complete headers, but applications may echo
         # just one cookie's credential. Only split a complete cookie-shaped
         # string; retain the original secret even when parsing fails.
@@ -130,9 +181,10 @@ def _secret_variants(secret_values: Iterable[str]) -> tuple[str, ...]:
 
 
 class _Sanitizer:
-    def __init__(self, include_sensitive: bool, secret_values: Iterable[str]):
+    def __init__(self, include_sensitive: bool, secret_values: Iterable[str], min_secret_length: int = 0):
         self.include_sensitive = include_sensitive
-        self.secrets = () if include_sensitive else _secret_variants(secret_values)
+        self.secrets = () if include_sensitive else tuple(
+            secret for secret in _secret_variants(secret_values) if len(secret) >= min_secret_length)
         self.numeric_secrets = set()
         for secret in self.secrets:
             if _NUMERIC_SECRET.fullmatch(secret):
@@ -295,6 +347,85 @@ def sanitize_url(url: str, include_sensitive: bool = False,
                  secret_values: Iterable[str] = ()) -> str:
     sanitizer = _Sanitizer(include_sensitive, secret_values)
     return sanitizer._limit_text(sanitizer.url(url))
+
+
+# Configured values shorter than this (a region code, a role name) are not redacted inside the text of
+# an operation template or operationId, which they would corrupt ("/users" with "us"); they are redacted
+# only where they make up a whole path segment, placeholder name or operationId.
+MIN_EMBEDDED_SECRET_LENGTH = 8
+
+
+def _short_secret_variants(secret_values: Iterable[str]) -> frozenset[str]:
+    return frozenset(secret for secret in _secret_variants(secret_values) if len(secret) < MIN_EMBEDDED_SECRET_LENGTH)
+
+
+def sanitize_operation_key(value: Any, secret_values: Iterable[str] = ()) -> Any:
+    """Sanitize an OpenAPI '<METHOD> /<path>' template without corrupting HTTP verbs or placeholders.
+
+    See MIN_EMBEDDED_SECRET_LENGTH for configured values that are shorter.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    secrets = tuple(str(item) for item in secret_values if isinstance(item, str) and item)
+    valid, method, path, _, _ = parse_operation_key(value.strip())
+    if not valid:
+        return sanitize_text(value, secret_values=secrets)
+    short = _short_secret_variants(secrets)
+    embedded = _Sanitizer(False, secrets, MIN_EMBEDDED_SECRET_LENGTH)
+    placeholders: list[tuple[str, str]] = []
+    combined = path + "\0" + "\0".join(secrets)
+    salt = 0
+    while f"__GT_TPL_{salt}_" in combined:
+        salt += 1
+
+    def mask_placeholder(match: re.Match[str]) -> str:
+        raw_token = match.group(0)
+        inner = raw_token[1:-1]
+        safe_inner = REDACTED if inner in short else embedded.text(inner)
+        raw_matched = any(secret == raw_token for secret in secrets)
+        restored = (
+            "{[REDACTED]}"
+            if raw_matched and safe_inner == inner
+            else "{" + quote(safe_inner, safe="[]_-.~") + "}"
+            if safe_inner != inner
+            else raw_token
+        )
+        marker = f"__GT_TPL_{salt}_{len(placeholders)}__"
+        placeholders.append((marker, restored))
+        return marker
+
+    masked_path = re.sub(r"\{[^{}]+\}", mask_placeholder, path)
+    sanitized_full = embedded._limit_text(embedded.url("http://granttrace.invalid" + masked_path))
+    if sanitized_full == "[URL OMITTED]":
+        safe_path = "/[REDACTED]"
+    else:
+        try:
+            safe_path = urlsplit(sanitized_full).path or "/[REDACTED]"
+        except ValueError:
+            safe_path = "/[REDACTED]"
+    if short:
+        safe_path = "/".join(quote(REDACTED, safe="[]") if segment in short or unquote(segment) in short
+                             else segment for segment in safe_path.split("/"))
+    for marker, restored in placeholders:
+        safe_path = safe_path.replace(marker, restored)
+    if not safe_path.startswith("/"):
+        safe_path = "/" + safe_path
+    return f"{method} {safe_path}"
+
+
+def sanitize_operation_id(value: Any, secret_values: Iterable[str] = ()) -> Any:
+    """Sanitize a specification operationId without changing its JSON type.
+
+    Text is sanitized as an operation template's path is (see
+    MIN_EMBEDDED_SECRET_LENGTH); any other JSON value as evidence values are,
+    so a number equal to a configured numeric credential is still redacted.
+    """
+    secrets = tuple(str(item) for item in secret_values if isinstance(item, str) and item)
+    if not isinstance(value, str):
+        return _Sanitizer(False, secrets).payload(value)
+    if value in _short_secret_variants(secrets):
+        return REDACTED
+    return _Sanitizer(False, secrets, MIN_EMBEDDED_SECRET_LENGTH).text(value)
 
 
 def sanitize_text(text: str, include_sensitive: bool = False, secret_values: Iterable[str] = ()) -> str:

@@ -67,7 +67,7 @@ exit "$code"
 | 回归（1） | 基线已核实该检查不受影响，当前确认存在漏洞 | `new_finding` |
 | 无法核实（3） | 当前报告中的确认漏洞既不是新增也不是持续存在：首次发现、新操作、规范/策略/资源变化、基线未核实、判定没有实际请求、主体无法识别 | `confirmed_not_comparable` |
 | 无法核实（3） | 基线已核实不受影响的检查，当前没有确定结论：ERROR、SKIPPED、INCONCLUSIVE、判定没有实际请求、检查缺失或操作被移除 | `no_longer_verified` |
-| 无法核实（3） | 基线已核实不受影响的检查，当前变为 PUBLIC 或 AUTHORIZED，同时该操作的规范、策略或资源发生了变化 | `accepted_after_declaration_change` |
+| 无法核实（3） | 基线已核实不受影响的检查，当前变为 PUBLIC 或 AUTHORIZED，同时该操作的规范、策略或资源发生了变化或无法证明未变化（与 `diff` 判断确认漏洞时的规则相同；请求路径有任何差异也算变化） | `accepted_after_declaration_change` |
 
 后两行很重要：仅仅「当前没有新增确认漏洞」是不够的。漏洞可能藏在一个不再得出结论的检查后面，
 也可能藏在一次同时修改了判定依据的改动后面，例如在规范中去掉该操作的 `security`，或在策略中允许 Visitor 访问。

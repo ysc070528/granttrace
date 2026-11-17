@@ -6,11 +6,17 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from core import __version__
 from core.bopla import confirmation_supported
-from core.evidence import PROPERTY_EVIDENCE_LOCK, sanitize_property_record, sanitize_url
+from core.evidence import (
+    PROPERTY_EVIDENCE_LOCK,
+    sanitize_operation_id,
+    sanitize_operation_key,
+    sanitize_property_record,
+    sanitize_url,
+)
 from core.reproduction import CurlTemplate
 
 
@@ -291,6 +297,16 @@ class SecurityReportGenerator:
             "<p class='meta'>" + cls._escape(template.note) + "</p></section>"
         )
 
+    @staticmethod
+    def _property_safe(record: Dict[str, Any], secrets: Tuple[str, ...]) -> Dict[str, Any]:
+        """A property-safe record whose operation template and operationId use the operation-key rules."""
+        safe = sanitize_property_record(record, secrets, omit_responses=True)
+        if isinstance(record.get("endpoint"), str):
+            safe["endpoint"] = sanitize_operation_key(record["endpoint"], secrets)
+        if "operation_id" in record:
+            safe["operation_id"] = sanitize_operation_id(record["operation_id"], secrets)
+        return safe
+
     @classmethod
     def generate(
         cls,
@@ -316,8 +332,8 @@ class SecurityReportGenerator:
                 # Pending observations must be safe before a late Owner baseline
                 # can identify their private values. Snapshot atomically with
                 # history redaction, and never serialize recoverable body hashes.
-                results = [sanitize_property_record(item, secrets, omit_responses=True) for item in results]
-                findings = [sanitize_property_record(item, secrets, omit_responses=True) for item in findings]
+                results = [cls._property_safe(item, secrets) for item in results]
+                findings = [cls._property_safe(item, secrets) for item in findings]
             if pending:
                 # A caller can retain a template built before a later private
                 # reference was observed. Do not reintroduce its concrete URL.
