@@ -163,6 +163,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 - `readbacks`：写接口对应的独立 GET 路径、字段映射及一致性约定。
 - `bola`（可选）：按操作配置公开/共享策略、资源标识、私有数据证据路径、明确的功能权限边界，以及是否把隐藏资源的 404 视为拒绝（`not_found_is_denial`）。
 - `bopla`（可选）：按操作和选中资源配置精确字段许可；仅支持 GET，字段规则不继承整对象公开/共享许可。
+- `identity_isolation`（可选）：明确授权多个身份共享的应用级网关请求头（`shared_gateway_headers`），见下文“共享网关请求头”。
 
 简化示例：
 
@@ -216,7 +217,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 配置验证、`APISentinelAuditor` 构造和每个请求使用同一套身份规则（`core/identity_auth.py`）：
 
 - Owner、Visitor 和每个角色都必须有有效认证材料：token、认证头或会话 Cookie。主题、语言等普通 Cookie 不是凭据：规范声明了会话 Cookie 时只认这些 Cookie，没有声明时按名称识别（如 `session`、`sid`、`token`、`auth`）；只带普通 Cookie 的身份会被拒绝，以免它的请求以未认证身份发出、401 被误读为授权拒绝。
-- Owner 与 Visitor 之间、任意两个角色之间，认证材料不能相同，也不能共用同一个认证 Cookie、`Authorization` 或 `auth_header_names` 所列认证头的值：只换第二个 Cookie 或 Bearer token 不能掩盖共用的会话。
+- Owner 与 Visitor 之间、任意两个角色之间，认证材料不能相同，也**默认不能共用任何可能识别调用者的请求头或会话 Cookie 的值**：`Authorization`、规范声明的 `apiKey` 请求头、`auth_header_names` 所列请求头，以及名称像 key、token、secret、session、sid、user、credential、signature 的请求头（如 `X-API-Key`、`X-Gateway-Token`、`Ocp-Apim-Subscription-Key`、`X-SessionKey`、`X-User-Id`），还有名称像会话的 Cookie（`JSESSIONID`、`PHPSESSID`、`connect.sid` 等，即使规范声明了别的 Cookie）。只换第二个 Cookie 或 Bearer token 不能掩盖共用的凭据。`Accept`、`X-Tenant-Id`、`X-Request-Id` 等普通请求头可以相同。唯一例外是下文经明确授权并通过校验的共享网关请求头。
 - 规范的 `security` 是若干备选项（“或”），同一备选项中的方案须同时提供（“与”）。每个安全要求的每个备选项都包含的凭据（包括 `Authorization`）是必需凭据：Owner、Visitor 和所有角色要么都发送，要么都不发送；`auth_header_names` 所列认证头同样如此。缺少必需凭据的身份会因未认证被拒绝，这种拒绝会被误读为授权拒绝。规范提供备选项时（如 `[{bearerAuth: []}, {sessionAuth: []}]`），各身份可以使用不同的认证方式。
 - Anonymous 不能带会话 Cookie 或规范声明的认证值，包括 `identities.anonymous.parameters` 和 `parameter_values.*.anonymous`，也不能有自己的 `Cookie` 请求头；会话 Cookie 也不能写在 `parameter_values` 的 `common` 或操作级共享值中。
 - 会话值必须是合法的 RFC 6265 cookie 值，不能含分号、空白、引号或逗号。
@@ -225,10 +226,44 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 
 没有安全方案声明、只是名称像认证 Cookie 的参数（例如操作上声明的 `session_token`），其 `identities.*.parameters` 值只随声明它的操作发送，不算身份的认证材料。
 
+### 共享网关请求头（`identity_isolation`）
+
+有些 API 要求每个调用方同时提供一个应用级网关密钥（例如 API 网关订阅密钥，所有测试账户相同）和自己的 Bearer token。默认情况下这种共享会被拒绝；只有操作员在配置中明确列出该请求头，并且规范经过逐个操作的完整校验后，才允许共享：
+
+```json
+{
+  "identity_isolation": {"shared_gateway_headers": ["X-API-Key"]},
+  "identities": {
+    "owner":   {"id": "1001", "token": "Bearer <Owner token>",   "headers": {"X-API-Key": "<网关密钥>"}},
+    "visitor": {"id": "1002", "token": "Bearer <Visitor token>", "headers": {"X-API-Key": "<网关密钥>"}},
+    "anonymous": {}
+  }
+}
+```
+
+完整示例见 [`examples/shared-gateway-key/`](../examples/shared-gateway-key/)。列出的请求头只有在以下条件全部满足时才被接受（配置验证、Python API `APISentinelAuditor(..., identity_isolation=...)` 和每个请求前的检查使用同一规则）：
+
+- 它不是 `Authorization`、`Proxy-Authorization`、`Cookie`，名称不像会话（`X-Session-Key`、`X-SessionKey`、`SessionId`、`X-Sid` 等），也不在 `auth_header_names` 中。
+- 规范的每个操作都能按扫描器实际使用的方式解析：路径项 `$ref`（OpenAPI 3.1 `components/pathItems`、3.0 外部文件）同样展开，每个 `security` 声明都格式正确。任何操作或声明无法解析时一律拒绝。
+- 没有任何操作允许共享的凭据单独认证：`[{ApiKeyAuth: []}]`、`[{ApiKeyAuth: []}, {bearerAuth: []}]`，以及带匿名备选项的 `[{ApiKeyAuth: []}, {}]` 都会导致拒绝（`{}` 只表示允许匿名，不会让“仅凭 Key”的备选项失效）。
+- 含该请求头的备选项不能包含 GrantTrace 无法发送或检查的方案（未定义的方案、查询参数中的 Key、mutual TLS）。
+- 在该请求头适用的每个操作上（规范声明了它时为含它的操作，未声明时为所有受保护操作），每个身份都满足一个包含自己独立凭据的备选项。
+- 规范中至少有一个受保护操作；仅有配置、没有规范时无法校验，一律拒绝。
+
+即使全部满足，GrantTrace 也只证明了**规范**要求每个身份的独立凭据，并不证明后端真的按该凭据识别调用者。因此：
+
+- 控制台打印 `[WARN] identity_isolation.shared_gateway_headers authorizes ...`。
+- JSON 报告和 `--dry-run` 计划增加顶层 `identity_isolation`：`shared_gateway_headers`（配置授权的名称）、`shared_in_scan`（本次实际以相同值共享的名称）、`"authorized_by": "configuration"`、`"backend_identity_binding": "unverified"` 和说明文字。
+- HTML 报告在范围提示前显示“身份隔离提示：共享网关请求头已获配置授权，但后端身份绑定未验证”。
+- 结论解读：若后端只按共享请求头识别调用者，多个身份会被当成同一调用者，可能出现 `CONFIRMED` 或 `SUSPICIOUS`（需人工确认），也可能因基线失败而 `INCONCLUSIVE`；不会因此出现 `SECURE`，因为 `SECURE` 要求同一请求上不同身份得到不同的授权结果。凭据失效导致的虚假 `SECURE` 不在此规则范围内（见下文）。
+
+升级说明：此前接受的配置若让多个身份以相同值发送可能识别调用者的请求头（例如共享的 `X-API-Key`、`X-Gateway-Token`、`Ocp-Apim-Subscription-Key`），现在会在配置验证和构造时被拒绝（退出码 2），不发送任何请求。处理方式：为每个身份配置各自的值；或确认它是应用级网关密钥后，在规范中声明它并让每个操作同时要求每个身份的独立凭据，再把它列入 `identity_isolation.shared_gateway_headers`。不要通过让 Visitor 省略该请求头来绕过：缺少网关密钥的请求会被拒绝，这种拒绝可能被误读为授权拒绝。
+
 以下情况静态检查无法判断，须自行确认：
 
-- `security` 不逐个操作检查：身份可以用规范未描述的凭据认证（`auth_header_names`、`parameter_values` 中按操作配置的认证 Cookie），只有每个安全要求都包含的凭据才按必需凭据检查。规范提供备选项时，身份只带其他凭据（两个备选项都不满足）也不会被拒绝。
-- 未定义的方案名、查询参数中的 API Key 和 mutual TLS 不参与判断。
+- 必需凭据规则不逐个操作检查，也不展开路径项 `$ref`：身份可以用规范未描述的凭据认证（`auth_header_names`、`parameter_values` 中按操作配置的认证 Cookie），只有每个安全要求都包含的凭据才按必需凭据检查。规范提供备选项时，身份只带其他凭据（两个备选项都不满足）也不会被拒绝。共享网关请求头的授权则按上文逐个已解析的操作检查。
+- 未定义的方案名、查询参数中的 API Key 和 mutual TLS 不参与必需凭据判断；与共享网关请求头同在一个备选项时，共享授权会被拒绝。
+- 名称不像凭据、但后端用来识别调用者的请求头（例如自定义的 `X-Account`）不在默认拒绝范围内；如有此类请求头，请为每个身份配置不同的值，或把它列入 `auth_header_names`。
 - 两份不同的凭据可能属于同一账户。对已正确授权的 API，Visitor 自有资源基线会失败，BOLA 记为 `INCONCLUSIVE`；角色探测没有这种基线，低权限角色若实际是特权账户，会被确认为 RBAC 违规。
 - 会话失效、被撤销或被服务端拒绝时，角色探测返回的 401 仍会被当作拒绝（可能是虚假的 `SECURE`）；Visitor 的自有资源基线会让 BOLA 记为 `INCONCLUSIVE`。
 
