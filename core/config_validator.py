@@ -19,7 +19,7 @@ from core.config_validation.identities import IdentityChecks
 from core.config_validation.readbacks import ReadbackChecks
 from core.config_validation.spec_checks import SpecChecks
 from core.evidence import safe_diagnostic_value
-from core.identity_auth import SpecAuth
+from core.identity_auth import SpecAuth, identity_isolation_settings
 from core.remote_refs import RemoteRefConfig, RemoteRefOfflineBlockedError
 
 __all__ = ["ConfigIssue", "ConfigValidationResult", "ConfigValidator", "ValidationSummary"]
@@ -42,14 +42,24 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
         cls._check_numbers(config, issues)
         cls._check_top_level_keys(config, issues)
 
+        # A malformed identity_isolation authorizes no shared header (fail closed) and is an error itself.
+        shared_gateway_headers, isolation_issues = identity_isolation_settings(config.get("identity_isolation"))
+        for path, message in isolation_issues:
+            issues.append(ConfigIssue(
+                path=path, message=message,
+                expected="identity_isolation: {\"shared_gateway_headers\": [application-level gateway header names]}",
+                actual="value omitted",
+            ))
         spec_auth = cls._spec_auth(
             raw_spec, issues, spec_path=spec_path, remote_ref_config=remote_ref_config,
             offline=offline, allow_offline_unresolved=allow_offline_unresolved,
+            resolve_operations=bool(shared_gateway_headers),
         )
         allowlisted_set: Set[str] = set()
         readbacks_set: Set[str] = set()
         cls._run_section(config, "identities", "valid identities object", issues, lambda value: (
-            cls._validate_identities_section(value, issues, summary, spec_auth=spec_auth)))
+            cls._validate_identities_section(value, issues, summary, spec_auth=spec_auth,
+                                             shared_gateway_headers=shared_gateway_headers)))
         cls._run_section(config, "write_allowlist", "list of strings", issues, lambda value: (
             cls._validate_write_allowlist_section(value, issues, summary, allowlisted_set)))
         cls._run_section(
@@ -155,6 +165,7 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
     def _spec_auth(
         cls, raw_spec: Optional[Dict[str, Any]], issues: List[ConfigIssue], *, spec_path: Optional[str],
         remote_ref_config: Optional[RemoteRefConfig], offline: bool, allow_offline_unresolved: bool,
+        resolve_operations: bool = False,
     ) -> SpecAuth:
         """The credentials the specification declares; nothing declared and an issue on failure."""
         try:
@@ -163,6 +174,7 @@ class ConfigValidator(SpecChecks, IdentityChecks, ReadbackChecks, BolaChecks):
                 spec_path=spec_path,
                 remote_ref_config=remote_ref_config,
                 offline=offline,
+                resolve_operations=resolve_operations,
             )
         except RemoteRefOfflineBlockedError as exc:
             issues.append(ConfigIssue(

@@ -26,6 +26,7 @@ class IdentityChecks(ValidatorBase):
         summary: ValidationSummary,
         spec_auth_names: Optional[Set[str]] = None,
         spec_auth: Optional[SpecAuth] = None,
+        shared_gateway_headers: Iterable[str] = (),
     ) -> None:
         if not isinstance(identities, dict):
             issues.append(
@@ -118,7 +119,8 @@ class IdentityChecks(ValidatorBase):
             spec_auth = SpecAuth(header_names=frozenset(name.lower() for name in spec_auth_names or ()))
         if all(k in identities and isinstance(identities[k], dict) for k in ("owner", "visitor", "anonymous")):
             cls._validate_identity_authentication_integrity(
-                identities, issues, custom_names=all_custom_names, spec_auth=spec_auth
+                identities, issues, custom_names=all_custom_names, spec_auth=spec_auth,
+                shared_gateway_headers=shared_gateway_headers,
             )
 
     RESERVED_ROLE_NAMES = frozenset({"owner", "visitor", "anonymous", "roles"})
@@ -467,6 +469,7 @@ class IdentityChecks(ValidatorBase):
         issues: List[ConfigIssue],
         custom_names: Optional[Iterable[str]] = None,
         spec_auth: Optional[SpecAuth] = None,
+        shared_gateway_headers: Iterable[str] = (),
     ) -> None:
         """The identity credential rules the auditor applies at construction and to each request."""
         spec = spec_auth or SpecAuth()
@@ -475,7 +478,7 @@ class IdentityChecks(ValidatorBase):
         def is_auth_header(name: str) -> bool:
             return cls.is_auth_header(name, custom, spec.header_names)
 
-        for problem in isolation_problems(identities, spec, is_auth_header, custom):
+        for problem in isolation_problems(identities, spec, is_auth_header, custom, shared_gateway_headers):
             issues.append(ConfigIssue(
                 path=problem.path,
                 message=problem.message,

@@ -74,3 +74,13 @@ is an example pull request workflow for the security gate of `granttrace diff`:
 it scans the base branch and the pull request against a service the job starts
 locally and fails on new confirmed findings or a decrease in conclusive
 coverage. Read [the CI gate guide](../docs/ci-gate.md) before you adapt it.
+
+## Shared gateway key
+
+`shared-gateway-key/` is a configuration and specification for an API whose
+operations all need an application-level gateway key (identical for every test
+account) and the caller's own Bearer token. The key is listed in
+`identity_isolation.shared_gateway_headers`; without that entry, configuration
+validation refuses the shared value. Reports mark such a scan with
+`"backend_identity_binding": "unverified"`: GrantTrace checks the specification,
+not how the server identifies callers. The values are placeholders.

@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Shared gateway key example",
+    "version": "1.0.0",
+    "description": "Every operation needs the API gateway subscription key AND the caller's own Bearer token."
+  },
+  "components": {
+    "securitySchemes": {
+      "GatewayKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+      "BearerAuth": {"type": "http", "scheme": "bearer"}
+    }
+  },
+  "security": [{"GatewayKey": [], "BearerAuth": []}],
+  "paths": {
+    "/api/orders/{order_id}": {
+      "get": {
+        "operationId": "getOrder",
+        "parameters": [{"name": "order_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "The order"}, "403": {"description": "Not the caller's order"}}
+      }
+    }
+  }
+}
