@@ -80,6 +80,25 @@
       "additionalProperties": {
         "$ref": "#/definitions/bola_entry"
       }
+    },
+    "identity_isolation": {
+      "description": "Explicit exceptions to identity isolation. By default no two identities may send the same value in a header that can identify the caller.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shared_gateway_headers": {
+          "description": "Application-level gateway headers (for example an API gateway subscription key) that identities may send with the same value. Accepted only where the specification requires a per-identity credential next to the header on every operation where it applies; reports mark the backend identity binding as unverified. Authorization, Proxy-Authorization, Cookie and session-like headers can never be listed.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+            "not": {
+              "pattern": "^(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Oo][Xx][Yy]-[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee])$"
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {

@@ -512,11 +512,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             bopla_config=config.get("bopla"),
             remote_ref_config=remote_ref_config,
             offline=bool(args.dry_run),
+            identity_isolation=config.get("identity_isolation"),
         )
         # Local $ref documents become inputs when endpoint schemas resolve.
         # Protect them before running the audit or writing an offline plan.
         auditor.parser.get_endpoints()
         _validate_report_paths(args, auditor.parser.source_files)
+        _warn_shared_gateway_headers(auditor)
         if args.dry_run:
             return _print_dry_run(args, auditor, spec_path, config)
         print("Scan target: " + sanitize_log_text(_display_target(args, auditor)))
@@ -670,10 +672,26 @@ def _load_scan_configuration(
     return None, config
 
 
+def _warn_shared_gateway_headers(auditor: APISentinelAuditor) -> None:
+    """State on the console that an authorized shared header leaves the backend identity binding unverified."""
+    isolation = auditor.identity_isolation_record()
+    if not isinstance(isolation, dict):
+        return
+    shared = ", ".join(repr(name) for name in isolation["shared_in_scan"]) or "none of them"
+    print("[WARN] identity_isolation.shared_gateway_headers authorizes "
+          + ", ".join(repr(name) for name in isolation["shared_gateway_headers"])
+          + f"; identities share {shared}. The backend identity binding is unverified: a CONFIRMED or "
+          "SUSPICIOUS result can come from the server treating identities as one caller. "
+          "Reports mark this under identity_isolation.", file=sys.stderr)
+
+
 def _print_dry_run(args: argparse.Namespace, auditor: APISentinelAuditor, spec_path: str,
                    config: Dict[str, Any]) -> int:
     """Print and optionally export the offline plan; no target request is sent."""
     plan = auditor.build_plan()
+    isolation = auditor.identity_isolation_record()
+    if isinstance(isolation, dict):
+        plan["identity_isolation"] = isolation
     print(json.dumps(plan, indent=2, ensure_ascii=False))
     if args.export_json:
         _ensure_parent(args.export_json)
@@ -723,6 +741,9 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
     )
     report_target = _display_target(args, auditor)
     report_rbac = auditor.rbac_matrix_record()
+    report_isolation = auditor.identity_isolation_record()
+    if not isinstance(report_isolation, dict):
+        report_isolation = None
     SecurityReportGenerator.generate(
         stats=report_stats,
         findings=report_findings,
@@ -732,6 +753,7 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
         reproduction_templates=reproduction_templates,
         secret_values=auditor.secret_values(),
         rbac_matrix=report_rbac,
+        isolation_notice=report_isolation,
     )
     print(f"[OK] HTML report: {args.output}")
 
@@ -750,6 +772,9 @@ def _export_reports(args: argparse.Namespace, auditor: APISentinelAuditor, spec_
             }
             if report_rbac:
                 json_payload["rbac_matrix"] = report_rbac
+            if report_isolation:
+                # Shared gateway headers authorized by configuration; the backend binding is not verified.
+                json_payload["identity_isolation"] = report_isolation
             if comparison_key is not None:
                 # Keyed, credential-free fingerprints that let `granttrace diff` verify that two scans
                 # used the same target, identities, specification, policy and resources. Only written

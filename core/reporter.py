@@ -318,6 +318,7 @@ class SecurityReportGenerator:
         reproduction_templates: Optional[Mapping[int, CurlTemplate]] = None,
         secret_values: Iterable[str] = (),
         rbac_matrix: Optional[Dict[str, Any]] = None,
+        isolation_notice: Optional[Mapping[str, Any]] = None,
     ) -> None:
         with PROPERTY_EVIDENCE_LOCK:
             stats = dict(stats)
@@ -343,7 +344,7 @@ class SecurityReportGenerator:
 
         cards_html = cls._summary_cards_html(stats, findings)
         accounting_html = cls._accounting_html(stats, results)
-        warning_html = cls._scope_warnings_html(stats)
+        warning_html = cls._isolation_notice_html(isolation_notice) + cls._scope_warnings_html(stats)
         results_html = cls._results_html(results)
         findings_html = cls._findings_html(findings, reproduction_templates)
         rbac_html = cls._rbac_matrix_html(rbac_matrix)
@@ -438,6 +439,27 @@ class SecurityReportGenerator:
             )
             accounting_html += "<p class='meta' id='bopla-field-counts'>" + cls._escape(field_counts) + "</p>"
         return accounting_html
+
+    @classmethod
+    def _isolation_notice_html(cls, notice: Optional[Mapping[str, Any]]) -> str:
+        """Notice for shared gateway headers authorized by configuration: the backend binding is unverified.
+
+        Receives header names only (the report's identity_isolation entry), never identity material.
+        """
+        if not notice:
+            return ""
+        configured = ", ".join(str(name) for name in notice.get("shared_gateway_headers", []))
+        in_scan = ", ".join(str(name) for name in notice.get("shared_in_scan", [])) or "无"
+        return (
+            "<div class='notice' id='identity-isolation-notice'><strong>身份隔离提示：共享网关请求头已获配置授权，"
+            "但后端身份绑定未验证</strong><ul>"
+            f"<li>{cls._escape('identity_isolation.shared_gateway_headers 授权共享：' + configured)}</li>"
+            f"<li>{cls._escape('本次扫描中由多个身份以相同值发送：' + in_scan)}</li>"
+            "<li>规范要求这些请求头与每个身份自己的凭据同时出现；GrantTrace 不验证服务端是否按该独立凭据识别调用者。"
+            "CONFIRMED 或 SUSPICIOUS 结论可能来自服务端把多个身份当成同一调用者，需人工确认。"
+            "SECURE 结论要求同一请求上不同身份得到不同的授权结果，仅凭共享请求头识别调用者的服务端不会产生这种结果。</li>"
+            "</ul></div>"
+        )
 
     @classmethod
     def _scope_warnings_html(cls, stats: Dict[str, Any]) -> str:

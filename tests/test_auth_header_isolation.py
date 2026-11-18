@@ -2,9 +2,10 @@
 
 Verifies that shared header credentials (such as X-API-Key, X-Session-Key,
 Authorization, or declared apiKey headers) between Owner/Visitor or between RBAC
-roles are refused whenever they can cause identity confusion, while allowing a
-legitimate application-level shared apiKey header strictly under true OpenAPI
-AND semantics accompanied by distinct per-identity credentials.
+roles are refused by default, and that a legitimate application-level shared
+apiKey header is accepted only when the operator authorizes it in
+identity_isolation.shared_gateway_headers and true OpenAPI AND semantics pair it
+with distinct per-identity credentials.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ OWNER_KEY = "ownerApiKey-f02-distinct-1001"
 VISITOR_KEY = "visitorApiKey-f02-distinct-1002"
 ADMIN_KEY = "adminApiKey-f02-distinct-9001"
 VIEWER_KEY = "viewerApiKey-f02-distinct-9002"
+SHARED_GATEWAY = {"shared_gateway_headers": ["X-API-Key"]}
 
 TOKENS = {
     "owner": "Bearer ownerJwt-f02-aaaa1111",
@@ -106,8 +108,12 @@ class HeaderIsolationValidationTests(unittest.TestCase):
         for secret in ALL_SECRETS:
             self.assertNotIn(secret, text)
 
-    def validate_paths(self, identities: Dict[str, Any], spec: Optional[Dict[str, Any]]) -> List[str]:
-        res = ConfigValidator.validate({"identities": identities}, raw_spec=spec)
+    def validate_paths(self, identities: Dict[str, Any], spec: Optional[Dict[str, Any]],
+                       isolation: Optional[Dict[str, Any]] = None) -> List[str]:
+        config: Dict[str, Any] = {"identities": identities}
+        if isolation is not None:
+            config["identity_isolation"] = isolation
+        res = ConfigValidator.validate(config, raw_spec=spec)
         rendered = "\n".join(i.format() for i in res.issues)
         self.assert_no_leaked_secrets(rendered)
         return sorted(i.path for i in res.errors)
@@ -178,8 +184,9 @@ class HeaderIsolationValidationTests(unittest.TestCase):
         and_session_hdr = make_spec(SESSION_HEADER_AND_BEARER_SCHEMES, [{"SessionKeyAuth": [], "BearerAuth": []}])
         self.assertIn("identities.visitor", self.validate_paths(shared_session_hdr, and_session_hdr))
 
-    def test_legitimate_shared_gateway_apikey_is_allowed_only_under_true_and_with_distinct_identity_creds(self) -> None:
-        # 1. True AND: X-API-Key (shared app key) + Bearer (distinct per identity and role)
+    def test_shared_gateway_apikey_needs_authorization_and_true_and_with_distinct_identity_creds(self) -> None:
+        # 1. True AND: X-API-Key (shared app key) + Bearer (distinct per identity and role).
+        #    Default deny: the specification alone does not authorize sharing.
         and_bearer_spec = make_spec(HEADER_AND_BEARER_SCHEMES, [{"ApiKeyAuth": [], "BearerAuth": []}])
         valid_and_bearer = {
             "owner": {"id": "1001", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["owner"]},
@@ -190,7 +197,9 @@ class HeaderIsolationValidationTests(unittest.TestCase):
                 "viewer": {"role": "viewer", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["viewer"]},
             },
         }
-        self.assertEqual(self.validate_paths(valid_and_bearer, and_bearer_spec), [])
+        self.assertIn("identities.visitor", self.validate_paths(valid_and_bearer, and_bearer_spec))
+        self.assertIn("identities.roles.viewer", self.validate_paths(valid_and_bearer, and_bearer_spec))
+        self.assertEqual(self.validate_paths(valid_and_bearer, and_bearer_spec, SHARED_GATEWAY), [])
 
         # 2. True AND: X-API-Key (shared app key) + Session Cookie (distinct per identity and role)
         and_cookie_spec = make_spec(HEADER_AND_COOKIE_SCHEMES, [{"ApiKeyAuth": [], "CookieAuth": []}])
@@ -203,7 +212,8 @@ class HeaderIsolationValidationTests(unittest.TestCase):
                 "viewer": {"role": "viewer", "headers": {"X-API-Key": APP_KEY}, "parameters": {"SESSIONID": SESSIONS["viewer"]}},
             },
         }
-        self.assertEqual(self.validate_paths(valid_and_cookie, and_cookie_spec), [])
+        self.assertIn("identities.visitor", self.validate_paths(valid_and_cookie, and_cookie_spec))
+        self.assertEqual(self.validate_paths(valid_and_cookie, and_cookie_spec, SHARED_GATEWAY), [])
 
         # 3. Negative AND guards:
         #    (a) Unsupported companion scheme (in: query) cannot excuse a shared header
@@ -214,7 +224,7 @@ class HeaderIsolationValidationTests(unittest.TestCase):
             },
             [{"ApiKeyAuth": [], "QueryKey": []}],
         )
-        self.assertIn("identities.visitor", self.validate_paths(valid_and_bearer, bad_query_and))
+        self.assertIn("identities.visitor", self.validate_paths(valid_and_bearer, bad_query_and, SHARED_GATEWAY))
 
         #    (b) Duplicate schemes pointing to the same X-API-Key header in AND cannot excuse sharing
         dup_header_and = make_spec(
@@ -224,12 +234,12 @@ class HeaderIsolationValidationTests(unittest.TestCase):
             },
             [{"KeyOne": [], "KeyTwo": []}],
         )
-        self.assertIn("identities.visitor", self.validate_paths(valid_and_bearer, dup_header_and))
+        self.assertIn("identities.visitor", self.validate_paths(valid_and_bearer, dup_header_and, SHARED_GATEWAY))
 
         #    (c) Explicitly listing X-API-Key in auth_header_names marks it as an identity credential (not shared)
         explicit_custom = copy.deepcopy(valid_and_bearer)
         explicit_custom["owner"]["auth_header_names"] = ["X-API-Key"]
-        self.assertIn("identities.visitor", self.validate_paths(explicit_custom, and_bearer_spec))
+        self.assertIn("identities.visitor", self.validate_paths(explicit_custom, and_bearer_spec, SHARED_GATEWAY))
 
 
 class HeaderIsolationEndToEndTests(unittest.TestCase):
@@ -289,7 +299,7 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
             code = api_sentinel.main(args)
         return code, out.getvalue(), err.getvalue()
 
-    def test_cli_validate_config_refuses_or_shared_apikey_and_accepts_true_and_shared_apikey(self) -> None:
+    def test_cli_validate_config_refuses_or_shared_apikey_and_accepts_authorized_true_and_shared_apikey(self) -> None:
         identities = {
             "owner": {"id": "1001", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["owner"], "parameters": {"id": "1001"}},
             "visitor": {"id": "1002", "headers": {"X-API-Key": APP_KEY}, "token": TOKENS["visitor"], "parameters": {"id": "1002"}},
@@ -301,6 +311,7 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         }
         cfg = {
             "identities": identities,
+            "identity_isolation": SHARED_GATEWAY,
             "bola": {
                 "GET /users/{id}": {"resource_id_paths": ["id"]},
                 "GET /admin/settings": {"required_role": "administrator", "private_data_paths": ["signing_key"]},
@@ -319,7 +330,8 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         for secret in ALL_SECRETS:
             self.assertNotIn(secret, out + err)
         with self.assertRaises(ValueError):
-            APISentinelAuditor(str(or_spec_path), self.target, identities_config=identities)
+            APISentinelAuditor(str(or_spec_path), self.target, identities_config=identities,
+                               identity_isolation=SHARED_GATEWAY)
         self.assertEqual(self.seen, [])
 
         # 2. True AND spec -> --validate-config MUST pass (exit 0) and full loopback scan isolates identities
@@ -344,6 +356,9 @@ class HeaderIsolationEndToEndTests(unittest.TestCase):
         verdicts = {(r["check"], r["endpoint"], (r.get("evidence") or {}).get("rbac_role")): r["verdict"] for r in report["results"]}
         self.assertEqual(verdicts[("BOLA", "GET /users/{id}", None)], "CONFIRMED")
         self.assertEqual(verdicts[("RBAC", "GET /admin/settings", "viewer")], "SECURE")
+        # Authorized by configuration, never reported as a verified backend binding.
+        self.assertEqual(report["identity_isolation"]["shared_in_scan"], ["x-api-key"])
+        self.assertEqual(report["identity_isolation"]["backend_identity_binding"], "unverified")
 
         # Anonymous sent neither header; every authenticated identity sent APP_KEY + its own Bearer token
         anon_reqs = [r for r in self.seen if r["auth"] is None]
