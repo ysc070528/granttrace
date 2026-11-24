@@ -714,5 +714,46 @@ class OracleSelfTests(unittest.TestCase):
         self.assertFalse(oracle_is_side_effect("/upload-gateway/api/reports/summary"))
 
 
+class ConcretePolicyHelperTests(unittest.TestCase):
+    """Contract of the shared helpers that the auditor and the transport both use."""
+
+    def test_concrete_path_risk_applies_only_to_read_methods(self) -> None:
+        from core.scan_safety import concrete_path_risk
+
+        for method in ("GET", "head", "POST"):
+            with self.subTest(method=method):
+                self.assertEqual(concrete_path_risk(method, "/reports/delete")["safety_signal"], "path")
+        # PATCH/PUT are the separately gated writes; other methods are not reads.
+        for method in ("PATCH", "PUT", "DELETE", "OPTIONS", ""):
+            with self.subTest(method=method):
+                self.assertIsNone(concrete_path_risk(method, "/reports/delete"))
+
+    def test_concrete_request_risk_refuses_unparseable_urls(self) -> None:
+        from core.scan_safety import concrete_request_risk
+
+        for url in ("http://[::1/reports/summary", None, 12):
+            with self.subTest(url=url):
+                risk = concrete_request_risk("GET", url)  # type: ignore[arg-type]
+                self.assertEqual(risk, {"safety_reason": "Read-only safety policy blocked an ambiguous request path; "
+                                                         "no request was sent", "safety_signal": "path_ambiguity"})
+        self.assertIsNone(concrete_request_risk("PATCH", "http://[::1/reports/delete"))
+
+    def test_relative_request_path_strips_only_a_whole_segment_base_prefix(self) -> None:
+        from core.scan_safety import concrete_request_risk, relative_request_path
+
+        base = "http://127.0.0.1:8080/api/v1"
+        self.assertEqual(relative_request_path(base + "/reports/1", base), "/reports/1")
+        self.assertEqual(relative_request_path(base, base), "/")
+        self.assertEqual(relative_request_path(base + "/", base), "/")
+        # A look-alike prefix is not the base path: the whole path stays checked.
+        self.assertEqual(relative_request_path("http://127.0.0.1:8080/api/v10/reports", base), "/api/v10/reports")
+        self.assertEqual(relative_request_path("http://127.0.0.1:8080/other/reports", base), "/other/reports")
+        # The operator's base prefix is not vocabulary-checked; everything below it is.
+        upload_base = "http://127.0.0.1:8080/upload-gateway"
+        self.assertIsNone(concrete_request_risk("GET", upload_base + "/reports/summary", upload_base))
+        self.assertIsNotNone(concrete_request_risk("GET", upload_base + "/reports/summary"))
+        self.assertIsNotNone(concrete_request_risk("GET", upload_base + "/reports/delete", upload_base))
+
+
 if __name__ == "__main__":
     unittest.main()
