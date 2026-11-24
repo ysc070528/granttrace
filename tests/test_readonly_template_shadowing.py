@@ -738,6 +738,31 @@ class ConcretePolicyHelperTests(unittest.TestCase):
                                                          "no request was sent", "safety_signal": "path_ambiguity"})
         self.assertIsNone(concrete_request_risk("PATCH", "http://[::1/reports/delete"))
 
+    def test_concrete_check_is_never_weaker_than_the_literal_path_rule(self) -> None:
+        # v2.7.1 refused an undocumented literal path with read_only_risk, which
+        # reads the decoded path without brace groups. Whatever that rule refuses,
+        # the concrete check must refuse too, for values and literal paths alike.
+        from core.scan_safety import concrete_path_risk, read_only_risk
+
+        values = sorted(ORACLE_ACTIONS) + list(POLYSEMOUS_VALUES) + [
+            "DELETE", "deleteAll", "delete-all", "delete ", "monthly/delete", "summary;delete", "{x}delete",
+            "{a}{b}cancel", "x}delete", "{delete}", "a{b/c}reset", "1001", "report.v1", "%64elete", "汉 字",
+        ]
+        paths = ["/reports/{x}delete", "/reports/%7Bx%7Ddelete", "/r/{a/b}delete", "/{x}/{y}submit"]
+        for text in values:
+            for template in ("/reports/{}", "/a/{}/b", "/exports/{}.json", "/x/{}-y", "/{}"):
+                paths.append(template.replace("{}", quote(text, safe="")))
+        refused_literal = 0
+        for path in paths:
+            with self.subTest(path=path):
+                if read_only_risk({"method": "GET", "path": unquote(path)}):
+                    refused_literal += 1
+                    self.assertIsNotNone(concrete_path_risk("GET", path))
+                    self.assertIsNotNone(concrete_path_risk("HEAD", path))
+        self.assertGreater(refused_literal, 50)
+        for path in ("/reports/{x}delete", "/reports/%7Bx%7Ddelete", "/r/{a/b}delete"):
+            self.assertIsNotNone(concrete_path_risk("GET", path), path)
+
     def test_relative_request_path_strips_only_a_whole_segment_base_prefix(self) -> None:
         from core.scan_safety import concrete_request_risk, relative_request_path
 
