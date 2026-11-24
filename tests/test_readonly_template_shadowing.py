@@ -21,7 +21,6 @@ import contextlib
 import io
 import json
 import re
-import socket
 import tempfile
 import threading
 import unittest

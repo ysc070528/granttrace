@@ -42,7 +42,14 @@ from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_mes
 from core.request_builder import RequestBuilderMixin
 from core.results import ResultRecorderMixin
 from core.parameters import ParameterSerializationError
-from core.scan_safety import post_path_risk, read_only_risk, read_path_risk
+from core.scan_safety import (
+    concrete_path_risk,
+    concrete_request_risk,
+    read_only_risk,
+    read_path_risk,
+    relative_request_path,
+    unparseable_request_risk,
+)
 from core.transport import HttpTransport
 
 
@@ -93,6 +100,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             request_timeout=max(0.1, float(request_timeout)),
             max_response_bytes=max(1024, int(max_response_bytes)),
             insecure_ssl=bool(insecure_ssl),
+            # The transport repeats the auditor's concrete-request decision on
+            # the request it is about to send, so no entry point can skip it.
+            request_guard=self._transport_request_risk,
         )
         self.insecure_ssl = bool(insecure_ssl)
         self.allow_write_tests = bool(allow_write_tests)
@@ -379,13 +389,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             return self._read_safety_cache
 
     def _relative_request_path(self, url: str) -> str:
-        request_path = urllib.parse.urlsplit(url).path or "/"
-        base_path = urllib.parse.urlsplit(self.target_base_url).path.rstrip("/")
-        if base_path and request_path == base_path:
-            return "/"
-        if base_path and request_path.startswith(base_path + "/"):
-            return request_path[len(base_path):]
-        return request_path
+        return relative_request_path(url, self.target_base_url)
 
     def _request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
         """The concrete-request check for every method the auditor reads with."""
@@ -393,37 +397,47 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             # Only operator-declared read-only POSTs reach transport. Their
             # concrete path, including filled values, must not be ambiguous or
             # name a mutation (/documents/delete via an {id} value).
-            return read_path_risk(url) or post_path_risk(self._relative_request_path(url))
+            return concrete_request_risk("POST", url, self.target_base_url)
         return self._read_request_risk(method, url)
 
+    def _transport_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
+        """The transport's last check before a request leaves: the same decision as ``_request_risk``."""
+        return self._request_risk(method, url)
+
     def _read_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
-        """Check concrete routing semantics before transport or write baselines."""
-        if str(method).upper() in {"GET", "HEAD"}:
-            # Inspect the entire concrete path, including the target prefix,
-            # on every call. A cached safe template cannot certify its values.
+        """Check one concrete GET/HEAD request before transport or write baselines.
+
+        Two independent decisions are made and any refusal wins. The documented
+        templates the concrete path may route to contribute their metadata
+        risk; the concrete path itself, with its filled values, is always
+        checked as well. A template whose own metadata is safe never certifies
+        the values filled into it: ``GET /reports/{kind}`` sent as
+        ``/reports/delete`` gets the decision of the literal path.
+        """
+        if str(method).upper() not in {"GET", "HEAD"}:
+            return None
+        # Inspect the entire concrete URL, including the target prefix, first.
+        # A URL that cannot be parsed is refused rather than sent.
+        try:
             ambiguity = read_path_risk(url)
             if ambiguity:
                 return ambiguity
             request_path = self._relative_request_path(url)
-            request_paths = {request_path, urllib.parse.unquote(request_path)}
-            # Some routers ignore trailing slashes or matrix suffixes. These
-            # candidates can add a risky match, never certify a safe route.
-            risk_paths = {path.rstrip("/") or "/" for path in request_paths}
-            for path in request_paths:
-                if ";" in path:
-                    parts = [part.split(";", 1)[0] for part in path.split("/")]
-                    risk_paths.add("/" + "/".join(part for part in parts if part))
-            documented = False
-            for pattern, risk in self._read_safety_snapshot().routes:
-                if any(pattern.fullmatch(path) for path in request_paths):
-                    documented = True
-                    if risk:
-                        return dict(risk)
-                elif risk and any(pattern.fullmatch(path) for path in risk_paths):
-                    return dict(risk)
-            if not documented:
-                return read_only_risk({"method": method, "path": urllib.parse.unquote(request_path)})
-        return None
+        except (AttributeError, TypeError, ValueError):
+            return unparseable_request_risk()
+        request_paths = {request_path, urllib.parse.unquote(request_path)}
+        # Some routers ignore trailing slashes or matrix suffixes. These
+        # candidates can add a risky template match, never certify a request.
+        risk_paths = set(request_paths)
+        risk_paths.update(path.rstrip("/") or "/" for path in request_paths)
+        for path in request_paths:
+            if ";" in path:
+                parts = [part.split(";", 1)[0] for part in path.split("/")]
+                risk_paths.add("/" + "/".join(part for part in parts if part))
+        for pattern, risk in self._read_safety_snapshot().routes:
+            if risk and any(pattern.fullmatch(path) for path in risk_paths):
+                return dict(risk)
+        return concrete_path_risk(method, request_path)
 
     def _http_request(
         self,
@@ -441,6 +455,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         bounded rate-limit retry for GET/HEAD; a POST is never retried. Tests and the bundled demo replace it to
         answer without a network. Together with ``_authoritative_patch_state`` it
         is a supported extension point: both keep their names and signatures.
+        The transport repeats the same check on every attempt it sends, so an
+        override that skips this method's check still cannot send a refused
+        request.
         """
         self._ensure_parser_auth()
         if getattr(self._request_accounting, "attempts", None) is None:

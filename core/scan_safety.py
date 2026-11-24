@@ -638,21 +638,70 @@ def query_write_risk(url: str) -> Optional[Dict[str, str]]:
             "safety_signal": "query"}
 
 
-def post_path_risk(path: str) -> Optional[Dict[str, str]]:
-    """Refuse a concrete POST path whose segments, including filled values, name a mutation."""
+_AMBIGUOUS_PATH_REASON = "Read-only safety policy blocked an ambiguous request path; no request was sent"
+_STATE_CHANGING_REASON = ("Read-only safety policy blocked an operation with explicit state-changing semantics; "
+                          "no request was sent")
+_COMPOUND_REASON = ("Read-only safety policy blocked an operation that combines a read action with a "
+                    "conditional or follow-up write (such as get-or-create, find-or-insert or "
+                    "put-if-absent); no request was sent")
+_POST_PATH_REASON = ("Read-only safety policy blocked a POST path with explicit state-changing semantics; "
+                     "no request was sent")
+
+
+def relative_request_path(url: str, base_url: str = "") -> str:
+    """Return the path of ``url`` below the path of ``base_url``, exactly as it is sent."""
+    request_path = urlsplit(url).path or "/"
+    base_path = urlsplit(base_url).path.rstrip("/") if base_url else ""
+    if base_path and request_path == base_path:
+        return "/"
+    if base_path and request_path.startswith(base_path + "/"):
+        return request_path[len(base_path):]
+    return request_path
+
+
+def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
+    """Refuse a concrete read path whose segments, including filled values, name a mutation.
+
+    Same literal-path rules as read_only_risk (leading action word or compound
+    write per segment) without placeholder stripping; filled values are data,
+    so identifier abbreviations stay a template-only rule, as for POST paths.
+    """
+    verb = str(method).upper()
+    if verb in {"GET", "HEAD"}:
+        patterns, reason, compound = _READ_PATTERNS, _STATE_CHANGING_REASON, _COMPOUND_REASON
+    elif verb == "POST":
+        patterns, reason, compound = _POST_PATTERNS, _POST_PATH_REASON, _POST_PATH_REASON
+    else:
+        return None
     try:
         decoded = unquote(path, errors="strict")
     except UnicodeDecodeError:
         decoded = path
-    for candidate in {path, decoded}:
-        # Check matrix parameters too: a router may ignore them, a handler may not.
-        # Filled values are data, so abbreviations (an id such as "rm-101") are
-        # checked in the specification's path template only, not here.
+    for candidate in {path, decoded, re.sub(r"\{[^}]*\}", "", decoded)}:
         pieces = [_words(piece) for part in candidate.split("/") for piece in part.split(";")]
-        if any(_POST_PATTERNS.leading.search(words) or _COMPOUND_WRITE.search(words) for words in pieces):
-            return {
-                "safety_reason": "Read-only safety policy blocked a POST path with explicit state-changing semantics; "
-                                 "no request was sent",
-                "safety_signal": "path",
-            }
+        if any(patterns.leading.search(words) for words in pieces):
+            return {"safety_reason": reason, "safety_signal": "path"}
+        if any(_COMPOUND_WRITE.search(words) for words in pieces):
+            return {"safety_reason": compound, "safety_signal": "path"}
     return None
+
+
+def post_path_risk(path: str) -> Optional[Dict[str, str]]:
+    """Refuse a concrete POST path whose segments, including filled values, name a mutation."""
+    return concrete_path_risk("POST", path)
+
+
+def concrete_request_risk(method: str, url: str, base_url: str = "") -> Optional[Dict[str, str]]:
+    """The specification-free read-only check of one concrete request URL."""
+    verb = str(method).upper()
+    if verb not in {"GET", "HEAD", "POST"}:
+        return None
+    try:
+        return read_path_risk(url) or concrete_path_risk(verb, relative_request_path(url, base_url))
+    except (AttributeError, TypeError, ValueError):
+        return unparseable_request_risk()
+
+
+def unparseable_request_risk() -> Dict[str, str]:
+    """The refusal for a request URL that the read-only checks cannot parse."""
+    return {"safety_reason": _AMBIGUOUS_PATH_REASON, "safety_signal": "path_ambiguity"}

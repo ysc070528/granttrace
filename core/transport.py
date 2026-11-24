@@ -22,7 +22,11 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 
 from core import __version__
 from core.models import HTTPResult
-from core.scan_safety import method_override_risk, query_write_risk, read_only_body_risk
+from core.scan_safety import concrete_request_risk, method_override_risk, query_write_risk, read_only_body_risk
+
+# (method, url) -> a refusal with a "safety_reason", or None to allow the request.
+RequestGuard = Callable[[str, str], Optional[Mapping[str, str]]]
+_UNCHECKED_REFUSAL = "Read-only safety policy could not check the request; no request was sent"
 
 # The methods the auditor uses to read; PATCH and PUT are the separately gated writes.
 _READ_METHODS = frozenset({"GET", "HEAD", "POST"})
@@ -82,7 +86,9 @@ class HttpTransport:
         request_timeout: float,
         max_response_bytes: int,
         insecure_ssl: bool,
+        request_guard: Optional[RequestGuard] = None,
     ) -> None:
+        self.request_guard = request_guard
         self.request_delay = request_delay
         self.request_timeout = request_timeout
         self.max_response_bytes = max_response_bytes
@@ -138,6 +144,17 @@ class HttpTransport:
         wait = max(wait, self.request_delay)
         return wait if wait <= self.MAX_RETRY_WAIT else None
 
+    def read_policy_refusal(self, method: str, url: str) -> Optional[str]:
+        """Why this request must not leave the transport under the path policy, or None."""
+        try:
+            guard = self.request_guard
+            risk = guard(method, url) if guard is not None else concrete_request_risk(method, url)
+            if not risk:
+                return None
+            return str(risk.get("safety_reason") or _UNCHECKED_REFUSAL)
+        except Exception:
+            return _UNCHECKED_REFUSAL
+
     def read_limited(self, response) -> Tuple[str, bool]:  # noqa: ANN001
         raw = response.read(self.max_response_bytes + 1)
         truncated = len(raw) > self.max_response_bytes
@@ -178,6 +195,10 @@ class HttpTransport:
                 request_headers["content-type"] = content_type
                 encoded_data = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
             request = urllib.request.Request(url, data=encoded_data, method=method, headers=request_headers)
+            # Check the method and URL urllib will send, after it unwrapped the URL.
+            refusal = self.read_policy_refusal(request.get_method(), request.full_url)
+            if refusal:
+                return HTTPResult(status=0, body="", error=refusal)
             on_attempt()
             try:
                 response = self.opener.open(request, timeout=self.request_timeout)

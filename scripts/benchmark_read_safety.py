@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.auditor import APISentinelAuditor  # noqa: E402 - standalone script imports from the repository root
-from core.scan_safety import read_only_risk  # noqa: E402
+from core.scan_safety import concrete_path_risk, read_only_risk, relative_request_path  # noqa: E402
 
 
 TARGET = "http://127.0.0.1:8080/api/v1"
@@ -91,7 +91,8 @@ def safety_requests(target=TARGET):
     cases = (
         ("GET", "/records/1001", False),
         ("GET", "/records/current?expand=true", False),
-        ("GET", "/records/create_report", False),
+        # P0-01: the safe template /records/{id} does not certify an action value.
+        ("GET", "/records/create_report", True),
         ("GET", "/opaque/%63reate_report", True),
         ("HEAD", "/opaque/create_report", True),
         ("GET", "/opaque/1001", False),
@@ -112,7 +113,19 @@ def safety_requests(target=TARGET):
 
 
 def legacy_read_request_risk(auditor, method, url):
-    """Previous _read_request_risk, preserved as the before comparator."""
+    """Previous uncached _read_request_risk route scan, preserved as the before comparator.
+
+    The P0-01 concrete-path check is applied to both implementations, so the
+    comparison measures caching only. It calls neither get_endpoints nor
+    re.escape and does not change the counted work.
+    """
+    risk = _legacy_route_scan_risk(auditor, method, url)
+    if risk or str(method).upper() not in {"GET", "HEAD"}:
+        return risk
+    return concrete_path_risk(method, relative_request_path(url, auditor.target_base_url))
+
+
+def _legacy_route_scan_risk(auditor, method, url):
     if str(method).upper() in {"GET", "HEAD"}:
         request_path = urllib.parse.urlsplit(url).path
         base_path = urllib.parse.urlsplit(auditor.target_base_url).path.rstrip("/")
