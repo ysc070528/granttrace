@@ -723,7 +723,16 @@ _POST_PATH_REASON = ("Read-only safety policy blocked a POST path with explicit 
 
 
 def relative_request_path(url: str, base_url: str = "") -> str:
-    """Return the path of ``url`` below the path of ``base_url``, exactly as it is sent."""
+    """Return the path of ``url`` below the path of ``base_url``, exactly as it is sent.
+
+    Only a whole-segment prefix equal to the base path is removed: the base URL
+    is operator configuration, while everything after it comes from the
+    specification and parameter values and must be checked. Any other path is
+    returned unchanged, so stripping can only narrow the checked text to what
+    follows the configured base, never hide part of it. The comparison is
+    case-sensitive and undecoded; a mismatch checks the whole path, which is
+    stricter.
+    """
     request_path = urlsplit(url).path or "/"
     base_path = urlsplit(base_url).path.rstrip("/") if base_url else ""
     if base_path and request_path == base_path:

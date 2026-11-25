@@ -4,6 +4,42 @@
 
 ### Security
 
+- A documented path template no longer certifies the values filled into it.
+  `GET /reports/{kind}` with `kind` filled from an enum, example, default,
+  `parameter_values` or identity configuration as `delete` was sent, while the
+  literal path `/reports/delete` was refused. Every concrete GET, HEAD and
+  read-only POST path is now checked with the literal-path rules, and the
+  template's metadata check applies on top; either refusal wins. Some
+  legitimate values that read as actions (`transfers`, `imports`, `updates`)
+  are now refused as their literal paths already were; use `parameter_values`
+  to select another value.
+- An HTTP method must be exactly one RFC 9110 token. `"GET "`, `" GET"`, an
+  empty or non-ASCII method is refused before any connection, and a valid
+  method is checked and sent in one upper-case spelling (a direct Python API
+  call with `"get"` now sends `GET`).
+- `HttpTransport` always applies its base request policy below its fixed
+  `base_url`; a `request_guard` can only add refusals, and a malformed guard
+  decision or an exception refuses. A guard decision whose own lookups raise
+  refuses instead of raising from `read_policy_refusal()`.
+- Every transport rule now reads the request urllib sends: the unwrapped URL,
+  the headers it keeps and the JSON body decoded from its bytes. A tuple in a
+  read-only POST body is checked as the array it is sent as; a body JSON
+  cannot carry is refused.
+- A path piece in another letter case or in a form a case-insensitive router
+  treats as equal (`wItHdRaW`, `wıthdraw`, `WİTHDRAW`, full width) is refused
+  like the action it routes to.
+- A `name=value` pair in a path (matrix `;action=delete`, an exploded object)
+  gets the same write-switch rules as the query string.
+- A `_method` or `X-HTTP-Method-Override` value in a query string or body is
+  refused for every state-changing method in the IANA registry and PURGE, not
+  only PUT, PATCH and DELETE.
+- A summary such as "Permanently deletes the job" (an adverb, the verb and its
+  own object) is recognised as naming a write.
+- A policy refusal is structured: `HTTPResult.refusal` names the reason, the
+  signal and the policy layer (`auditor`, `transport_request`,
+  `transport_base`, `transport_guard`), and the report record of a check with a
+  refused request carries `safety_refusals`, `policy_layer` and
+  `safety_signal`. Such a check never concludes SECURE, PUBLIC or AUTHORIZED.
 - A read action no longer clears an operation whose name writes when the
   resource is missing. Compounds such as getOrCreateCart, findOrCreateUser,
   fetchOrGenerateKey, getOrInitializeSession, findOrInsertRow, getAndSet,

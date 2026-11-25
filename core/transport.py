@@ -174,7 +174,16 @@ class HttpTransport:
     extension points (constructor arguments, ``request_guard``, the auditor's
     documented overrides). They are not a sandbox: code running in the same
     Python process can replace this class or its methods, patch
-    core.scan_safety, or open connections without this transport.
+    core.scan_safety, or open connections without this transport. Overriding
+    the auditor's private policy methods (``_request_risk``,
+    ``_transport_request_risk`` and the like) is not a supported extension: it
+    changes only the auditor's additional layer, never the base policy.
+
+    Scope: the read-only rules apply to GET, HEAD and POST, the methods the
+    auditor reads with. A valid PATCH, PUT, DELETE or other method passed to
+    ``send`` directly is sent (only a method-override header is refused for
+    every method): the auditor gates its own writes separately, and this class
+    is not a read-only sandbox for arbitrary callers.
     """
 
     # Rate limiting: only idempotent reads are retried. A write may already have
