@@ -91,6 +91,25 @@ class ResultRecorderMixin:
         else:
             evidence.setdefault("requests_attempted", attempts)
         primary = check != "ROLLBACK"
+        refusals = list(getattr(self._request_accounting, "refusals", None) or ()) if primary else []
+        if refusals:
+            # The read-only policy refused a request of this check while it ran
+            # (core.models.HTTPResult.refusal): the evidence is incomplete by design. The record
+            # says which layer refused what. Such a check never concludes that the target is not
+            # vulnerable: SECURE, PUBLIC or AUTHORIZED becomes ERROR, the verdict a refused
+            # observation already produces (the request was not made). Every other verdict is
+            # kept: ERROR and INCONCLUSIVE already say the check is incomplete, a CONFIRMED or
+            # SUSPICIOUS result rests on requests that were sent, and this record is primary
+            # (a ROLLBACK reports the recovery of a write and is never changed here).
+            first = refusals[0]
+            evidence["safety_refusals"] = len(refusals)
+            evidence["policy_layer"] = first["policy_layer"]
+            evidence.setdefault("safety_signal", first["safety_signal"])
+            if verdict in (Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED):
+                verdict = Verdict.ERROR
+                reason = "A request of this check was refused, so it cannot conclude: " + first["safety_reason"]
+                evidence["safety_signal"] = first["safety_signal"]
+                evidence["reason_category"] = "error"
         attempted = evidence["requests_attempted"] > 0
         conclusive = verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}
         if "reason_category" not in evidence:
@@ -108,6 +127,7 @@ class ResultRecorderMixin:
             evidence["reason_category"] = category
         if primary:
             self._request_accounting.attempts = None
+            self._request_accounting.refusals = None
         result = {
             "endpoint": self._operation_key(ep),
             "operation_id": ep.get("operation_id", ""),

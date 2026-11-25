@@ -472,8 +472,11 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
             "expected_visitor_access": {"allow", "deny"},
             "kind": {"VALID", "AUTH_DENIED", "APPLICATION_ERROR", "TRANSPORT_ERROR", "HTTP_CLIENT_ERROR",
                      "SERVER_ERROR", "HTTP_ERROR", "EMPTY_RESPONSE", "INVALID_RESPONSE"},
+            # Which read-only policy layer refused a request of the check (core.models.HTTPResult).
+            "policy_layer": {"auditor", "transport_request", "transport_base", "transport_guard"},
         }
         counts = {"requests_attempted", "requests_sent", "transport_attempts", "http_requests_sent", "resource_group",
+                  "safety_refusals",
                   "owner_meaningful_value_count", "visitor_meaningful_value_count", "shared_value_count",
                   "owner_specific_shared_value_count", "shared_resource_identifier_count",
                   "owner_only_shared_resource_identifier_count", "visitor_self_shared_resource_identifier_count"}
@@ -487,7 +490,7 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
         evidence_keys = counts | observations | {
             "decision_evidence", "metrics", "target_url", "visitor_self_url", "observation_group", "shared_observations",
             "reason_category", "property_privacy_pending", "leak_group", "duplicate_of", "rollback_verified",
-            "recovery_sent", "safety_signal", "readback_url", "request_content_type", "verification_scope",
+            "recovery_sent", "safety_signal", "policy_layer", "readback_url", "request_content_type", "verification_scope",
             "snapshot_fields", "ignored_readback_paths", "configured_fields", "tested_fields", "verified_fields",
             "unverified_fields", "cases",
         }

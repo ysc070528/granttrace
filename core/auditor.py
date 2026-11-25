@@ -54,7 +54,7 @@ from core.scan_safety import (
     relative_request_path,
     unparseable_request_risk,
 )
-from core.transport import HttpTransport
+from core.transport import HttpTransport, refusal_decision
 
 
 @dataclass(frozen=True)
@@ -493,13 +493,17 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         try:
             method = canonical_http_method(method)
         except InvalidHttpMethod:
-            return HTTPResult(status=0, body="", error=invalid_method_risk()["safety_reason"])
+            return self._policy_refused(invalid_method_risk())
         risk = self._request_risk(method, url)
         if risk:
-            return HTTPResult(status=0, body="", error=risk["safety_reason"])
+            return self._policy_refused(risk)
         attempt = 0
         while True:
             result = self._send_http_request(method, url, data, identity_name, content_type, headers)
+            if result.refusal is not None:
+                # The transport refused what this check allowed: the same policy, a later layer.
+                self._note_policy_refusal(result.refusal)
+                return result
             wait = (self._transport.rate_limit_wait(method, result, attempt)
                     if attempt < self._transport.RATE_LIMIT_RETRIES else None)
             if wait is None:
@@ -508,6 +512,23 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 self.stats["rate_limit_retries"] += 1
             self._transport.defer(wait)
             attempt += 1
+
+    def _policy_refused(self, risk: Mapping[str, Any]) -> HTTPResult:
+        """The result of a request this auditor's own check refused; it is recorded for the check."""
+        refusal = refusal_decision(risk, "auditor")
+        self._note_policy_refusal(refusal)
+        return HTTPResult(status=0, body="", error=refusal["safety_reason"], refusal=refusal)
+
+    def _note_policy_refusal(self, refusal: Mapping[str, str]) -> None:
+        """Remember a read-only policy refusal for the check this thread is running.
+
+        ``_record_result`` reads it: a check with a refused request cannot
+        conclude that the target is not vulnerable (see ResultRecorderMixin).
+        """
+        refusals = getattr(self._request_accounting, "refusals", None)
+        if refusals is None:
+            refusals = self._request_accounting.refusals = []
+        refusals.append(dict(refusal))
 
     def _send_http_request(
         self, method: str, url: str, data: Optional[Any], identity_name: str,
@@ -1908,6 +1929,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         # A worker must report its own error while transport accounting is still
         # available in that thread. Reused workers start with a fresh check.
         self._request_accounting.attempts = None
+        self._request_accounting.refusals = None
         with self._tracking_generated_values(ep):
             try:
                 self.audit_endpoint_bola(ep)

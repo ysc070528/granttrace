@@ -107,7 +107,7 @@ def _plain_text(value: object) -> Optional[str]:
     return text if str.strip(text) else None
 
 
-def _refusal_decision(decision: object, layer: str) -> Dict[str, str]:
+def refusal_decision(decision: object, layer: str) -> Dict[str, str]:
     """A structured refusal from any decision value; it never raises.
 
     A mapping with a non-blank ``safety_reason`` keeps its reason and signal.
@@ -128,7 +128,7 @@ def _refusal_decision(decision: object, layer: str) -> Dict[str, str]:
 
 def _refusal_reason(decision: object) -> str:
     """The reason of a refusal decision; a decision without a usable reason still refuses."""
-    return _refusal_decision(decision, LAYER_GUARD)["safety_reason"]
+    return refusal_decision(decision, LAYER_GUARD)["safety_reason"]
 
 
 def _refused(refusal: Dict[str, str]) -> HTTPResult:
@@ -267,17 +267,17 @@ class HttpTransport:
         try:
             base = concrete_request_risk(method, url, self._base_url)
         except Exception:
-            return _refusal_decision(None, LAYER_BASE)
+            return refusal_decision(None, LAYER_BASE)
         if base is not None:
-            return _refusal_decision(base, LAYER_BASE)
+            return refusal_decision(base, LAYER_BASE)
         guard = self.request_guard
         if guard is None:
             return None
         try:
             decision = guard(method, url)
         except Exception:
-            return _refusal_decision(None, LAYER_GUARD)
-        return None if decision is None else _refusal_decision(decision, LAYER_GUARD)
+            return refusal_decision(None, LAYER_GUARD)
+        return None if decision is None else refusal_decision(decision, LAYER_GUARD)
 
     def read_policy_refusal(self, method: str, url: str) -> Optional[str]:
         """Why this request must not leave the transport under the path policy, or None; never raises."""
@@ -303,9 +303,9 @@ class HttpTransport:
             body = None if data is None else json.loads(data)
             risk = request_refusal_risk(method, url, dict(request.header_items()), body)
         except Exception:
-            return _refusal_decision(None, LAYER_REQUEST)
+            return refusal_decision(None, LAYER_REQUEST)
         if risk is not None:
-            return _refusal_decision(risk, LAYER_REQUEST)
+            return refusal_decision(risk, LAYER_REQUEST)
         return self.read_policy_decision(method, url)
 
     def read_limited(self, response) -> Tuple[str, bool]:  # noqa: ANN001
@@ -341,7 +341,7 @@ class HttpTransport:
             try:
                 method = canonical_http_method(method)
             except InvalidHttpMethod:
-                return _refused(_refusal_decision(invalid_method_risk(), LAYER_BASE))
+                return _refused(refusal_decision(invalid_method_risk(), LAYER_BASE))
             request_headers = {
                 "accept": "application/json",
                 "user-agent": f"GrantTrace/{__version__}",
