@@ -257,6 +257,18 @@ class WireObjectTests(_LoopbackCase):
         self.assertEqual(_transport().send("GET", self.server.origin + "/reports/summary", headers).status, 0)
         self.assertEqual(self.server.snapshot(), [])
 
+    def test_a_request_whose_body_cannot_be_read_as_sent_is_refused(self) -> None:
+        import urllib.request
+
+        for data in (iter([b'{"q": 1}']), "not bytes", b"{not json"):
+            with self.subTest(data=repr(data)):
+                request = urllib.request.Request(self.server.origin + "/documents/search", data=data,  # type: ignore[arg-type]
+                                                 method="POST")
+                decision = _transport().request_decision(request)
+                self.assertEqual(decision, {"safety_reason": UNCHECKED, "safety_signal": "policy_error",
+                                            "policy_layer": "transport_request"})
+        self.assertEqual(self.server.snapshot(), [])
+
     def test_allowed_requests_send_exactly_what_was_checked(self) -> None:
         body = {"query": "mutation testing", "filters": ["open", "closed"], "page": 2}
         result = _transport().send("POST", self.server.origin + "/documents/search", {}, body)
