@@ -269,6 +269,30 @@ class WireObjectTests(_LoopbackCase):
                                             "policy_layer": "transport_request"})
         self.assertEqual(self.server.snapshot(), [])
 
+    def test_the_request_rules_keep_their_string_and_structured_forms(self) -> None:
+        url = self.server.origin + "/reports/summary"
+        cases = (
+            (("GET", url, {}, None), None),
+            (("GET", url, {"X-HTTP-Method-Override": "DELETE"}, None), "method_override_header"),
+            (("GET ", url, {}, None), "method"),
+            ((None, url, {}, None), "method"),
+            (("GET", url + "?_method=PURGE", {}, None), "query"),
+            (("POST", url, {}, {"action": "delete"}), "request_body"),
+            (("PATCH", url + "?upsert=true", {}, {"action": "delete"}), None),  # gated writes keep their data
+        )
+        for args, signal in cases:
+            with self.subTest(args=args[:3]):
+                risk = transport_module.request_refusal_risk(*args)
+                reason = transport_module.request_refusal(*args)
+                if signal is None:
+                    self.assertIsNone(risk)
+                    self.assertIsNone(reason)
+                else:
+                    self.assertEqual(risk["safety_signal"], signal)
+                    self.assertEqual(reason, risk["safety_reason"])
+                    self.assertIn("no request was sent", reason)
+        self.assertEqual(self.server.snapshot(), [])
+
     def test_allowed_requests_send_exactly_what_was_checked(self) -> None:
         body = {"query": "mutation testing", "filters": ["open", "closed"], "page": 2}
         result = _transport().send("POST", self.server.origin + "/documents/search", {}, body)
@@ -358,13 +382,13 @@ class PathKeyValueTests(_LoopbackCase):
         # The router never dispatches on these: a matrix value, a later array element, a
         # value behind a literal template prefix. They match the literal-path rule.
         for path in ("/reports;kind=withdraw", "/reports/a,withdraw", "/reports/report-withdraw",
-                     "/reports/.a.withdraw"):
+                     "/reports/.a.withdraw", "/reports;=upsert", "/reports/=upsert,=true"):
             with self.subTest(path=path):
                 self.assertIsNone(scan_safety.concrete_path_risk("GET", path))
 
     def test_values_in_routed_positions_are_refused(self) -> None:
         for path in ("/reports/withdraw", "/reports/.withdraw", "/reports/withdraw,a", "/reports;withdraw",
-                     "/reports/withdraw;kind=a"):
+                     "/reports/withdraw;kind=a", "/reports;=x;action=delete"):
             with self.subTest(path=path):
                 self.assertIsNotNone(scan_safety.concrete_path_risk("GET", path))
 

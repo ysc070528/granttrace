@@ -67,11 +67,6 @@ class HTTPResult:
         return self.status, self.body
 
     @property
-    def refused(self) -> bool:
-        """True when the read-only safety policy refused this request; nothing was sent."""
-        return self.refusal is not None
-
-    @property
     def ok(self) -> bool:
         return self.error is None and 200 <= self.status < 300
 

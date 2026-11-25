@@ -126,11 +126,6 @@ def refusal_decision(decision: object, layer: str) -> Dict[str, str]:
     return {"safety_reason": _UNCHECKED_REFUSAL, "safety_signal": "policy_error", "policy_layer": layer}
 
 
-def _refusal_reason(decision: object) -> str:
-    """The reason of a refusal decision; a decision without a usable reason still refuses."""
-    return refusal_decision(decision, LAYER_GUARD)["safety_reason"]
-
-
 def _refused(refusal: Dict[str, str]) -> HTTPResult:
     return HTTPResult(status=0, body="", error=refusal["safety_reason"], refusal=refusal)
 
