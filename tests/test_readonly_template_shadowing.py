@@ -723,10 +723,12 @@ class ConcretePolicyHelperTests(unittest.TestCase):
         for method in ("GET", "head", "POST"):
             with self.subTest(method=method):
                 self.assertEqual(concrete_path_risk(method, "/reports/delete")["safety_signal"], "path")
-        # PATCH/PUT are the separately gated writes; other methods are not reads.
-        for method in ("PATCH", "PUT", "DELETE", "OPTIONS", ""):
+        # PATCH/PUT are the separately gated writes; other valid methods are not reads.
+        for method in ("PATCH", "PUT", "DELETE", "OPTIONS"):
             with self.subTest(method=method):
                 self.assertIsNone(concrete_path_risk(method, "/reports/delete"))
+        # An empty method is not a method token: refused, never treated as "not a read".
+        self.assertEqual(concrete_path_risk("", "/reports/delete")["safety_signal"], "method")
 
     def test_concrete_request_risk_refuses_unparseable_urls(self) -> None:
         from core.scan_safety import concrete_request_risk
