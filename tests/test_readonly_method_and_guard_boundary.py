@@ -21,6 +21,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from unittest.mock import patch
 from urllib.parse import quote, urlsplit
 
 import core.scan_safety as scan_safety
@@ -396,6 +397,15 @@ class GuardContractTests(_LoopbackCase):
                             self.assertEqual(refusal, base["safety_reason"])
                         elif name == "returns None":
                             self.assertIsNone(refusal)
+
+    def test_a_failing_base_policy_refuses_the_request(self) -> None:
+        calls: List[str] = []
+        with patch.object(scan_safety, "read_path_risk", side_effect=RuntimeError("policy bug")):
+            result = _transport(request_guard=lambda m, u: calls.append(m)).send("GET", self.server.origin + BENIGN, {})
+        self.assertEqual(result.status, 0)
+        self.assertIn("could not check the request", result.error or "")
+        self.assertEqual(calls, [], "the guard is not asked once the base policy has failed")
+        self.assertEqual(self.server.snapshot(), [])
 
     def test_guard_receives_the_canonical_method_and_url(self) -> None:
         calls: List[Tuple[str, str]] = []
