@@ -428,6 +428,16 @@ class MethodOverrideValueTests(_LoopbackCase):
             with self.subTest(body=body):
                 self.assertIsNone(scan_safety.read_only_body_risk(body))
 
+    def test_only_string_override_values_name_a_method(self) -> None:
+        # A value that is no string names no method; list elements are read under their key.
+        for body in ({"_method": 7}, {"method": None}, {"X-HTTP-Method-Override": True}, {"_method": {"a": 1}},
+                     {"method": 1.5}):
+            with self.subTest(body=body):
+                self.assertIsNone(scan_safety.read_only_body_risk(body))
+        for body in ({"_method": ["purge"]}, {"_method": [7, "DELETE"]}):
+            with self.subTest(body=body):
+                self.assertIsNotNone(scan_safety.read_only_body_risk(body))
+
     def test_the_transport_sends_no_unsafe_override_query(self) -> None:
         for method in ("PURGE", "LINK", "MOVE"):
             with self.subTest(method=method):
