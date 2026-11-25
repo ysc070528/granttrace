@@ -210,6 +210,10 @@ _PROSE_EXCLUDED_VERBS = frozenset({"new", "make", "mark", "touch", "pop", "bump"
 # own action: "returns the cart, or creates one if none exists".
 _PROSE_OBJECTS = ("a", "an", "the", "it", "one", "them", "new", "this", "that", "these", "those",
                   "if", "when", "unless", "whenever")
+# English determiners and object pronouns (a closed word class): after an adverb-led verb they
+# mark a clause with its own object, "Permanently deletes the job", not a noun phrase.
+_CLAUSE_DETERMINERS = ("a", "an", "the", "this", "that", "these", "those", "all", "any", "each", "every",
+                       "some", "both", "its", "their", "your", "our", "his", "her", "my", "it", "them", "one")
 
 
 def _word_forms(verbs: tuple[str, ...]) -> set[str]:
@@ -293,6 +297,15 @@ class _ActionPatterns:
                    r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
                    r"|(?:will|may|can)\s+)?")
         self.description = re.compile(r"^" + subject + word, re.IGNORECASE)
+        # "Permanently deletes the job", "This endpoint asynchronously triggers a
+        # rebuild": one or two -ly adverbs before the operation's own verb, which
+        # then takes an object of its own (a determiner or pronoun). Without that
+        # object the words are usually a noun phrase: "Weekly updates for the team",
+        # "Daily transfers summary". A grammatical frame, not more vocabulary.
+        self.adverbial = re.compile(
+            r"^" + subject + r"(?:[a-z]+ly\s+){1,2}" + word + r"\s+" + _alternation(set(_CLAUSE_DETERMINERS)),
+            re.IGNORECASE,
+        )
         self.informational = re.compile(
             r"^" + word + r"\s+(?:are|were)\s+(?:available|supported|listed|documented|possible)\b",
             re.IGNORECASE,
@@ -375,6 +388,7 @@ def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns, post: 
         words = [_words(clause) for clause in clauses]
         if any((patterns.description.search(clause)
                 and not patterns.informational.search(clause))
+               or patterns.adverbial.search(clause)
                or patterns.conjoined.search(clause) for clause in words):
             return field, "action"
         if any(patterns.alternative.search(clause) or patterns.alternative_clause.search(clause)
