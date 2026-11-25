@@ -288,13 +288,11 @@ class _ActionPatterns:
             + r"\s+" + _alternation(set(_PROSE_OBJECTS)),
             re.IGNORECASE,
         )
-        self.description = re.compile(
-            r"^(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
-            r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
-            r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
-            r"|(?:will|may|can)\s+)?" + word,
-            re.IGNORECASE,
-        )
+        subject = (r"(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
+                   r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
+                   r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
+                   r"|(?:will|may|can)\s+)?")
+        self.description = re.compile(r"^" + subject + word, re.IGNORECASE)
         self.informational = re.compile(
             r"^" + word + r"\s+(?:are|were)\s+(?:available|supported|listed|documented|possible)\b",
             re.IGNORECASE,
@@ -363,7 +361,7 @@ def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns, post: 
     path = re.sub(r"\{[^}]*\}", "", path)
     segments = [_words(part) for part in path.split("/")]
     if any(patterns.leading.search(words) or (post and _POST_IDENTIFIER_LEADING.search(words))
-           for words in segments):
+           for words in segments) or any(patterns.leading.search(_routed_words(part)) for part in path.split("/")):
         return "path", "action"
     if any(_COMPOUND_WRITE.search(words) for words in segments):
         return "path", "compound"
@@ -721,14 +719,61 @@ def relative_request_path(url: str, base_url: str = "") -> str:
     return request_path
 
 
+def _routed_words(value: str) -> str:
+    """``value`` in the single case a case-insensitive router compares it in.
+
+    Upper- then lower-casing maps every spelling such a router treats as equal
+    onto one: any mix of cases (wItHdRaW), the dotless and dotted I (wıthdraw,
+    WİTHDRAW), the long s and the Kelvin sign; NFKC first folds compatibility
+    forms (full width). .NET OrdinalIgnoreCase (ASP.NET Core routing), and
+    Express or Spring with case-insensitive matching, route these to the action.
+    There is no camelCase split: a router compares the whole piece.
+    """
+    folded = _visible(_visible(value).upper().lower())
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def _path_pairs(path: str) -> List[Tuple[str, str]]:
+    """The ``name=value`` pairs of a path's pieces, as OpenAPI serialises them.
+
+    Matrix parameters (``;name=value``) and exploded objects in simple
+    (``name=value,name=value``) or label (``.name=value.name=value``) style
+    carry the same data a query string does.
+    """
+    pairs: List[Tuple[str, str]] = []
+    for segment in path.split("/"):
+        for piece in segment.split(";"):
+            for token in re.split(r"[,.]" if piece.startswith(".") else ",", piece):
+                name, separator, value = token.partition("=")
+                if separator and name:
+                    pairs.append((name, value))
+    return pairs
+
+
 def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
     """Refuse a concrete read path whose segments, including filled values, name a mutation.
 
-    Same literal-path rules as read_only_risk (leading action word or compound
-    write per segment) without placeholder stripping; filled values are data,
-    so identifier abbreviations stay a template-only rule, as for POST paths.
-    A method that is not a single valid method token is refused rather than
-    treated as a method this check does not cover.
+    ``path`` is what the server routes: parameter values have already replaced
+    the template placeholders, so nothing in it is skipped as a placeholder and
+    no documented template can certify it. GET/HEAD use the read vocabulary,
+    POST (sent only for operator-declared read-only operations) the wider POST
+    vocabulary; other methods are not reads and are gated by their callers.
+
+    The literal-path rules of read_only_risk apply to every segment and matrix
+    piece (a router may ignore matrix pieces, a handler may not), as sent and
+    once decoded: a leading action word, read as words (deleteReport) and in
+    the one case a case-insensitive router compares (wItHdRaW), or a compound
+    write (getOrCreate). The decoded path is also read without brace groups, as
+    read_only_risk reads a literal path, so this check is never weaker than the
+    literal-path rule; the result is the same for a literal path and for a
+    template filled with the same values. Filled values are data, so
+    identifier abbreviations stay a template-only rule, as for POST paths, and
+    a value a router does not dispatch on (a matrix value, a later array
+    element, a value behind a literal prefix) is data as in a query string.
+    A ``name=value`` pair in a path piece gets the query string's write-switch
+    rules (?action=delete and ;action=delete alike). A method that is not a
+    single valid method token is refused rather than treated as a method this
+    check does not cover.
     """
     try:
         verb = canonical_http_method(method)
@@ -745,11 +790,19 @@ def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
     except UnicodeDecodeError:
         decoded = path
     for candidate in {path, decoded, re.sub(r"\{[^}]*\}", "", decoded)}:
-        pieces = [_words(piece) for part in candidate.split("/") for piece in part.split(";")]
-        if any(patterns.leading.search(words) for words in pieces):
+        raw_pieces = [piece for part in candidate.split("/") for piece in part.split(";")]
+        pieces = [_words(piece) for piece in raw_pieces]
+        if any(patterns.leading.search(words) for words in pieces) or any(
+                patterns.leading.search(_routed_words(piece)) for piece in raw_pieces):
             return {"safety_reason": reason, "safety_signal": "path"}
         if any(_COMPOUND_WRITE.search(words) for words in pieces):
             return {"safety_reason": compound, "safety_signal": "path"}
+    pairs = _path_pairs(decoded)
+    kind = _body_write_kind([{name: value} for name, value in pairs]) if pairs else None
+    if kind is not None:
+        return {"safety_reason": f"Read-only safety policy blocked a path parameter that contains {kind}; "
+                                 "no request was sent",
+                "safety_signal": "path"}
     return None
 
 
