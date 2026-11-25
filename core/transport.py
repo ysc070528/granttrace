@@ -1,10 +1,14 @@
 """HTTP transport for audit requests: one send, shared throttling, rate-limit policy.
 
-The auditor decides what to send and records what happened; this module only
-moves bytes. Redirects are returned to the caller instead of being followed, so
-credentials are never forwarded to another location. Responses are read up to a
-fixed size and reported as truncated beyond it. ``send`` never raises: a failed
-request becomes an ``HTTPResult`` with ``status=0`` and an error message.
+The auditor decides what to send and records what happened; this module moves
+bytes and is the last place the read-only request policy is applied. Every
+request is checked as urllib is about to send it, after any retry or URL
+unwrapping, in the method spelling that is sent (see HttpTransport for the
+policy layers and their trust boundary). Redirects are returned to the caller
+instead of being followed, so credentials are never forwarded to another
+location. Responses are read up to a fixed size and reported as truncated
+beyond it. ``send`` never raises: a failed or refused request becomes an
+``HTTPResult`` with ``status=0`` and an error message.
 """
 
 from __future__ import annotations
@@ -22,9 +26,21 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 
 from core import __version__
 from core.models import HTTPResult
-from core.scan_safety import concrete_request_risk, method_override_risk, query_write_risk, read_only_body_risk
+from core.scan_safety import (
+    InvalidHttpMethod,
+    canonical_http_method,
+    concrete_request_risk,
+    invalid_method_risk,
+    method_override_risk,
+    query_write_risk,
+    read_only_body_risk,
+)
 
-# (method, url) -> a refusal with a "safety_reason", or None to allow the request.
+# An additional, refusal-only request policy: guard(method, url) receives the
+# canonical method and the URL urllib will send. It returns None to add no
+# refusal, or a mapping whose "safety_reason" is a non-empty string to refuse.
+# Any other value, or an exception, refuses the request. A guard cannot allow a
+# request that the base policy refuses.
 RequestGuard = Callable[[str, str], Optional[Mapping[str, str]]]
 _UNCHECKED_REFUSAL = "Read-only safety policy could not check the request; no request was sent"
 
@@ -48,7 +64,10 @@ def request_refusal(method: str, url: str, headers: Mapping[str, str], data: Opt
     if any(method_override_risk(str(name), str(value)) for name, value in headers.items()):
         return ("Read-only safety policy blocked a request with a header that overrides the HTTP method "
                 "to one that can change state; no request was sent")
-    method = str(method).upper()
+    try:
+        method = canonical_http_method(method)
+    except InvalidHttpMethod:
+        return invalid_method_risk()["safety_reason"]
     if method in _READ_METHODS:
         query = query_write_risk(url)
         if query:
@@ -58,6 +77,15 @@ def request_refusal(method: str, url: str, headers: Mapping[str, str], data: Opt
         if risk:
             return risk["safety_reason"]
     return None
+
+
+def _refusal_reason(decision: object) -> str:
+    """The reason of a refusal decision; a decision without a usable reason still refuses."""
+    if isinstance(decision, Mapping):
+        reason = decision.get("safety_reason")
+        if isinstance(reason, str) and reason.strip():
+            return reason
+    return _UNCHECKED_REFUSAL
 
 
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -72,6 +100,34 @@ def _nothing() -> None:
 
 
 class HttpTransport:
+    """Send audit requests after two independent policy decisions; either refusal wins.
+
+    1. The base policy always runs and cannot be switched off through this
+       class's configuration: the method must be a single RFC 9110 token (it is
+       checked and sent in one canonical upper-case spelling), and a GET, HEAD
+       or POST must not have an ambiguous URL or a state-changing concrete path
+       below ``base_url`` (core.scan_safety.concrete_request_risk). It depends
+       only on core.scan_safety and on ``base_url``, which is fixed when the
+       transport is built; not on ``request_guard`` and not on any auditor
+       method. ``base_url`` is the operator's configured target: its own path
+       is not read as data, everything after it is. Without it the whole path
+       is checked, which is stricter. ``request_refusal`` (method-override
+       headers, write query strings, write POST bodies) is part of the base
+       policy as well and runs first, on the canonical method.
+    2. ``request_guard`` (optional) adds refusals only; see RequestGuard. The
+       auditor installs its specification-aware check here (documented
+       templates whose metadata names a write), so that layer follows the
+       auditor's own, overridable, policy methods.
+
+    A refused request opens no connection and runs neither callback.
+
+    Trust boundary: these are guarantees for the supported configuration and
+    extension points (constructor arguments, ``request_guard``, the auditor's
+    documented overrides). They are not a sandbox: code running in the same
+    Python process can replace this class or its methods, patch
+    core.scan_safety, or open connections without this transport.
+    """
+
     # Rate limiting: only idempotent reads are retried. A write may already have
     # been applied, so its outcome stays with the transaction's own recovery.
     RETRYABLE_METHODS = {"GET", "HEAD"}
@@ -87,8 +143,10 @@ class HttpTransport:
         max_response_bytes: int,
         insecure_ssl: bool,
         request_guard: Optional[RequestGuard] = None,
+        base_url: str = "",
     ) -> None:
         self.request_guard = request_guard
+        self._base_url = str(base_url or "")
         self.request_delay = request_delay
         self.request_timeout = request_timeout
         self.max_response_bytes = max_response_bytes
@@ -144,16 +202,32 @@ class HttpTransport:
         wait = max(wait, self.request_delay)
         return wait if wait <= self.MAX_RETRY_WAIT else None
 
+    @property
+    def base_url(self) -> str:
+        """The operator's target base URL whose own path the base policy does not read as data."""
+        return self._base_url
+
     def read_policy_refusal(self, method: str, url: str) -> Optional[str]:
-        """Why this request must not leave the transport under the path policy, or None."""
+        """Why this request must not leave the transport, or None.
+
+        The base policy decides first and always; ``request_guard`` is then
+        asked only to add a refusal. A decision that cannot be made (an
+        exception) or that is malformed (see RequestGuard) refuses the request.
+        """
         try:
-            guard = self.request_guard
-            risk = guard(method, url) if guard is not None else concrete_request_risk(method, url)
-            if not risk:
-                return None
-            return str(risk.get("safety_reason") or _UNCHECKED_REFUSAL)
+            base = concrete_request_risk(method, url, self._base_url)
         except Exception:
             return _UNCHECKED_REFUSAL
+        if base is not None:
+            return _refusal_reason(base)
+        guard = self.request_guard
+        if guard is None:
+            return None
+        try:
+            decision = guard(method, url)
+        except Exception:
+            return _UNCHECKED_REFUSAL
+        return None if decision is None else _refusal_reason(decision)
 
     def read_limited(self, response) -> Tuple[str, bool]:  # noqa: ANN001
         raw = response.read(self.max_response_bytes + 1)
@@ -176,11 +250,18 @@ class HttpTransport:
         """Send one request without throttling; the caller calls ``throttle`` first.
 
         ``on_attempt`` runs just before the request leaves, ``on_response`` once a
-        response (including an HTTP error status) has arrived. A request that
-        ``request_refusal`` rejects is returned as a failed result before either
-        runs: no connection is opened and nothing is counted as attempted.
+        response (including an HTTP error status) has arrived. The method is
+        sent in its canonical spelling, the one every check uses; a method that
+        is not a single valid token, or a request that ``request_refusal`` or
+        ``read_policy_refusal`` rejects, is returned as a failed result before
+        either callback runs: no connection is opened and nothing is counted as
+        attempted.
         """
         try:
+            try:
+                method = canonical_http_method(method)
+            except InvalidHttpMethod:
+                return HTTPResult(status=0, body="", error=invalid_method_risk()["safety_reason"])
             # Inside the try: a check that cannot run fails closed, like a failed send.
             refusal = request_refusal(method, url, headers, data)
             if refusal:

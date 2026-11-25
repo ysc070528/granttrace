@@ -43,8 +43,12 @@ from core.request_builder import RequestBuilderMixin
 from core.results import ResultRecorderMixin
 from core.parameters import ParameterSerializationError
 from core.scan_safety import (
+    READ_METHODS,
+    InvalidHttpMethod,
+    canonical_http_method,
     concrete_path_risk,
     concrete_request_risk,
+    invalid_method_risk,
     read_only_risk,
     read_path_risk,
     relative_request_path,
@@ -100,8 +104,10 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             request_timeout=max(0.1, float(request_timeout)),
             max_response_bytes=max(1024, int(max_response_bytes)),
             insecure_ssl=bool(insecure_ssl),
-            # The transport repeats the auditor's concrete-request decision on
-            # the request it is about to send, so no entry point can skip it.
+            # The transport always applies the base concrete-request policy
+            # below the configured target to the request it is about to send;
+            # the auditor's specification-aware decision is added on top.
+            base_url=self.target_base_url,
             request_guard=self._transport_request_risk,
         )
         self.insecure_ssl = bool(insecure_ssl)
@@ -392,8 +398,16 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         return relative_request_path(url, self.target_base_url)
 
     def _request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
-        """The concrete-request check for every method the auditor reads with."""
-        if str(method).upper() == "POST":
+        """The concrete-request check for every method the auditor reads with.
+
+        A method that is not a single valid method token is refused; any other
+        method is decided in its canonical spelling, the one that is sent.
+        """
+        try:
+            method = canonical_http_method(method)
+        except InvalidHttpMethod:
+            return invalid_method_risk()
+        if method == "POST":
             # Only operator-declared read-only POSTs reach transport. Their
             # concrete path, including filled values, must not be ambiguous or
             # name a mutation (/documents/delete via an {id} value).
@@ -401,7 +415,15 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         return self._read_request_risk(method, url)
 
     def _transport_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
-        """The transport's last check before a request leaves: the same decision as ``_request_risk``."""
+        """The auditor's additional check at the transport: the same decision as ``_request_risk``.
+
+        The transport always applies the base concrete-request policy itself
+        (core.scan_safety, below the configured target) and asks this method
+        only for further refusals. That adds the specification-aware decisions,
+        such as a documented template whose metadata names a write. A subclass
+        that overrides the auditor's policy methods changes this additional
+        layer only; it cannot switch the base policy off.
+        """
         return self._request_risk(method, url)
 
     def _read_request_risk(self, method: str, url: str) -> Optional[Dict[str, str]]:
@@ -412,9 +434,14 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         risk; the concrete path itself, with its filled values, is always
         checked as well. A template whose own metadata is safe never certifies
         the values filled into it: ``GET /reports/{kind}`` sent as
-        ``/reports/delete`` gets the decision of the literal path.
+        ``/reports/delete`` gets the decision of the literal path. A method that
+        is not a single valid method token is refused.
         """
-        if str(method).upper() not in {"GET", "HEAD"}:
+        try:
+            method = canonical_http_method(method)
+        except InvalidHttpMethod:
+            return invalid_method_risk()
+        if method not in READ_METHODS:
             return None
         # Inspect the entire concrete URL, including the target prefix, first.
         # A URL that cannot be parsed is refused rather than sent.
@@ -455,13 +482,18 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         bounded rate-limit retry for GET/HEAD; a POST is never retried. Tests and the bundled demo replace it to
         answer without a network. Together with ``_authoritative_patch_state`` it
         is a supported extension point: both keep their names and signatures.
-        The transport repeats the same check on every attempt it sends, so an
-        override that skips this method's check still cannot send a refused
-        request.
+        The method is checked and sent in its canonical spelling; one that is
+        not a single valid method token is refused. The transport applies the
+        base policy again on every attempt it sends, so an override that skips
+        this method's check still cannot send a request that policy refuses.
         """
         self._ensure_parser_auth()
         if getattr(self._request_accounting, "attempts", None) is None:
             self._request_accounting.attempts = 0
+        try:
+            method = canonical_http_method(method)
+        except InvalidHttpMethod:
+            return HTTPResult(status=0, body="", error=invalid_method_risk()["safety_reason"])
         risk = self._request_risk(method, url)
         if risk:
             return HTTPResult(status=0, body="", error=risk["safety_reason"])

@@ -71,6 +71,39 @@ _PATH_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\\]")
 _BAD_PATH_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 _PATH_ESCAPE = re.compile(r"%[0-9a-fA-F]{2}")
 _ENCODED_SLASH_EDGE = re.compile(r"(?:^|/)%2f|%2f(?:/|$)", re.IGNORECASE)
+_INVALID_METHOD_REASON = ("Read-only safety policy blocked a request whose HTTP method is not a single valid "
+                          "method token; no request was sent")
+# RFC 9110 section 5.6.2: method = token; tchar is ASCII only.
+_METHOD_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+READ_METHODS = frozenset({"GET", "HEAD"})
+# GET and HEAD, plus POST, which the auditor sends only to operator-declared read-only operations.
+CHECKED_METHODS = READ_METHODS | {"POST"}
+
+
+class InvalidHttpMethod(ValueError):
+    """An HTTP method that is not exactly one RFC 9110 method token."""
+
+
+def canonical_http_method(method: Any) -> str:
+    """Return the one spelling of ``method`` that is both checked and sent.
+
+    The method must be a ``str`` that is exactly one RFC 9110 token: no
+    surrounding or interior whitespace, control, separator or non-ASCII
+    character. Its upper-case form is canonical; the safety checks decide on
+    it and the transport sends it, so the server receives the method that was
+    checked. Anything else raises InvalidHttpMethod: "GET " is not GET, it is
+    a spelling that a server splitting the request line on whitespace would
+    route as GET while a check comparing names would not. Callers refuse the
+    request instead of guessing.
+    """
+    if not isinstance(method, str) or not _METHOD_TOKEN.fullmatch(method):
+        raise InvalidHttpMethod("HTTP method must be a single RFC 9110 method token")
+    return method.upper()
+
+
+def invalid_method_risk() -> Dict[str, str]:
+    """The refusal for a request whose method is not a single valid method token."""
+    return {"safety_reason": _INVALID_METHOD_REASON, "safety_signal": "method"}
 
 
 def read_path_risk(url: str) -> Optional[Dict[str, str]]:
@@ -369,12 +402,16 @@ def read_only_risk(endpoint: Dict[str, Any]) -> Optional[Dict[str, str]]:
     GET/HEAD are refused only when their metadata explicitly suggests mutation.
     A POST is refused when its metadata uses the wider POST mutation vocabulary
     or does not name a read action. Other methods are not read operations and
-    are gated by their callers. Metadata values are never echoed: specification
-    prose can contain credentials or private examples. A benign summary cannot
-    override a command-like path.
+    are gated by their callers. A method that is not a single valid method
+    token is refused, as everywhere else. Metadata values are never echoed:
+    specification prose can contain credentials or private examples. A benign
+    summary cannot override a command-like path.
     """
-    method = str(endpoint.get("method", "")).upper()
-    if method in {"GET", "HEAD"}:
+    try:
+        method = canonical_http_method(endpoint.get("method", ""))
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if method in READ_METHODS:
         signal, rule = _mutation_signal(endpoint, _READ_PATTERNS)
     elif method == "POST":
         if _mixes_scripts(endpoint.get("operation_id")) or _mixes_scripts(endpoint.get("path")):
@@ -665,9 +702,14 @@ def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
     Same literal-path rules as read_only_risk (leading action word or compound
     write per segment) without placeholder stripping; filled values are data,
     so identifier abbreviations stay a template-only rule, as for POST paths.
+    A method that is not a single valid method token is refused rather than
+    treated as a method this check does not cover.
     """
-    verb = str(method).upper()
-    if verb in {"GET", "HEAD"}:
+    try:
+        verb = canonical_http_method(method)
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if verb in READ_METHODS:
         patterns, reason, compound = _READ_PATTERNS, _STATE_CHANGING_REASON, _COMPOUND_REASON
     elif verb == "POST":
         patterns, reason, compound = _POST_PATTERNS, _POST_PATH_REASON, _POST_PATH_REASON
@@ -692,9 +734,23 @@ def post_path_risk(path: str) -> Optional[Dict[str, str]]:
 
 
 def concrete_request_risk(method: str, url: str, base_url: str = "") -> Optional[Dict[str, str]]:
-    """The specification-free read-only check of one concrete request URL."""
-    verb = str(method).upper()
-    if verb not in {"GET", "HEAD", "POST"}:
+    """The specification-free read-only check of one concrete request URL.
+
+    This is the base read-only policy: it depends on nothing but its arguments,
+    so it holds however an auditor or a transport is configured or extended.
+    The method must be a single valid method token (see canonical_http_method);
+    any other spelling is refused. GET, HEAD and POST are the methods the
+    auditor reads with. The whole URL is checked for routing ambiguity first,
+    then the path below ``base_url`` for state-changing segments. A URL that
+    cannot be parsed is refused rather than passed: a check that cannot run
+    must not let the request leave. Other valid methods (the separately gated
+    PATCH/PUT writes, for example) are left to their callers.
+    """
+    try:
+        verb = canonical_http_method(method)
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if verb not in CHECKED_METHODS:
         return None
     try:
         return read_path_risk(url) or concrete_path_risk(verb, relative_request_path(url, base_url))
