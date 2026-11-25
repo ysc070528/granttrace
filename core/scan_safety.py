@@ -456,6 +456,17 @@ _BODY_ACTION_KEYS = frozenset({
 _BODY_METHOD_KEYS = frozenset({"method", "http method", "method override", "x http method override",
                                "x method override", "x http method"})
 _WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+# Every other method an override value can turn a read into: the methods the IANA HTTP Method
+# Registry lists as not safe (RFC 9110 section 9.2.1), plus PURGE, the cache-invalidation method of
+# Varnish, Fastly and nginx. Frameworks that honour _method (Rack, Express method-override, Symfony)
+# accept these too. POST is not here: a read-only POST already is one, and those frameworks do not
+# override a GET. A value that is no method ({"method": "card"}) is data.
+_OTHER_OVERRIDE_WRITE_METHODS = frozenset({
+    "ACL", "BASELINE-CONTROL", "BIND", "CHECKIN", "CHECKOUT", "CONNECT", "COPY", "LABEL", "LINK", "LOCK",
+    "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL", "MKREDIRECTREF", "MKWORKSPACE", "MOVE", "ORDERPATCH",
+    "PROPPATCH", "PURGE", "REBIND", "UNBIND", "UNCHECKOUT", "UNLINK", "UNLOCK", "UPDATE",
+    "UPDATEREDIRECTREF", "VERSION-CONTROL",
+})
 # A true flag whose name starts with one of these asks the endpoint to write:
 # {"upsert": true}, {"createIfMissing": true}, {"auto_create": true}, {"save_search": true}.
 _BODY_FLAG_VERBS = frozenset({
@@ -625,8 +636,12 @@ def _body_write_kind(body: Any) -> Optional[str]:
             if isinstance(value, str) and _action_names_write(value):
                 return "an action that names a write"
         elif key in _BODY_METHOD_KEYS:
-            if isinstance(value, str) and value.strip().upper() in _WRITE_METHODS:
-                return "an HTTP method override to PUT, PATCH or DELETE"
+            if isinstance(value, str):
+                override = value.strip().upper()
+                if override in _WRITE_METHODS:
+                    return "an HTTP method override to PUT, PATCH or DELETE"
+                if override in _OTHER_OVERRIDE_WRITE_METHODS:
+                    return "an HTTP method override to another state-changing method"
         elif key in _BODY_DRY_RUN_KEYS:
             if _body_value_is(value, _FALSE_VALUES):
                 return "a dry-run switch turned off"
@@ -641,14 +656,24 @@ def read_only_body_risk(body: Any) -> Optional[Dict[str, str]]:
     The body is the operator's own selector, sent unchanged by every identity.
     A body that selects a write cannot be read-only whatever the operation is
     called: a GraphQL mutation, an action, mode or JSON Patch "op" naming a
-    write (also "cart.create", "users:delete"), an HTTP method override to
-    PUT/PATCH/DELETE, a true create/upsert/save flag, or a dry-run switch turned
-    off, also inside JSON sent as a string. Keys and values are never echoed.
-    Ordinary filters ({"deleted": true}, {"create_by": 1}, {"delete_flag": 1},
-    {"sort": "updated_at"}, {"query": "mutation testing"}) are not refused. A
-    body without these markers is not proven read-only.
+    write (also "cart.create", "users:delete"), an HTTP method override to a
+    state-changing method, a true create/upsert/save flag, or a dry-run switch
+    turned off, also inside JSON sent as a string. Keys and values are never
+    echoed. Ordinary filters ({"deleted": true}, {"create_by": 1},
+    {"delete_flag": 1}, {"sort": "updated_at"}, {"query": "mutation testing"})
+    are not refused. A body without these markers is not proven read-only.
+
+    The body is checked as the JSON the request carries, not as the Python
+    object: a tuple is the array it is sent as, keys are strings. A value JSON
+    cannot carry (a set, NaN, an arbitrary object) cannot be sent and is
+    refused rather than checked in a form the server would never see.
     """
-    kind = _body_write_kind(body)
+    try:
+        view = json.loads(json.dumps(body, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
+        kind: Optional[str] = "a value that cannot be sent as JSON"
+    else:
+        kind = _body_write_kind(view)
     if kind is None:
         return None
     return {"safety_reason": f"Read-only POST body contains {kind}; no request was sent",
