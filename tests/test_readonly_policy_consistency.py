@@ -301,6 +301,21 @@ class RouterCaseFoldingTests(_LoopbackCase):
             with self.subTest(value=value):
                 self.assertIsNone(scan_safety.concrete_path_risk("GET", "/reports/" + value))
 
+    def test_the_router_reading_is_skipped_only_where_it_equals_the_word_reading(self) -> None:
+        # concrete_path_risk skips _routed_words for ASCII pieces without upper-case letters;
+        # this pins that both readings are identical there, so the skip changes no decision.
+        import random
+
+        generator = random.Random(20261125)
+        alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-_.~!$&'()*+,=@:%"
+        corpus = set(scan_safety._word_forms(scan_safety._POST_ACTIONS)) | {"get-or-create", "kind=withdraw",
+                                                                            "a,withdraw", "", "--", "1001"}
+        corpus.update("".join(generator.choice(alphabet) for _ in range(generator.randint(1, 24)))
+                      for _ in range(3000))
+        for piece in sorted(corpus):
+            if piece.isascii() and piece == piece.lower():
+                self.assertEqual(scan_safety._routed_words(piece), scan_safety._words(piece), piece)
+
     def test_literal_and_filled_templates_agree(self) -> None:
         for value in ("wItHdRaW", "wıthdraw", "Settings"):
             with self.subTest(value=value):

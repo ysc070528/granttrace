@@ -815,12 +815,15 @@ def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
     for candidate in {path, decoded, re.sub(r"\{[^}]*\}", "", decoded)}:
         raw_pieces = [piece for part in candidate.split("/") for piece in part.split(";")]
         pieces = [_words(piece) for piece in raw_pieces]
+        # An ASCII piece without upper-case letters reads the same both ways (_routed_words equals
+        # _words there), so only the other pieces need the router reading.
         if any(patterns.leading.search(words) for words in pieces) or any(
-                patterns.leading.search(_routed_words(piece)) for piece in raw_pieces):
+                patterns.leading.search(_routed_words(piece)) for piece in raw_pieces
+                if not (piece.isascii() and piece == piece.lower())):
             return {"safety_reason": reason, "safety_signal": "path"}
         if any(_COMPOUND_WRITE.search(words) for words in pieces):
             return {"safety_reason": compound, "safety_signal": "path"}
-    pairs = _path_pairs(decoded)
+    pairs = _path_pairs(decoded) if "=" in decoded else []
     kind = _body_write_kind([{name: value} for name, value in pairs]) if pairs else None
     if kind is not None:
         return {"safety_reason": f"Read-only safety policy blocked a path parameter that contains {kind}; "
