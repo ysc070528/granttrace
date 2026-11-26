@@ -27,19 +27,33 @@
   cannot carry is refused.
 - A path piece in another letter case or in a form a case-insensitive router
   treats as equal (`wItHdRaW`, `wıthdraw`, `WİTHDRAW`, full width) is refused
-  like the action it routes to.
+  like the action it routes to. Words run together in a single case
+  (`deleteall`, `DELETEALL`, `createreport`) are not yet recognised.
 - A `name=value` pair in a path (matrix `;action=delete`, an exploded object)
   gets the same write-switch rules as the query string.
 - A `_method` or `X-HTTP-Method-Override` value in a query string or body is
   refused for every state-changing method in the IANA registry and PURGE, not
   only PUT, PATCH and DELETE.
 - A summary such as "Permanently deletes the job" (an adverb, the verb and its
-  own object) is recognised as naming a write.
+  own object) is recognised as naming a write. A bare plural object
+  ("Permanently deletes jobs older than 30 days") or the passive voice is not.
 - A policy refusal is structured: `HTTPResult.refusal` names the reason, the
   signal and the policy layer (`auditor`, `transport_request`,
-  `transport_base`, `transport_guard`), and the report record of a check with a
-  refused request carries `safety_refusals`, `policy_layer` and
-  `safety_signal`. Such a check never concludes SECURE, PUBLIC or AUTHORIZED.
+  `transport_base`, `transport_guard`). Every report record decided on a
+  refused request carries `safety_refusals`, `policy_layer`, `safety_signal`
+  and, for the built-in detectors, `refused_observations`, and never
+  concludes SECURE, PUBLIC or AUTHORIZED. This holds for each record that
+  shares one batch of Owner, Visitor and Anonymous observations (BOLA,
+  BROKEN_AUTH, BFLA, BOPLA, BOPLA_EXPOSURE and the RBAC records), not only the
+  first; a record of that batch whose decision does not use the refused
+  observation keeps its verdict and is marked `shared_observation_refused`.
+  A 401 for an expired or rejected credential is a response, not a refusal,
+  and is not covered (see `docs/read-only-request-policy.md`, Known limits).
+- Known limits of the read-only policy are listed in
+  `docs/read-only-request-policy.md`: the GET and HEAD action vocabulary is
+  narrower than the POST one (a documented `GET /payments/{id}/refund` or
+  `GET /cache/purge` is sent), words run together in one case are not split,
+  and a GET or HEAD body passed to `HttpTransport` directly is not checked.
 - A read action no longer clears an operation whose name writes when the
   resource is missing. Compounds such as getOrCreateCart, findOrCreateUser,
   fetchOrGenerateKey, getOrInitializeSession, findOrInsertRow, getAndSet,
