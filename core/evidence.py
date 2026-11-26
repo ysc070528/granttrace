@@ -463,6 +463,9 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
         pending = bool(isinstance(source_evidence, dict) and source_evidence.get("property_privacy_pending"))
         identities = {"owner", "visitor", "visitor_cross", "visitor_self", "anonymous"}
         observations = identities | {"before", "after", "mutation", "rollback", "restored"}
+        # Names of the observations a record was decided on (core.results._batch_refusals): a closed set.
+        observation_names = identities | {"privileged_role", "role"}
+        observation_name_lists = {"refused_observations", "refused_shared_observations"}
         enums = {
             "check": {"BOLA", "BOPLA", "BFLA", "BROKEN_AUTH", "MASS_ASSIGNMENT", "ROLLBACK", "UNSUPPORTED",
                       "RBAC", "BOPLA_EXPOSURE"},
@@ -491,6 +494,7 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
             "decision_evidence", "metrics", "target_url", "visitor_self_url", "observation_group", "shared_observations",
             "reason_category", "property_privacy_pending", "leak_group", "duplicate_of", "rollback_verified",
             "recovery_sent", "safety_signal", "policy_layer", "readback_url", "request_content_type", "verification_scope",
+            "shared_observation_refused", *observation_name_lists,
             "snapshot_fields", "ignored_readback_paths", "configured_fields", "tested_fields", "verified_fields",
             "unverified_fields", "cases",
         }
@@ -580,6 +584,9 @@ def sanitize_property_record(record: dict[str, Any], secret_values: Iterable[str
                     cleaned = "Transport failed" if value else None
                 elif key in enums and isinstance(value, str) and value in enums[key]:
                     cleaned = value
+                elif (context == "evidence" and key in observation_name_lists and isinstance(value, list)
+                      and all(isinstance(name, str) and name in observation_names for name in value)):
+                    cleaned = list(value)
                 elif key in counts and type(value) is int and value >= 0:
                     cleaned = value
                 elif context in {"observation", "assessment"} and key in {"status", "status_code"} and type(value) is int:

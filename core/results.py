@@ -11,7 +11,7 @@ lists and the published secret set.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 from core.bopla import resource_scope, validate_bopla_policy
 from core.evidence import (
@@ -61,6 +61,53 @@ class ResultRecorderMixin:
                 values.append(str(value))
         return tuple(values)
 
+    def _start_refusal_batch(self) -> None:
+        """Start a new observation batch in this thread; earlier refusals stay with their records."""
+        self._request_accounting.refusals = None
+        self._request_accounting.batch_recorded = False
+
+    def _begin_check_accounting(self) -> None:
+        """A new check in this thread: no attempt or refusal of an earlier check is counted for it."""
+        self._request_accounting.attempts = None
+        self._start_refusal_batch()
+
+    def _observation_batch_boundary(self) -> None:
+        """A request, or a refusal, after a record of this batch starts the next observation batch."""
+        if getattr(self._request_accounting, "batch_recorded", False):
+            self._start_refusal_batch()
+
+    def _batch_refusals(
+        self, observations: Optional[Mapping[str, Optional[HTTPResult]]], depends_on: Optional[Iterable[str]],
+    ) -> Tuple[List[Tuple[Optional[str], Dict[str, str]]], List[str]]:
+        """The refusals a record depends on, and the refused observations of its batch it does not use.
+
+        A record that names its observations (``owner``, ``visitor_cross``, ``anonymous``...) is
+        decided on the refusals they carry (``HTTPResult.refusal``) for the names in
+        ``depends_on``, or for all of them when it is omitted. A refused observation of the batch
+        outside ``depends_on`` is reported but leaves the verdict alone: that decision rests only
+        on requests that were sent. A record that names no observations is decided on every
+        refusal noted in its batch, so a detector that does not say what it read stays
+        constrained (fail-closed).
+        """
+        if observations is None:
+            noted = getattr(self._request_accounting, "refusals", None) or ()
+            return [(None, dict(refusal)) for refusal in noted], []
+        wanted = set(observations) if depends_on is None else set(depends_on)
+        dependent: List[Tuple[Optional[str], Dict[str, str]]] = []
+        unrelated: List[str] = []
+        counted: Set[int] = set()  # one observation recorded under two names is one refusal
+        for uses in (True, False):
+            for name, observation in observations.items():
+                refusal = getattr(observation, "refusal", None)
+                if refusal is None or (name in wanted) is not uses or id(observation) in counted:
+                    continue
+                counted.add(id(observation))
+                if uses:
+                    dependent.append((name, dict(refusal)))
+                else:
+                    unrelated.append(name)
+        return dependent, unrelated
+
     def _record_result(
         self,
         ep: Dict[str, Any],
@@ -69,7 +116,17 @@ class ResultRecorderMixin:
         reason: str,
         evidence: Optional[Dict[str, Any]] = None,
         finding: Optional[Dict[str, Any]] = None,
+        *,
+        observations: Optional[Mapping[str, Optional[HTTPResult]]] = None,
+        depends_on: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
+        """Record one check result.
+
+        ``observations`` names the responses of the observation batch the record is decided on
+        and ``depends_on`` the names its decision consumes (all of them when omitted); see
+        ``_batch_refusals``. Several records may share one batch: each is decided on its own
+        dependencies. A primary record closes its batch for the requests that follow it.
+        """
         evidence = dict(evidence or {})
         # Count transport attempts, including failed connections, rather than
         # treating a local preflight conclusion as an executed check.
@@ -91,25 +148,35 @@ class ResultRecorderMixin:
         else:
             evidence.setdefault("requests_attempted", attempts)
         primary = check != "ROLLBACK"
-        refusals = list(getattr(self._request_accounting, "refusals", None) or ()) if primary else []
+        dependent, unrelated = self._batch_refusals(observations, depends_on) if primary else ([], [])
+        refusals = [refusal for _, refusal in dependent]
         if refusals:
-            # The read-only policy refused a request of this check while it ran
+            # The read-only policy refused a request this record depends on
             # (core.models.HTTPResult.refusal): the evidence is incomplete by design. The record
-            # says which layer refused what. Such a check never concludes that the target is not
-            # vulnerable: SECURE, PUBLIC or AUTHORIZED becomes ERROR, the verdict a refused
-            # observation already produces (the request was not made). Every other verdict is
-            # kept: ERROR and INCONCLUSIVE already say the check is incomplete, a CONFIRMED or
-            # SUSPICIOUS result rests on requests that were sent, and this record is primary
-            # (a ROLLBACK reports the recovery of a write and is never changed here).
+            # says which layer refused what, and which named observations were refused. Such a
+            # record never concludes that the target is not vulnerable: SECURE, PUBLIC or
+            # AUTHORIZED becomes ERROR, the verdict a refused observation already produces (the
+            # request was not made). Every other verdict is kept: ERROR and INCONCLUSIVE already
+            # say the check is incomplete, a CONFIRMED or SUSPICIOUS result rests on requests that
+            # were sent, and this record is primary (a ROLLBACK reports the recovery of a write
+            # and is never changed here). This holds for every record of a batch, not only the
+            # first one written after the refusal.
             first = refusals[0]
             evidence["safety_refusals"] = len(refusals)
             evidence["policy_layer"] = first["policy_layer"]
             evidence.setdefault("safety_signal", first["safety_signal"])
+            names = [name for name, _ in dependent if name is not None]
+            if names:
+                evidence["refused_observations"] = names
             if verdict in (Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED):
                 verdict = Verdict.ERROR
                 reason = "A request of this check was refused, so it cannot conclude: " + first["safety_reason"]
                 evidence["safety_signal"] = first["safety_signal"]
                 evidence["reason_category"] = "error"
+        if unrelated:
+            # Another observation of the shared batch was refused; this decision does not use it.
+            evidence["shared_observation_refused"] = True
+            evidence["refused_shared_observations"] = unrelated
         attempted = evidence["requests_attempted"] > 0
         conclusive = verdict in {Verdict.CONFIRMED, Verdict.SECURE, Verdict.PUBLIC, Verdict.AUTHORIZED}
         if "reason_category" not in evidence:
@@ -127,7 +194,9 @@ class ResultRecorderMixin:
             evidence["reason_category"] = category
         if primary:
             self._request_accounting.attempts = None
-            self._request_accounting.refusals = None
+            # The batch stays open for further records decided on the same observations; the
+            # next request, or a new check, starts the next batch (_observation_batch_boundary).
+            self._request_accounting.batch_recorded = True
         result = {
             "endpoint": self._operation_key(ep),
             "operation_id": ep.get("operation_id", ""),

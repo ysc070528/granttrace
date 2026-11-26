@@ -488,6 +488,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         this method's check still cannot send a request that policy refuses.
         """
         self._ensure_parser_auth()
+        self._observation_batch_boundary()
         if getattr(self._request_accounting, "attempts", None) is None:
             self._request_accounting.attempts = 0
         try:
@@ -520,11 +521,14 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         return HTTPResult(status=0, body="", error=refusal["safety_reason"], refusal=refusal)
 
     def _note_policy_refusal(self, refusal: Mapping[str, str]) -> None:
-        """Remember a read-only policy refusal for the check this thread is running.
+        """Remember a read-only policy refusal for the observation batch this thread is collecting.
 
-        ``_record_result`` reads it: a check with a refused request cannot
-        conclude that the target is not vulnerable (see ResultRecorderMixin).
+        ``_record_result`` reads it for every record of the batch that names no
+        observations: such a record cannot conclude that the target is not
+        vulnerable (see ResultRecorderMixin._batch_refusals). A record that names
+        its observations is decided on the ``HTTPResult.refusal`` they carry.
         """
+        self._observation_batch_boundary()
         refusals = getattr(self._request_accounting, "refusals", None)
         if refusals is None:
             refusals = self._request_accounting.refusals = []
@@ -616,6 +620,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
 
     def audit_endpoint_bola(self, ep: Dict[str, Any]) -> None:
         key = self._operation_key(ep)
+        self._start_refusal_batch()  # direct library calls too: no earlier check's refusal reaches these records
         if ep.get("unresolved_schema_error"):
             sanitized_err = sanitize_error_message(ep["unresolved_schema_error"])
             reason = f"Schema could not be resolved safely: {sanitized_err}; no request was sent"
@@ -664,6 +669,15 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 if (url, identity) not in observations:
                     self._read_observation("GET", url, identity, headers=observation_headers[identity])
             owner = observations[(url, "owner")]
+            visitor_self = observations.get((self_url, "visitor")) if self_url != url else None
+            # The shared batch, named as in the object check's evidence. Each property record is
+            # decided on the Owner observation, its subject's observation and, for the Visitor,
+            # the Visitor's own-resource baseline (core.bopla.BOPLAEvidence.evaluate).
+            batch = {"owner": owner, "visitor_cross": observations[(url, "visitor")],
+                     "anonymous": observations[(url, "anonymous")]}
+            if visitor_self is not None:
+                batch["visitor_self"] = visitor_self
+            depends = {"visitor": ("owner", "visitor_cross", "visitor_self"), "anonymous": ("owner", "anonymous")}
             # Every field rule compares the same observations; parse each once.
             assessments: Dict[int, Tuple[HTTPResult, Dict[str, Any]]] = {}
             for rule in policy["fields"]:
@@ -671,7 +685,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                     decision = BOPLAEvidence.evaluate(
                         owner, observations[(url, identity)], policy=policy,
                         field=rule, identity=identity,
-                        visitor_self=observations.get((self_url, "visitor")) if self_url != url else None,
+                        visitor_self=visitor_self,
                         assessments=assessments,
                     )
                     evidence = {"observation_group": key + ":read", "shared_observations": True,
@@ -682,7 +696,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                         finding = {"check": "BOPLA", "type": "BOPLA (Broken Object Property Level Authorization)",
                                    "cwe": "CWE-200", "severity": "High", "endpoint": key,
                                    "target_url": url, "details": decision["reason"], "evidence": evidence}
-                    self._record_result(ep, "BOPLA", decision["verdict"], decision["reason"], evidence, finding)
+                    self._record_result(ep, "BOPLA", decision["verdict"], decision["reason"], evidence, finding,
+                                        observations=batch, depends_on=depends[identity])
         finally:
             self._bopla_local.policy = None
             self._bopla_local.observations = None
@@ -768,6 +783,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     def _detect_sensitive_property_exposure(
         self, ep: Dict[str, Any], policy: Dict[str, Any], owner: HTTPResult, visitor: HTTPResult,
         visitor_self: Optional[HTTPResult], object_verdict: Optional[Verdict], evidence: Dict[str, Any],
+        *, observations: Optional[Mapping[str, Optional[HTTPResult]]] = None,
     ) -> None:
         """Report unmasked sensitive-named Owner values returned to the Visitor (OWASP API3).
 
@@ -776,7 +792,12 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         decision on the same observations, and a value that differs from the
         Visitor's own record at that path. Every other match is a SUSPICIOUS
         lead; values shared with the Visitor's own record are not reported.
+        ``observations`` is the shared batch the responses come from; the record
+        is decided on the Owner, Visitor and Visitor own-resource observations.
         """
+        batch = dict(observations) if observations is not None else {
+            "owner": owner, "visitor_cross": visitor, "visitor_self": visitor_self}
+        uses = ("owner", "visitor_cross", "visitor_self")
         if policy.get("expected_visitor_access") == "allow" or policy.get("expected_public") is True:
             return
         security = ep.get("security", [])
@@ -805,7 +826,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             self._record_result(
                 ep, "BOPLA_EXPOSURE", Verdict.INCONCLUSIVE,
                 "A response exceeds the sensitive-property heuristic's depth or size bound; it was not fully analysed",
-                record_evidence)
+                record_evidence, observations=batch, depends_on=uses)
             return
         self_values: Dict[Tuple[Any, ...], Tuple[str, Any]] = {}
         self_baseline = False
@@ -859,7 +880,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             verdict = Verdict.SUSPICIOUS
             reason = (f"Heuristic lead: unmasked sensitive-named Owner fields were returned to the Visitor ({listed}); "
                       "not confirmed without " + ", ".join(missing))
-        self._record_result(ep, "BOPLA_EXPOSURE", verdict, reason, record_evidence, finding)
+        self._record_result(ep, "BOPLA_EXPOSURE", verdict, reason, record_evidence, finding,
+                            observations=batch, depends_on=uses)
 
     def _is_read_only_post(self, ep: Dict[str, Any]) -> bool:
         policy = self.bola_config.get(self._operation_key(ep), {})
@@ -919,6 +941,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
 
     def _execute_rbac_matrix_checks(
         self, ep: Dict[str, Any], policy: Dict[str, Any], url: str, body: Any, anonymous: HTTPResult,
+        *, shared: Optional[Mapping[str, Optional[HTTPResult]]] = None,
     ) -> None:
         """Probe ``identities.roles`` against the same request and decide each role like BFLA.
 
@@ -927,7 +950,10 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         from that baseline in the role's valid response all agree. A 200 with
         data but no such evidence is UNPROVEN in the matrix and INCONCLUSIVE
         as a result. Nothing is sent without an explicit ``required_role``.
+        Each record is decided on its own role probes and the Anonymous
+        observation of the shared batch (``shared``), never on another role's.
         """
+        batch: Dict[str, Optional[HTTPResult]] = dict(shared) if shared is not None else {"anonymous": anonymous}
         roles = self.identities.get("roles")
         required_role = policy.get("required_role")
         if not isinstance(roles, dict) or not roles or not isinstance(required_role, str) or not required_role.strip():
@@ -942,7 +968,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 "identities.roles contains a role named like a built-in identity; run offline configuration "
                 "validation; no RBAC probe was sent",
                 {"requests_attempted": 0, "requests_sent": 0, "reason_category": "invalid_input",
-                 "required_role": required_role})
+                 "required_role": required_role}, observations=batch, depends_on=())
             return
         entry: Dict[str, Any] = {"endpoint": key, "method": method, "required_role": required_role, "roles": {}}
 
@@ -961,7 +987,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 ep, "RBAC", Verdict.INCONCLUSIVE,
                 f"No configured role in identities.roles has required_role '{required_role}'; no RBAC probe was sent",
                 {"requests_attempted": 0, "requests_sent": 0, "reason_category": "missing_baseline",
-                 "required_role": required_role})
+                 "required_role": required_role}, observations=batch, depends_on=())
             return
 
         def probe(name: str, data: Dict[str, Any]) -> Tuple[Optional[HTTPResult], Optional[str]]:
@@ -990,7 +1016,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             self._record_result(ep, "RBAC", Verdict.INCONCLUSIVE, reason, {
                 "target_url": url, "rbac_role": privileged_name, "role": required_role,
                 "required_role": required_role, "reason_category": "missing_baseline",
-            })
+            }, observations={**batch, "privileged_role": baseline}, depends_on=("privileged_role",))
             return
         entry["roles"][privileged_name] = dict(
             self._rbac_cell(baseline, baseline_assessment, has_role=True, verdict=Verdict.AUTHORIZED),
@@ -1005,6 +1031,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 "target_url": url, "rbac_role": role_name, "role": role, "required_role": required_role,
                 "privileged_role": privileged_name,
             }
+            probes = {**batch, "privileged_role": baseline, "role": result}
             if result is None or result.error:
                 entry["roles"][role_name] = {"status": None if result is None else result.status, "role": role,
                                              "response": "ERROR", "access": "ERROR",
@@ -1012,7 +1039,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 failure = error or sanitize_error_message(result.error if result is not None and result.error else "") \
                     or "transport error"
                 self._record_result(ep, "RBAC", Verdict.ERROR,
-                                    f"RBAC probe for role '{role_name}' failed: {failure}", record)
+                                    f"RBAC probe for role '{role_name}' failed: {failure}", record,
+                                    observations=probes, depends_on=("privileged_role", "role"))
                 continue
             decision = AuthorizationEvidence.evaluate_bfla(
                 baseline, result, anonymous,
@@ -1041,7 +1069,9 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                     "details": reason,
                     "evidence": dict(record),
                 }
-            self._record_result(ep, "RBAC", verdict, reason, record, finding)
+            # evaluate_bfla compares this role with the baseline and the shared Anonymous observation.
+            self._record_result(ep, "RBAC", verdict, reason, record, finding,
+                                observations=probes, depends_on=("privileged_role", "role", "anonymous"))
         store()
 
     def rbac_matrix_record(self) -> Dict[str, Any]:
@@ -1147,11 +1177,12 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             evidence["request_body"] = "configured; values omitted"
         if any(item.truncated for item in request_results.values()):
             self._record_result(ep, "BOLA", Verdict.INCONCLUSIVE,
-                                "A response was truncated; authorization comparison is incomplete", evidence=evidence)
+                                "A response was truncated; authorization comparison is incomplete", evidence=evidence,
+                                observations=request_results)
             return
         if transport_errors:
             reason = "A property observation failed transport" if self.bopla_config else "; ".join(transport_errors)
-            self._record_result(ep, "BOLA", Verdict.ERROR, reason, evidence=evidence)
+            self._record_result(ep, "BOLA", Verdict.ERROR, reason, evidence=evidence, observations=request_results)
             return
 
         security = ep.get("security", [])
@@ -1204,6 +1235,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             }
             with self._result_lock:
                 self.stats["bola_confirmed"] += 1
+        # One batch of observations, several records: each record names the batch and is decided on
+        # the observations its own decision uses (ResultRecorderMixin._batch_refusals).
         self._record_result(
             ep,
             "BOLA",
@@ -1211,16 +1244,19 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             reason,
             evidence=evidence,
             finding=finding,
+            observations=request_results,
         )
         # Legacy object checks retain their evidence model and result count.
         # Extra detection items are selected by explicit new policy; incidental
         # anonymous access and admin words remain leads in the existing evidence.
         if policy.get("private_data_paths") or policy.get("required_role"):
-            self._record_expanded_read_checks(ep, policy, owner, visitor_cross, anonymous, evidence)
+            self._record_expanded_read_checks(ep, policy, owner, visitor_cross, anonymous, evidence,
+                                              visitor_self=visitor_self)
         if policy.get("detect_sensitive_exposure") is True:
-            self._detect_sensitive_property_exposure(ep, policy, owner, visitor_cross, visitor_self, verdict, evidence)
+            self._detect_sensitive_property_exposure(ep, policy, owner, visitor_cross, visitor_self, verdict, evidence,
+                                                     observations=request_results)
         # Role probes run last so their requests are counted in their own results.
-        self._execute_rbac_matrix_checks(ep, policy, owner_url, owner_body, anonymous)
+        self._execute_rbac_matrix_checks(ep, policy, owner_url, owner_body, anonymous, shared=request_results)
 
     @staticmethod
     def _is_admin_endpoint(ep: Dict[str, Any]) -> bool:
@@ -1232,7 +1268,19 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     def _record_expanded_read_checks(
         self, ep: Dict[str, Any], policy: Dict[str, Any], owner: HTTPResult,
         visitor: HTTPResult, anonymous: HTTPResult, evidence: Dict[str, Any], *, collection: bool = False,
+        visitor_self: Optional[HTTPResult] = None,
     ) -> None:
+        """Record BOLA (collection), BROKEN_AUTH and BFLA from one batch of observations.
+
+        Each record is decided on the observations its evaluator reads, so a
+        policy refusal of one identity's request stays with every record that
+        depends on it, and only with those (ResultRecorderMixin._batch_refusals).
+        """
+        batch: Dict[str, Optional[HTTPResult]] = {"owner": owner, "visitor_cross": visitor, "anonymous": anonymous}
+        if visitor_self is not None:
+            batch["visitor_self"] = visitor_self
+        uses = {"BOLA": ("owner", "visitor_cross", "anonymous"), "BROKEN_AUTH": ("owner", "anonymous"),
+                "BFLA": ("owner", "visitor_cross", "anonymous")}
         security = ep.get("security", [])
         requires_auth = bool(security) and {} not in security
         expected_public = policy.get("expected_public") is True or (
@@ -1270,7 +1318,8 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
                 if check == "BOLA":
                     with self._result_lock:
                         self.stats["bola_confirmed"] += 1
-            self._record_result(ep, check, verdict, decision["reason"], decision_evidence, finding)
+            self._record_result(ep, check, verdict, decision["reason"], decision_evidence, finding,
+                                observations=batch, depends_on=uses[check])
 
     def _audit_collection(self, ep: Dict[str, Any], policy: Dict[str, Any], body: Any = None) -> None:
         security = ep.get("security", [])
@@ -1320,11 +1369,13 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
             evidence["request_method"] = "POST"
             evidence["request_body"] = "configured; values omitted"
         self._record_expanded_read_checks(ep, policy, owner, visitor, anonymous, evidence, collection=collection_selected)
+        batch = {"owner": owner, "visitor_cross": visitor, "anonymous": anonymous}
         if policy.get("detect_sensitive_exposure") is True:
             # A collection has no Visitor own-resource baseline or object-level
             # decision, so any sensitive-field match here remains a lead.
-            self._detect_sensitive_property_exposure(ep, policy, owner, visitor, None, None, evidence)
-        self._execute_rbac_matrix_checks(ep, policy, url, data, anonymous)
+            self._detect_sensitive_property_exposure(ep, policy, owner, visitor, None, None, evidence,
+                                                     observations=batch)
+        self._execute_rbac_matrix_checks(ep, policy, url, data, anonymous, shared=batch)
 
     @staticmethod
     def _has_object_selector(ep: Dict[str, Any]) -> bool:
@@ -1612,6 +1663,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         # Keep the halt check and entire transaction under one gate, including
         # direct library calls. A waiting caller must observe an earlier failure.
         with self._write_lock:
+            self._start_refusal_batch()  # no refusal of an earlier check reaches this one
             self._audit_endpoint_mass_assignment(ep, all_endpoints)
 
     def _audit_endpoint_mass_assignment(
@@ -1928,8 +1980,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
     def _audit_bola_task(self, ep: Dict[str, Any]) -> None:
         # A worker must report its own error while transport accounting is still
         # available in that thread. Reused workers start with a fresh check.
-        self._request_accounting.attempts = None
-        self._request_accounting.refusals = None
+        self._begin_check_accounting()
         with self._tracking_generated_values(ep):
             try:
                 self.audit_endpoint_bola(ep)
@@ -2063,6 +2114,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         # State-changing checks are deliberately serial to prevent readback
         # attribution races between endpoints that share a resource.
         for ep in endpoints:
+            self._start_refusal_batch()  # each endpoint's records start without earlier refusals
             try:
                 if ep["method"] in self.WRITE_METHODS:
                     with self._tracking_generated_values(ep):
