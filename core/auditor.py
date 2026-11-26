@@ -1663,12 +1663,14 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         # Keep the halt check and entire transaction under one gate, including
         # direct library calls. A waiting caller must observe an earlier failure.
         with self._write_lock:
-            self._start_refusal_batch()  # no refusal of an earlier check reaches this one
             self._audit_endpoint_mass_assignment(ep, all_endpoints)
 
     def _audit_endpoint_mass_assignment(
         self, ep: Dict[str, Any], all_endpoints: List[Dict[str, Any]]
     ) -> None:
+        # Runs under the write lock. No refusal of an earlier check reaches these records. The
+        # public entry point above stays byte-identical: scripts/verify_pr43_integration.py pins it.
+        self._start_refusal_batch()
         plan = self._mass_assignment_preflight(ep, all_endpoints)
         if plan is None:
             return
