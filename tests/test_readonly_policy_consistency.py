@@ -579,7 +579,13 @@ class StructuredRefusalTests(_LoopbackCase):
                 if verdict != Verdict(expected):
                     self.assertIn("refused", recorded["reason"])
                     self.assertEqual(recorded["evidence"]["reason_category"], "error")
+        # IND-01: with no new request and no new check, a further record belongs to the same
+        # observation batch, so it keeps the refusal and cannot conclude either.
+        auditor._record_result(endpoint, "BROKEN_AUTH", Verdict.SECURE, "same batch, another record", evidence={})
+        self.assertEqual(auditor.results[-1]["verdict"], "ERROR")
+        self.assertEqual(auditor.results[-1]["evidence"]["safety_refusals"], 1)
         # The next check starts without the earlier refusal.
+        auditor._begin_check_accounting()  # what every check task does before it starts
         auditor._record_result(endpoint, "BOLA", Verdict.SECURE, "a later, independent check", evidence={})
         self.assertEqual(auditor.results[-1]["verdict"], "SECURE")
         self.assertEqual(self.server.snapshot(), [])
