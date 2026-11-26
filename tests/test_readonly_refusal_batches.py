@@ -345,6 +345,34 @@ class RecordLayerBatchTests(_BatchCase):
         for record in records.values():
             self.assertEqual(record["verdict"], "ERROR")
 
+    def test_one_response_named_twice_is_one_refusal(self) -> None:
+        # One refused response recorded under two names (as when a detector reuses its cross-resource
+        # observation as the own-resource baseline) counts once, under the name the record depends on.
+        auditor = self.auditor(self.PATHS)
+        endpoint = self.endpoint(auditor)
+        auditor._request_accounting.attempts = 0
+        auditor._note_policy_refusal(REFUSAL)
+        shared = _refused()
+        batch = {"owner": _response(200, OWNER_DOCUMENT), "visitor_cross": shared, "visitor_self": shared,
+                 "anonymous": _response(401, {"error": "no"})}
+        every = auditor._record_result(endpoint, "BOLA", Verdict.SECURE, "decision", {}, observations=batch)
+        self.assertEqual(every["verdict"], "ERROR")
+        self.assertEqual(every["evidence"]["safety_refusals"], 1)
+        self.assertEqual(every["evidence"]["refused_observations"], ["visitor_cross"])
+        self.assertNotIn("refused_shared_observations", every["evidence"])
+        own = auditor._record_result(endpoint, "BOPLA", Verdict.SECURE, "decision", {}, observations=batch,
+                                     depends_on=("owner", "visitor_self"))
+        self.assertEqual(own["verdict"], "ERROR")
+        self.assertEqual(own["evidence"]["safety_refusals"], 1)
+        self.assertEqual(own["evidence"]["refused_observations"], ["visitor_self"])
+        self.assertNotIn("refused_shared_observations", own["evidence"])
+        unused = auditor._record_result(endpoint, "BROKEN_AUTH", Verdict.SECURE, "decision", {}, observations=batch,
+                                        depends_on=("owner", "anonymous"))
+        self.assertEqual(unused["verdict"], "SECURE")
+        self.assertNotIn("safety_refusals", unused["evidence"])
+        self.assertEqual(unused["evidence"]["refused_shared_observations"], ["visitor_cross"])
+        self.assertEqual(self.server.snapshot(), [])
+
     def test_a_batch_without_a_refusal_keeps_every_verdict(self) -> None:
         for collection in (True, False):
             with self.subTest(collection=collection):
