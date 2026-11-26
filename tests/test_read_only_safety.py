@@ -173,11 +173,24 @@ class ReadOnlyExecutionTests(unittest.TestCase):
                 self.assertIn("safety policy", result.error)
         self.assertEqual(self.requests, [])
 
-    def test_action_like_resource_id_is_not_an_endpoint_action(self):
+    def test_action_like_value_in_a_safe_template_is_refused_like_the_literal_path(self):
+        # P0-01: until v2.7.1 this asserted that /records/create_report, matched
+        # by the safe template /records/{user_id}, was sent (HTTP 200). A safe
+        # template no longer certifies the value filled into it: the concrete
+        # path gets the decision of the literal path, and nothing is sent.
         auditor = self.auditor()
-        result = auditor._http_request("GET", self.target + "/records/create_report", identity_name="owner")
-        self.assertEqual(result.status, 200)
-        self.assertEqual(self.requests, [("GET", "/records/create_report")])
+        for path in ("/records/create_report", "/undocumented/create_report"):
+            with self.subTest(path=path):
+                result = auditor._http_request("GET", self.target + path, identity_name="owner")
+                self.assertEqual(result.status, 0)
+                self.assertIn("safety policy", result.error)
+        self.assertEqual(self.requests, [])
+        # Ordinary identifiers in the same template are still read.
+        for path in ("/records/1001", "/records/report_created", "/records/created"):
+            with self.subTest(path=path):
+                self.assertEqual(auditor._http_request("GET", self.target + path, identity_name="owner").status, 200)
+        self.assertEqual(self.requests, [("GET", "/records/1001"), ("GET", "/records/report_created"),
+                                         ("GET", "/records/created")])
 
     def test_encoded_unsafe_static_route_is_not_hidden_by_a_neutral_template(self):
         self.spec["paths"].update({

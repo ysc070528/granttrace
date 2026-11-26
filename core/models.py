@@ -46,11 +46,22 @@ class Verdict(str, Enum):
 
 @dataclass(frozen=True)
 class HTTPResult:
+    """One request outcome.
+
+    ``refusal`` is set when the read-only safety policy refused the request
+    before it was sent: ``safety_reason`` (equal to ``error``),
+    ``safety_signal`` (what the policy recognised) and ``policy_layer`` (which
+    layer decided: ``auditor``, ``transport_request``, ``transport_base`` or
+    ``transport_guard``). A result with an ``error`` and no ``refusal`` is a
+    transport failure. Neither is ever evidence about the target.
+    """
+
     status: int
     body: str
     error: Optional[str] = None
     truncated: bool = False
     headers: Dict[str, str] = field(default_factory=dict)
+    refusal: Optional[Dict[str, str]] = None
 
     def as_tuple(self) -> Tuple[int, str]:
         return self.status, self.body
