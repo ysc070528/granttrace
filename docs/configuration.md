@@ -230,7 +230,7 @@ PUT 的配置能解析不表示可执行。普通外部 PUT 始终受权威状�
 - `security` 不逐个操作检查：身份可以用规范未描述的凭据认证（`auth_header_names`、`parameter_values` 中按操作配置的认证 Cookie），只有每个安全要求都包含的凭据才按必需凭据检查。规范提供备选项时，身份只带其他凭据（两个备选项都不满足）也不会被拒绝。
 - 未定义的方案名、查询参数中的 API Key 和 mutual TLS 不参与判断。
 - 两份不同的凭据可能属于同一账户。对已正确授权的 API，Visitor 自有资源基线会失败，BOLA 记为 `INCONCLUSIVE`；角色探测没有这种基线，低权限角色若实际是特权账户，会被确认为 RBAC 违规。
-- 会话失效、被撤销或被服务端拒绝时，角色探测返回的 401 仍会被当作拒绝（可能是虚假的 `SECURE`）；Visitor 的自有资源基线会让 BOLA 记为 `INCONCLUSIVE`。
+- 会话失效、被撤销或被服务端拒绝时，Visitor 与角色探测返回的 401 仍会被当作拒绝（可能是虚假的 `SECURE`）：对象级 BOLA 有 Visitor 自有资源基线时记为 `INCONCLUSIVE`；集合 BOLA 与角色探测没有这种基线，可能得出虚假的 `SECURE`。
 
 ## 配置语义校验与 IDE Schema 支持
 
