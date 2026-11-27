@@ -1,0 +1,29 @@
+{
+  "$schema": "../../config.schema.json",
+  "description": "Owner and Visitor share the gateway subscription key and authenticate with their own Bearer tokens. Replace the placeholders; never commit real credentials.",
+  "identity_isolation": {
+    "shared_gateway_headers": ["X-API-Key"]
+  },
+  "identities": {
+    "owner": {
+      "id": "1001",
+      "token": "Bearer REPLACE_WITH_OWNER_TOKEN",
+      "headers": {"X-API-Key": "REPLACE_WITH_GATEWAY_KEY"}
+    },
+    "visitor": {
+      "id": "1002",
+      "token": "Bearer REPLACE_WITH_VISITOR_TOKEN",
+      "headers": {"X-API-Key": "REPLACE_WITH_GATEWAY_KEY"}
+    },
+    "anonymous": {"id": null, "token": null, "headers": {}, "parameters": {}}
+  },
+  "parameter_values": {
+    "GET /api/orders/{order_id}": {
+      "owner": {"order_id": "ord-1001"},
+      "visitor": {"order_id": "ord-1002"}
+    }
+  },
+  "bola": {
+    "GET /api/orders/{order_id}": {"resource_id_paths": ["id"]}
+  }
+}

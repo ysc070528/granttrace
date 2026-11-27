@@ -36,6 +36,7 @@ from core.evidence import (
 )
 from core.transactions import PatchSnapshot, ensure_reversible_merge_patch, get_path, prepare_patch
 from core.generator import SmartDataGenerator
+from core.identity_auth import identity_isolation_settings
 from core.models import HTTPResult, Verdict, json_values_equal, parse_operation_key, strict_json_loads
 from core.parser import OpenAPIParser
 from core.remote_refs import RemoteRefConfig, RemoteRefError, sanitize_error_message
@@ -91,6 +92,7 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         bopla_config: Optional[Dict[str, Any]] = None,
         remote_ref_config: Optional[RemoteRefConfig] = None,
         offline: bool = False,
+        identity_isolation: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._validate_target(target_base_url, allow_http)
         self.remote_ref_config = remote_ref_config
@@ -153,6 +155,12 @@ class APISentinelAuditor(RequestBuilderMixin, ResultRecorderMixin):
         self._resource_locks: Dict[str, threading.Lock] = {}
         self._resource_locks_guard = threading.Lock()
 
+        # Headers the operator authorizes two identities to share (identity_isolation.shared_gateway_headers).
+        # A malformed setting authorizes nothing and stops construction, as configuration validation does.
+        shared_headers, isolation_issues = identity_isolation_settings(identity_isolation)
+        if isolation_issues:
+            raise ValueError("; ".join(f"{path}: {message}" for path, message in isolation_issues))
+        self._shared_gateway_headers = shared_headers
         self.identities = identities_config or {
             "owner": {
                 "id": "1001",

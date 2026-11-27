@@ -75,6 +75,7 @@ class ValidatorBase:
         "readbacks",
         "bola",
         "bopla",
+        "identity_isolation",
     }
 
     KNOWN_IDENTITY_KEYS = {

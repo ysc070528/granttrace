@@ -224,8 +224,13 @@ class SpecChecks(ValidatorBase):
     @classmethod
     def _extract_spec_auth(
         cls, raw_spec: Optional[Dict[str, Any]], *, spec_path: Optional[str] = None, remote_ref_config: Optional[RemoteRefConfig] = None, offline: bool = True,
+        resolve_operations: bool = False,
     ) -> SpecAuth:
-        """The credentials the specification's security schemes declare (core.identity_auth)."""
+        """The credentials the specification's security schemes declare (core.identity_auth).
+
+        With resolve_operations (a shared header is authorized), also each resolved operation's
+        requirement, which the shared-header rule checks.
+        """
         if not isinstance(raw_spec, dict) and spec_path is None:
             return SpecAuth()
         try:
@@ -236,6 +241,7 @@ class SpecChecks(ValidatorBase):
                     offline=offline,
                 )
                 schemes = parser.get_security_schemes()
+                operations = cls._resolved_operations(parser) if resolve_operations else None
             else:
                 # A mapping supplies no origin for external files. Internal refs
                 # can still be resolved without guessing a local base directory.
@@ -248,8 +254,20 @@ class SpecChecks(ValidatorBase):
                         offline=offline,
                     )
                     schemes = parser.get_security_schemes()
+                    operations = cls._resolved_operations(parser) if resolve_operations else None
         except RemoteRefOfflineBlockedError:
             raise
         except (OSError, TypeError, ValueError, RuntimeError):
             raise ValueError("Security schemes could not be resolved safely from the selected specification") from None
-        return SpecAuth.from_spec(schemes, parser.raw_spec)
+        return SpecAuth.from_spec(schemes, parser.raw_spec, operations)
+
+    @staticmethod
+    def _resolved_operations(parser: OpenAPIParser) -> Optional[List[Dict[str, Any]]]:
+        """The operations the scanner resolves (path-item references included), as the auditor reads them.
+
+        None when they cannot be resolved: no shared header can then be authorized (fail closed).
+        """
+        try:
+            return parser.get_endpoints()
+        except Exception:  # noqa: BLE001 - any failure leaves the shared-header rule fail-closed
+            return None

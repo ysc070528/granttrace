@@ -142,6 +142,38 @@
   identity changed after construction sends nothing (`INCONCLUSIVE` or
   `ERROR`, "no request was sent"). Messages name identities, headers and
   cookies, never values.
+- Two identities may no longer share the value of any header that can identify
+  the caller: Authorization, a declared `apiKey` header, an `auth_header_names`
+  header, or a header named like a key, token, secret, session, sid, user,
+  credential or signature (`X-API-Key`, `X-Gateway-Token`,
+  `Ocp-Apim-Subscription-Key`, `X-SessionKey`, `X-User-Id`), nor a
+  session-like cookie (`JSESSIONID`, `PHPSESSID`), also when the specification
+  declares other cookies. Previously a shared `X-API-Key` behind different
+  Bearer tokens passed validation, and a server that identifies callers by the
+  key treated the visitor as the owner.
+- An application-level gateway header that every test account really shares
+  can be authorized explicitly in `identity_isolation.shared_gateway_headers`.
+  It is accepted only where the specification, resolved operation by
+  operation as the scanner resolves it (path-item `$ref` included), requires a
+  per-identity credential next to it wherever it applies; an operation where
+  shared credentials alone authenticate (`[{ApiKeyAuth: []}]`, also
+  `[{ApiKeyAuth: []}, {}]`), a scheme GrantTrace cannot send in the same
+  alternative, or any security declaration or operation that does not
+  resolve refuses it. Authorization, Cookie and session-like headers can never
+  be listed. The specification proves only what it declares, so the console,
+  the JSON report, the dry-run plan and the HTML report mark such a scan with
+  `"backend_identity_binding": "unverified"` under `identity_isolation`.
+
+### Upgrade notes
+
+- A configuration whose identities send the same value in a header that can
+  identify the caller now fails validation and construction (exit code 2,
+  nothing sent). Give each identity its own value, or, for a genuine
+  application-level gateway key, declare it in the specification together
+  with a per-identity credential on every operation and list it in
+  `identity_isolation.shared_gateway_headers`. Do not drop the header from
+  the visitor instead: a request the gateway rejects for a missing key can read
+  as an authorization denial.
 
 ### Fixed
 

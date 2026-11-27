@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from core.config_validator import ConfigValidator
 from core.evidence import (
@@ -29,6 +29,8 @@ from core.generator import SmartDataGenerator
 from core.identity_auth import (
     IdentityAuthError,
     SpecAuth,
+    authorized_shared_headers,
+    identity_isolation_record,
     isolation_problems,
     merge_session_cookies,
     parse_cookie_header,
@@ -88,6 +90,47 @@ class RequestBuilderMixin:
         spec = SpecAuth.from_spec(self.parser.get_security_schemes(), self.parser.raw_spec)
         self._spec_auth_cache = (self.parser, spec)
         return spec
+
+    def _isolation_spec_auth(self) -> SpecAuth:
+        """The SpecAuth the identity rules use: with each operation's requirement when a header is authorized.
+
+        Operation requirements are needed only to check a header listed in
+        identity_isolation.shared_gateway_headers. They come from the operations the scanner itself
+        resolves and sends (OpenAPIParser.get_endpoints, path-item references included), computed once
+        per parser. When they cannot be resolved, SpecAuth records none and no shared header can be
+        authorized (fail closed). Without an authorized header nothing is shared, so the specification
+        is not normalized a second time.
+        """
+        if not self._shared_gateway_header_names():
+            return self._spec_auth()
+        cached = getattr(self, "_isolation_spec_auth_cache", None)
+        if cached is not None and cached[0] is self.parser:
+            return cached[1]
+        try:
+            operations: Optional[List[Dict[str, Any]]] = self.parser.get_endpoints()
+        except Exception:  # noqa: BLE001 - any failure leaves the shared-header rule fail-closed
+            operations = None
+        spec = SpecAuth.from_spec(self.parser.get_security_schemes(), self.parser.raw_spec, operations)
+        self._isolation_spec_auth_cache = (self.parser, spec)
+        return spec
+
+    def _shared_gateway_header_names(self) -> FrozenSet[str]:
+        """Headers the operator authorized for sharing (identity_isolation.shared_gateway_headers)."""
+        return getattr(self, "_shared_gateway_headers", frozenset())
+
+    def identity_isolation_record(self) -> Optional[Dict[str, Any]]:
+        """The report entry for authorized shared headers (backend binding unverified), or None."""
+        authorized = self._shared_gateway_header_names()
+        if not authorized:
+            return None
+        spec = self._isolation_spec_auth()
+        custom = self._custom_auth_header_names()
+
+        def is_auth_header(name: str) -> bool:
+            return ConfigValidator.is_auth_header(name, custom_auth_names=custom, spec_auth_names=spec.header_names)
+
+        in_scan = authorized_shared_headers(self.identities, spec, is_auth_header, custom, authorized)
+        return identity_isolation_record(authorized, in_scan)
 
     def _spec_auth_header_names(self) -> Set[str]:
         return {
@@ -156,13 +199,14 @@ class RequestBuilderMixin:
 
     def _identity_isolation_problems(self) -> List[Any]:
         """The configuration validation rules for identity credentials (core.identity_auth)."""
-        spec = self._spec_auth()
+        spec = self._isolation_spec_auth()
         custom = self._custom_auth_header_names()
 
         def is_auth_header(name: str) -> bool:
             return ConfigValidator.is_auth_header(name, custom_auth_names=custom, spec_auth_names=spec.header_names)
 
-        return isolation_problems(self.identities, spec, is_auth_header, custom)
+        return isolation_problems(self.identities, spec, is_auth_header, custom,
+                                  self._shared_gateway_header_names())
 
     def _validate_read_only_identity_material(self) -> None:
         """Apply the read-only rules of configuration validation to identities given in Python.
