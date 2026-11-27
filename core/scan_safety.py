@@ -71,6 +71,39 @@ _PATH_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\\]")
 _BAD_PATH_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 _PATH_ESCAPE = re.compile(r"%[0-9a-fA-F]{2}")
 _ENCODED_SLASH_EDGE = re.compile(r"(?:^|/)%2f|%2f(?:/|$)", re.IGNORECASE)
+_INVALID_METHOD_REASON = ("Read-only safety policy blocked a request whose HTTP method is not a single valid "
+                          "method token; no request was sent")
+# RFC 9110 section 5.6.2: method = token; tchar is ASCII only.
+_METHOD_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+READ_METHODS = frozenset({"GET", "HEAD"})
+# GET and HEAD, plus POST, which the auditor sends only to operator-declared read-only operations.
+CHECKED_METHODS = READ_METHODS | {"POST"}
+
+
+class InvalidHttpMethod(ValueError):
+    """An HTTP method that is not exactly one RFC 9110 method token."""
+
+
+def canonical_http_method(method: Any) -> str:
+    """Return the one spelling of ``method`` that is both checked and sent.
+
+    The method must be a ``str`` that is exactly one RFC 9110 token: no
+    surrounding or interior whitespace, control, separator or non-ASCII
+    character. Its upper-case form is canonical; the safety checks decide on
+    it and the transport sends it, so the server receives the method that was
+    checked. Anything else raises InvalidHttpMethod: "GET " is not GET, it is
+    a spelling that a server splitting the request line on whitespace would
+    route as GET while a check comparing names would not. Callers refuse the
+    request instead of guessing.
+    """
+    if not isinstance(method, str) or not _METHOD_TOKEN.fullmatch(method):
+        raise InvalidHttpMethod("HTTP method must be a single RFC 9110 method token")
+    return method.upper()
+
+
+def invalid_method_risk() -> Dict[str, str]:
+    """The refusal for a request whose method is not a single valid method token."""
+    return {"safety_reason": _INVALID_METHOD_REASON, "safety_signal": "method"}
 
 
 def read_path_risk(url: str) -> Optional[Dict[str, str]]:
@@ -177,6 +210,10 @@ _PROSE_EXCLUDED_VERBS = frozenset({"new", "make", "mark", "touch", "pop", "bump"
 # own action: "returns the cart, or creates one if none exists".
 _PROSE_OBJECTS = ("a", "an", "the", "it", "one", "them", "new", "this", "that", "these", "those",
                   "if", "when", "unless", "whenever")
+# English determiners and object pronouns (a closed word class): after an adverb-led verb they
+# mark a clause with its own object, "Permanently deletes the job", not a noun phrase.
+_CLAUSE_DETERMINERS = ("a", "an", "the", "this", "that", "these", "those", "all", "any", "each", "every",
+                       "some", "both", "its", "their", "your", "our", "his", "her", "my", "it", "them", "one")
 
 
 def _word_forms(verbs: tuple[str, ...]) -> set[str]:
@@ -255,11 +292,18 @@ class _ActionPatterns:
             + r"\s+" + _alternation(set(_PROSE_OBJECTS)),
             re.IGNORECASE,
         )
-        self.description = re.compile(
-            r"^(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
-            r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
-            r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
-            r"|(?:will|may|can)\s+)?" + word,
+        subject = (r"(?:(?:this|the)\s+(?:(?:" + methods + r")\s+)?"
+                   r"(?:endpoint|operation|request|api|method|" + methods + r")\s+"
+                   r"(?:(?:is\s+(?:used|designed|intended)\s+to|will|may|can|also|is)\s+)?"
+                   r"|(?:will|may|can)\s+)?")
+        self.description = re.compile(r"^" + subject + word, re.IGNORECASE)
+        # "Permanently deletes the job", "This endpoint asynchronously triggers a
+        # rebuild": one or two -ly adverbs before the operation's own verb, which
+        # then takes an object of its own (a determiner or pronoun). Without that
+        # object the words are usually a noun phrase: "Weekly updates for the team",
+        # "Daily transfers summary". A grammatical frame, not more vocabulary.
+        self.adverbial = re.compile(
+            r"^" + subject + r"(?:[a-z]+ly\s+){1,2}" + word + r"\s+" + _alternation(set(_CLAUSE_DETERMINERS)),
             re.IGNORECASE,
         )
         self.informational = re.compile(
@@ -330,7 +374,7 @@ def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns, post: 
     path = re.sub(r"\{[^}]*\}", "", path)
     segments = [_words(part) for part in path.split("/")]
     if any(patterns.leading.search(words) or (post and _POST_IDENTIFIER_LEADING.search(words))
-           for words in segments):
+           for words in segments) or any(patterns.leading.search(_routed_words(part)) for part in path.split("/")):
         return "path", "action"
     if any(_COMPOUND_WRITE.search(words) for words in segments):
         return "path", "compound"
@@ -344,6 +388,7 @@ def _mutation_signal(endpoint: Dict[str, Any], patterns: _ActionPatterns, post: 
         words = [_words(clause) for clause in clauses]
         if any((patterns.description.search(clause)
                 and not patterns.informational.search(clause))
+               or patterns.adverbial.search(clause)
                or patterns.conjoined.search(clause) for clause in words):
             return field, "action"
         if any(patterns.alternative.search(clause) or patterns.alternative_clause.search(clause)
@@ -369,12 +414,16 @@ def read_only_risk(endpoint: Dict[str, Any]) -> Optional[Dict[str, str]]:
     GET/HEAD are refused only when their metadata explicitly suggests mutation.
     A POST is refused when its metadata uses the wider POST mutation vocabulary
     or does not name a read action. Other methods are not read operations and
-    are gated by their callers. Metadata values are never echoed: specification
-    prose can contain credentials or private examples. A benign summary cannot
-    override a command-like path.
+    are gated by their callers. A method that is not a single valid method
+    token is refused, as everywhere else. Metadata values are never echoed:
+    specification prose can contain credentials or private examples. A benign
+    summary cannot override a command-like path.
     """
-    method = str(endpoint.get("method", "")).upper()
-    if method in {"GET", "HEAD"}:
+    try:
+        method = canonical_http_method(endpoint.get("method", ""))
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if method in READ_METHODS:
         signal, rule = _mutation_signal(endpoint, _READ_PATTERNS)
     elif method == "POST":
         if _mixes_scripts(endpoint.get("operation_id")) or _mixes_scripts(endpoint.get("path")):
@@ -419,6 +468,17 @@ _BODY_ACTION_KEYS = frozenset({
 _BODY_METHOD_KEYS = frozenset({"method", "http method", "method override", "x http method override",
                                "x method override", "x http method"})
 _WRITE_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+# Every other method an override value can turn a read into: the methods the IANA HTTP Method
+# Registry lists as not safe (RFC 9110 section 9.2.1), plus PURGE, the cache-invalidation method of
+# Varnish, Fastly and nginx. Frameworks that honour _method (Rack, Express method-override, Symfony)
+# accept these too. POST is not here: a read-only POST already is one, and those frameworks do not
+# override a GET. A value that is no method ({"method": "card"}) is data.
+_OTHER_OVERRIDE_WRITE_METHODS = frozenset({
+    "ACL", "BASELINE-CONTROL", "BIND", "CHECKIN", "CHECKOUT", "CONNECT", "COPY", "LABEL", "LINK", "LOCK",
+    "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL", "MKREDIRECTREF", "MKWORKSPACE", "MOVE", "ORDERPATCH",
+    "PROPPATCH", "PURGE", "REBIND", "UNBIND", "UNCHECKOUT", "UNLINK", "UNLOCK", "UPDATE",
+    "UPDATEREDIRECTREF", "VERSION-CONTROL",
+})
 # A true flag whose name starts with one of these asks the endpoint to write:
 # {"upsert": true}, {"createIfMissing": true}, {"auto_create": true}, {"save_search": true}.
 _BODY_FLAG_VERBS = frozenset({
@@ -588,8 +648,12 @@ def _body_write_kind(body: Any) -> Optional[str]:
             if isinstance(value, str) and _action_names_write(value):
                 return "an action that names a write"
         elif key in _BODY_METHOD_KEYS:
-            if isinstance(value, str) and value.strip().upper() in _WRITE_METHODS:
-                return "an HTTP method override to PUT, PATCH or DELETE"
+            if isinstance(value, str):
+                override = value.strip().upper()
+                if override in _WRITE_METHODS:
+                    return "an HTTP method override to PUT, PATCH or DELETE"
+                if override in _OTHER_OVERRIDE_WRITE_METHODS:
+                    return "an HTTP method override to another state-changing method"
         elif key in _BODY_DRY_RUN_KEYS:
             if _body_value_is(value, _FALSE_VALUES):
                 return "a dry-run switch turned off"
@@ -604,14 +668,24 @@ def read_only_body_risk(body: Any) -> Optional[Dict[str, str]]:
     The body is the operator's own selector, sent unchanged by every identity.
     A body that selects a write cannot be read-only whatever the operation is
     called: a GraphQL mutation, an action, mode or JSON Patch "op" naming a
-    write (also "cart.create", "users:delete"), an HTTP method override to
-    PUT/PATCH/DELETE, a true create/upsert/save flag, or a dry-run switch turned
-    off, also inside JSON sent as a string. Keys and values are never echoed.
-    Ordinary filters ({"deleted": true}, {"create_by": 1}, {"delete_flag": 1},
-    {"sort": "updated_at"}, {"query": "mutation testing"}) are not refused. A
-    body without these markers is not proven read-only.
+    write (also "cart.create", "users:delete"), an HTTP method override to a
+    state-changing method, a true create/upsert/save flag, or a dry-run switch
+    turned off, also inside JSON sent as a string. Keys and values are never
+    echoed. Ordinary filters ({"deleted": true}, {"create_by": 1},
+    {"delete_flag": 1}, {"sort": "updated_at"}, {"query": "mutation testing"})
+    are not refused. A body without these markers is not proven read-only.
+
+    The body is checked as the JSON the request carries, not as the Python
+    object: a tuple is the array it is sent as, keys are strings. A value JSON
+    cannot carry (a set, NaN, an arbitrary object) cannot be sent and is
+    refused rather than checked in a form the server would never see.
     """
-    kind = _body_write_kind(body)
+    try:
+        view = json.loads(json.dumps(body, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError, RecursionError):
+        kind: Optional[str] = "a value that cannot be sent as JSON"
+    else:
+        kind = _body_write_kind(view)
     if kind is None:
         return None
     return {"safety_reason": f"Read-only POST body contains {kind}; no request was sent",
@@ -638,21 +712,156 @@ def query_write_risk(url: str) -> Optional[Dict[str, str]]:
             "safety_signal": "query"}
 
 
-def post_path_risk(path: str) -> Optional[Dict[str, str]]:
-    """Refuse a concrete POST path whose segments, including filled values, name a mutation."""
+_AMBIGUOUS_PATH_REASON = "Read-only safety policy blocked an ambiguous request path; no request was sent"
+_STATE_CHANGING_REASON = ("Read-only safety policy blocked an operation with explicit state-changing semantics; "
+                          "no request was sent")
+_COMPOUND_REASON = ("Read-only safety policy blocked an operation that combines a read action with a "
+                    "conditional or follow-up write (such as get-or-create, find-or-insert or "
+                    "put-if-absent); no request was sent")
+_POST_PATH_REASON = ("Read-only safety policy blocked a POST path with explicit state-changing semantics; "
+                     "no request was sent")
+
+
+def relative_request_path(url: str, base_url: str = "") -> str:
+    """Return the path of ``url`` below the path of ``base_url``, exactly as it is sent.
+
+    Only a whole-segment prefix equal to the base path is removed: the base URL
+    is operator configuration, while everything after it comes from the
+    specification and parameter values and must be checked. Any other path is
+    returned unchanged, so stripping can only narrow the checked text to what
+    follows the configured base, never hide part of it. The comparison is
+    case-sensitive and undecoded; a mismatch checks the whole path, which is
+    stricter.
+    """
+    request_path = urlsplit(url).path or "/"
+    base_path = urlsplit(base_url).path.rstrip("/") if base_url else ""
+    if base_path and request_path == base_path:
+        return "/"
+    if base_path and request_path.startswith(base_path + "/"):
+        return request_path[len(base_path):]
+    return request_path
+
+
+def _routed_words(value: str) -> str:
+    """``value`` in the single case a case-insensitive router compares it in.
+
+    Upper- then lower-casing maps every spelling such a router treats as equal
+    onto one: any mix of cases (wItHdRaW), the dotless and dotted I (wıthdraw,
+    WİTHDRAW), the long s and the Kelvin sign; NFKC first folds compatibility
+    forms (full width). .NET OrdinalIgnoreCase (ASP.NET Core routing), and
+    Express or Spring with case-insensitive matching, route these to the action.
+    There is no camelCase split: a router compares the whole piece.
+    """
+    folded = _visible(_visible(value).upper().lower())
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def _path_pairs(path: str) -> List[Tuple[str, str]]:
+    """The ``name=value`` pairs of a path's pieces, as OpenAPI serialises them.
+
+    Matrix parameters (``;name=value``) and exploded objects in simple
+    (``name=value,name=value``) or label (``.name=value.name=value``) style
+    carry the same data a query string does.
+    """
+    pairs: List[Tuple[str, str]] = []
+    for segment in path.split("/"):
+        for piece in segment.split(";"):
+            for token in re.split(r"[,.]" if piece.startswith(".") else ",", piece):
+                name, separator, value = token.partition("=")
+                if separator and name:
+                    pairs.append((name, value))
+    return pairs
+
+
+def concrete_path_risk(method: str, path: str) -> Optional[Dict[str, str]]:
+    """Refuse a concrete read path whose segments, including filled values, name a mutation.
+
+    ``path`` is what the server routes: parameter values have already replaced
+    the template placeholders, so nothing in it is skipped as a placeholder and
+    no documented template can certify it. GET/HEAD use the read vocabulary,
+    POST (sent only for operator-declared read-only operations) the wider POST
+    vocabulary; other methods are not reads and are gated by their callers.
+
+    The literal-path rules of read_only_risk apply to every segment and matrix
+    piece (a router may ignore matrix pieces, a handler may not), as sent and
+    once decoded: a leading action word, read as words (deleteReport) and in
+    the one case a case-insensitive router compares (wItHdRaW), or a compound
+    write (getOrCreate). The decoded path is also read without brace groups, as
+    read_only_risk reads a literal path, so this check is never weaker than the
+    literal-path rule; the result is the same for a literal path and for a
+    template filled with the same values. Filled values are data, so
+    identifier abbreviations stay a template-only rule, as for POST paths, and
+    a value a router does not dispatch on (a matrix value, a later array
+    element, a value behind a literal prefix) is data as in a query string.
+    A ``name=value`` pair in a path piece gets the query string's write-switch
+    rules (?action=delete and ;action=delete alike). A method that is not a
+    single valid method token is refused rather than treated as a method this
+    check does not cover.
+    """
+    try:
+        verb = canonical_http_method(method)
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if verb in READ_METHODS:
+        patterns, reason, compound = _READ_PATTERNS, _STATE_CHANGING_REASON, _COMPOUND_REASON
+    elif verb == "POST":
+        patterns, reason, compound = _POST_PATTERNS, _POST_PATH_REASON, _POST_PATH_REASON
+    else:
+        return None
     try:
         decoded = unquote(path, errors="strict")
     except UnicodeDecodeError:
         decoded = path
-    for candidate in {path, decoded}:
-        # Check matrix parameters too: a router may ignore them, a handler may not.
-        # Filled values are data, so abbreviations (an id such as "rm-101") are
-        # checked in the specification's path template only, not here.
-        pieces = [_words(piece) for part in candidate.split("/") for piece in part.split(";")]
-        if any(_POST_PATTERNS.leading.search(words) or _COMPOUND_WRITE.search(words) for words in pieces):
-            return {
-                "safety_reason": "Read-only safety policy blocked a POST path with explicit state-changing semantics; "
+    for candidate in {path, decoded, re.sub(r"\{[^}]*\}", "", decoded)}:
+        raw_pieces = [piece for part in candidate.split("/") for piece in part.split(";")]
+        pieces = [_words(piece) for piece in raw_pieces]
+        # An ASCII piece without upper-case letters reads the same both ways (_routed_words equals
+        # _words there), so only the other pieces need the router reading.
+        if any(patterns.leading.search(words) for words in pieces) or any(
+                patterns.leading.search(_routed_words(piece)) for piece in raw_pieces
+                if not (piece.isascii() and piece == piece.lower())):
+            return {"safety_reason": reason, "safety_signal": "path"}
+        if any(_COMPOUND_WRITE.search(words) for words in pieces):
+            return {"safety_reason": compound, "safety_signal": "path"}
+    pairs = _path_pairs(decoded) if "=" in decoded else []
+    kind = _body_write_kind([{name: value} for name, value in pairs]) if pairs else None
+    if kind is not None:
+        return {"safety_reason": f"Read-only safety policy blocked a path parameter that contains {kind}; "
                                  "no request was sent",
-                "safety_signal": "path",
-            }
+                "safety_signal": "path"}
     return None
+
+
+def post_path_risk(path: str) -> Optional[Dict[str, str]]:
+    """Refuse a concrete POST path whose segments, including filled values, name a mutation."""
+    return concrete_path_risk("POST", path)
+
+
+def concrete_request_risk(method: str, url: str, base_url: str = "") -> Optional[Dict[str, str]]:
+    """The specification-free read-only check of one concrete request URL.
+
+    This is the base read-only policy: it depends on nothing but its arguments,
+    so it holds however an auditor or a transport is configured or extended.
+    The method must be a single valid method token (see canonical_http_method);
+    any other spelling is refused. GET, HEAD and POST are the methods the
+    auditor reads with. The whole URL is checked for routing ambiguity first,
+    then the path below ``base_url`` for state-changing segments. A URL that
+    cannot be parsed is refused rather than passed: a check that cannot run
+    must not let the request leave. Other valid methods (the separately gated
+    PATCH/PUT writes, for example) are left to their callers.
+    """
+    try:
+        verb = canonical_http_method(method)
+    except InvalidHttpMethod:
+        return invalid_method_risk()
+    if verb not in CHECKED_METHODS:
+        return None
+    try:
+        return read_path_risk(url) or concrete_path_risk(verb, relative_request_path(url, base_url))
+    except (AttributeError, TypeError, ValueError):
+        return unparseable_request_risk()
+
+
+def unparseable_request_risk() -> Dict[str, str]:
+    """The refusal for a request URL that the read-only checks cannot parse."""
+    return {"safety_reason": _AMBIGUOUS_PATH_REASON, "safety_signal": "path_ambiguity"}
